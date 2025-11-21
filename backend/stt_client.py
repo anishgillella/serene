@@ -23,11 +23,13 @@ class AssemblyAIStreamingClient:
         self,
         api_key: Optional[str] = None,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
+        encoding: str = "pcm_s16le",
     ) -> None:
         self.api_key = api_key or os.environ.get("ASSEMBLY_API_KEY")
         if not self.api_key:
             raise RuntimeError("ASSEMBLY_API_KEY missing. Set it in .env")
         self.sample_rate = sample_rate
+        self.encoding = encoding
 
     @property
     def url(self) -> str:
@@ -35,10 +37,11 @@ class AssemblyAIStreamingClient:
         return (
             f"{ASSEMBLY_REALTIME_URL}?sample_rate={self.sample_rate}"
             f"&speech_model={DEFAULT_MODEL}"
+            f"&encoding={self.encoding}"
         )
 
-    async def stream_segments(self, segments: Iterable[bytes]) -> List[str]:
-        transcripts: List[str] = []
+    async def stream_segments(self, segments: Iterable[bytes]):
+        """Stream audio segments and yield transcripts as they arrive."""
         turn_buffer: dict = {}  # Buffer to track latest transcript per turn
         
         # Add Authorization header for v3 API
@@ -53,18 +56,21 @@ class AssemblyAIStreamingClient:
             async def sender() -> None:
                 # AssemblyAI requires chunks between 50-1000ms
                 # At 16kHz 16-bit PCM: 50ms = 1600 bytes, 1000ms = 32000 bytes
-                CHUNK_SIZE_BYTES = 3200  # ~100ms at 16kHz 16-bit PCM
+                # At 8kHz mulaw: 50ms = 400 bytes (8000 * 1 byte * 0.05)
+                CHUNK_SIZE_BYTES = 3200 if self.sample_rate == 16000 else 800
+                MIN_CHUNK_BYTES = 1600 if self.sample_rate == 16000 else 400
                 
-                for segment in segments:
+                async for segment in segments:
                     if not segment:
                         continue
                     # Split large segments into smaller chunks
                     for i in range(0, len(segment), CHUNK_SIZE_BYTES):
                         chunk = segment[i : i + CHUNK_SIZE_BYTES]
-                        if len(chunk) >= 1600:  # Ensure at least 50ms
+                        if len(chunk) >= MIN_CHUNK_BYTES:
                             # v3 API accepts binary audio data directly
                             await ws.send(chunk)
-                            await asyncio.sleep(0.05)
+                            # Small delay to prevent flooding
+                            await asyncio.sleep(0.01)
                 
                 # Wait a bit for final transcripts to arrive
                 await asyncio.sleep(1.0)
@@ -103,11 +109,12 @@ class AssemblyAIStreamingClient:
                             turn_buffer[turn_order] = text
                             logger.debug(f"Turn {turn_order} (final={is_final}): {text}")
                             
-                            # If end of turn, add to final transcripts
-                            if is_final and turn_order in turn_buffer:
-                                final_text = turn_buffer.pop(turn_order)
+                            # If end of turn, yield the transcript
+                            if is_final:
+                                final_text = turn_buffer.pop(turn_order, text)
                                 logger.info(f"Final transcript for turn {turn_order}: {final_text}")
-                                transcripts.append(final_text)
+                                yield final_text
+                                
                     elif msg_type == "End":
                         break
             except Exception as e:
@@ -119,12 +126,16 @@ class AssemblyAIStreamingClient:
                 except Exception:
                     pass
         
-        # Add any remaining buffered transcripts
+        # Yield any remaining buffered transcripts
         for text in turn_buffer.values():
             if text:
-                transcripts.append(text)
-        
-        return transcripts
+                yield text
 
     def transcribe(self, segments: Iterable[bytes]) -> List[str]:
-        return asyncio.run(self.stream_segments(segments))
+        """Synchronous wrapper for compatibility."""
+        async def _collect():
+            results = []
+            async for t in self.stream_segments(segments):
+                results.append(t)
+            return results
+        return asyncio.run(_collect())
