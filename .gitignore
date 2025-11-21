@@ -51,3 +51,4 @@ logs/
 # Cache
 .cache/
 tmp/
+backend/credentials.json
