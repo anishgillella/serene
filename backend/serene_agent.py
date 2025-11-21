@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import httpx
 
 from .rag_handler import get_amara_context
+from .tools import send_email, EmailRequest
 
 # Load environment
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -59,6 +60,13 @@ Reference the context provided below about Amara. Use her real preferences, valu
 
 ## Your Mission
 Make people feel UNDERSTOOD. Leave them saying: "Oh, I finally get it. Thank you."
+
+## Tools
+You have access to a tool called `send_email`. 
+If the user explicitly asks for a summary or notes, or if you think it would be helpful to send them the advice you've given, you can offer to send an email.
+If they agree, use the `send_email` tool.
+The recipient should be the user (ask for their email if you don't have it, or assume 'current_user' if context implies).
+For this demo, you can assume the user's email is "test@example.com" if they don't provide one.
 """
 
 
@@ -123,6 +131,34 @@ class SereneAgent:
                     ],
                     "temperature": 0.7,
                     "max_tokens": 500,
+                    "tools": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "send_email",
+                                "description": "Send an email with relationship advice or summary.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {
+                                        "recipient": {
+                                            "type": "string",
+                                            "description": "Email address of the recipient"
+                                        },
+                                        "subject": {
+                                            "type": "string",
+                                            "description": "Subject line of the email"
+                                        },
+                                        "body": {
+                                            "type": "string",
+                                            "description": "Body content of the email"
+                                        }
+                                    },
+                                    "required": ["recipient", "subject", "body"]
+                                }
+                            }
+                        }
+                    ],
+                    "tool_choice": "auto",
                 },
                 timeout=30.0,
             )
@@ -138,6 +174,62 @@ class SereneAgent:
                 })
                 
                 logger.info(f"Generated response: {assistant_message[:100]}...")
+                
+                # Handle tool calls
+                tool_calls = result["choices"][0]["message"].get("tool_calls")
+                if tool_calls:
+                    for tool_call in tool_calls:
+                        if tool_call["function"]["name"] == "send_email":
+                            args = json.loads(tool_call["function"]["arguments"])
+                            logger.info(f"🛠️ Tool Call: send_email({args})")
+                            
+                            # Execute tool
+                            req = EmailRequest(**args)
+                            success = await send_email(req)
+                            
+                            # Add tool result to history
+                            self.conversation_history.append({
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [tool_call]
+                            })
+                            self.conversation_history.append({
+                                "role": "tool",
+                                "tool_call_id": tool_call["id"],
+                                "content": "Email sent successfully." if success else "Failed to send email."
+                            })
+                            
+                            # Get follow-up response from LLM
+                            # We need to call the API again to let the LLM know the tool finished
+                            # For simplicity in this turn-based flow, we'll just append a confirmation message
+                            # to the returned string, or do a recursive call.
+                            # Recursive call is better.
+                            
+                            # But wait, we need to return a string to the user.
+                            # If we just return "Email sent", that's fine.
+                            # Let's do a quick follow-up call.
+                            follow_up_response = httpx.post(
+                                f"{OPENROUTER_BASE_URL}/chat/completions",
+                                headers={
+                                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                                    "HTTP-Referer": BACKEND_URL,
+                                    "X-Title": "Serene Voice Agent",
+                                },
+                                json={
+                                    "model": MODEL,
+                                    "messages": [
+                                        {"role": "system", "content": system_prompt},
+                                        *self.conversation_history
+                                    ]
+                                },
+                                timeout=30.0
+                            )
+                            if follow_up_response.status_code == 200:
+                                follow_up_result = follow_up_response.json()
+                                return follow_up_result["choices"][0]["message"]["content"]
+                            else:
+                                return "I've sent that email for you."
+
                 return assistant_message
             else:
                 logger.error(f"OpenRouter error: {response.status_code} - {response.text}")
@@ -160,3 +252,4 @@ serene = SereneAgent()
 async def get_serene_response(user_message: str) -> str:
     """Convenience function to get Serene's response."""
     return await serene.process_message(user_message)
+

@@ -8,11 +8,15 @@ import os
 from typing import Any
 
 from flask import Flask, request, jsonify
+from flask_sock import Sock
 from dotenv import load_dotenv
 
 from .twilio_handler import twilio_manager
 from .serene_agent import serene, get_serene_response
 from .tts_handler import speak
+from .voice_orchestrator import voice_orchestrator
+from .tools import send_email, EmailRequest
+from flask_cors import CORS
 
 # Load environment
 load_dotenv()
@@ -26,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
+sock = Sock(app)
+CORS(app) # Enable CORS for frontend
 
 # Configuration
 TWILIO_CALLBACK_URL = os.environ.get(
@@ -203,6 +209,153 @@ def end_call(call_sid: str) -> dict[str, str]:
         return {"error": "Failed to terminate call"}, 500
 
 
+@sock.route("/media-stream")
+def media_stream(ws):
+    """Handle Twilio Media Stream WebSocket."""
+    logger.info("Media stream connected")
+    
+    # Run the orchestrator's stream handler
+    # Since flask-sock is synchronous/threaded, we need to run the async handler
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(voice_orchestrator.handle_twilio_stream(ws))
+        loop.close()
+    except Exception as e:
+        logger.error(f"Media stream error: {e}")
+    finally:
+        logger.info("Media stream closed")
+
+
+@sock.route("/api/events")
+def api_events(ws):
+    """WebSocket for frontend to receive real-time events."""
+    logger.info("Frontend client connected")
+    try:
+        voice_orchestrator.add_frontend_client(ws)
+        while True:
+            # Keep connection alive and listen for any client messages (optional)
+            message = ws.receive()
+            if message is None:
+                break
+    except Exception as e:
+        logger.error(f"Frontend WS error: {e}")
+    finally:
+        voice_orchestrator.remove_frontend_client(ws)
+        logger.info("Frontend client disconnected")
+
+
+@app.route("/api/call", methods=["POST"])
+def trigger_call():
+    """Trigger an outbound call to the user."""
+    data = request.json
+    phone_number = data.get("phoneNumber")
+    
+    if not phone_number:
+        return jsonify({"error": "Phone number required"}), 400
+        
+    try:
+        call_sid = twilio_manager.make_call(phone_number)
+        return jsonify({"success": True, "callSid": call_sid})
+    except Exception as e:
+        logger.error(f"Failed to make call: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/email/draft", methods=["POST"])
+def draft_email():
+    """Draft an email via Serene (can be extended for approval workflow).
+    
+    POST JSON:
+        {
+            "message": "I want to send her a message",
+            "recipient": "amara@example.com",
+        }
+    
+    Returns:
+        JSON with drafted email
+    """
+    try:
+        data = request.get_json()
+        user_message = data.get("message", "")
+        recipient = data.get("recipient", os.environ.get("GMAIL_SENDER_EMAIL"))
+        
+        if not user_message:
+            return {"error": "No message provided"}, 400
+        
+        logger.info(f"Drafting email to {recipient}")
+        
+        # Get Serene to draft an email
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        draft_prompt = f"Draft a thoughtful email for me to send to {recipient} about: {user_message}"
+        serene_draft = loop.run_until_complete(get_serene_response(draft_prompt))
+        loop.close()
+        
+        return {
+            "recipient": recipient,
+            "subject": "A thoughtful message from Serene",
+            "body": serene_draft,
+            "status": "drafted",
+        }, 200
+        
+    except Exception as e:
+        logger.error(f"Error drafting email: {e}")
+        return {"error": str(e)}, 500
+
+
+@app.route("/email/send", methods=["POST"])
+def send_email_endpoint():
+    """Send an email via Gmail API.
+    
+    POST JSON:
+        {
+            "recipient": "amara@example.com",
+            "subject": "A thoughtful message",
+            "body": "Email content here..."
+        }
+    
+    Returns:
+        JSON with send status
+    """
+    try:
+        data = request.get_json()
+        recipient = data.get("recipient")
+        subject = data.get("subject")
+        body = data.get("body")
+        
+        if not all([recipient, subject, body]):
+            return {"error": "Missing required fields (recipient, subject, body)"}, 400
+        
+        logger.info(f"Sending email to {recipient}")
+        
+        # Send email
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        success = loop.run_until_complete(send_email(EmailRequest(
+            recipient=recipient,
+            subject=subject,
+            body=body,
+        )))
+        loop.close()
+        
+        if success:
+            return {
+                "status": "sent",
+                "recipient": recipient,
+                "message": "Email sent successfully!"
+            }, 200
+        else:
+            return {
+                "status": "failed",
+                "error": "Failed to send email"
+            }, 500
+        
+    except Exception as e:
+        logger.error(f"Error sending email: {e}")
+        return {"error": str(e)}, 500
+
+
 def run_server(host: str = BACKEND_HOST, port: int = BACKEND_PORT) -> None:
     """Run the Flask server.
     
@@ -216,4 +369,5 @@ def run_server(host: str = BACKEND_HOST, port: int = BACKEND_PORT) -> None:
 
 if __name__ == "__main__":
     run_server()
+
 
