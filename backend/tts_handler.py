@@ -21,14 +21,15 @@ ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
 VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "56AoDkrOh6qfVPDXZ7Pt")
 
 
-async def text_to_speech(text: str) -> bytes:
+async def text_to_speech(text: str, output_format: str = "ulaw_8000") -> bytes:
     """Convert text to speech using ElevenLabs.
     
     Args:
         text: Text to convert to speech
+        output_format: Audio format (ulaw_8000 for Twilio compatibility, mp3_44100_128 for playback)
         
     Returns:
-        Audio bytes (MP3 format)
+        Audio bytes in mulaw format (8kHz, 64kbps) - Twilio compatible
     """
     if not ELEVENLABS_API_KEY:
         logger.error("ELEVENLABS_API_KEY not set")
@@ -37,7 +38,7 @@ async def text_to_speech(text: str) -> bytes:
     try:
         logger.info(f"Converting to speech: {text[:50]}...")
         
-        url = f"{ELEVENLABS_BASE_URL}/text-to-speech/{VOICE_ID}"
+        url = f"{ELEVENLABS_BASE_URL}/text-to-speech/{VOICE_ID}?output_format={output_format}"
         
         response = httpx.post(
             url,
@@ -47,7 +48,7 @@ async def text_to_speech(text: str) -> bytes:
             },
             json={
                 "text": text,
-                "model_id": "eleven_monolingual_v1",
+                "model_id": "eleven_multilingual_v2",
                 "voice_settings": {
                     "stability": 0.5,
                     "similarity_boost": 0.75,
@@ -76,9 +77,10 @@ async def speak(text: str) -> dict:
         text: Text to speak
         
     Returns:
-        Dict with audio data and metadata
+        Dict with audio data and metadata (mulaw/8kHz format for Twilio)
     """
-    audio_bytes = await text_to_speech(text)
+    # Request mulaw_8000 format directly from ElevenLabs (Twilio compatible)
+    audio_bytes = await text_to_speech(text, output_format="ulaw_8000")
     
     if not audio_bytes:
         return {
@@ -86,14 +88,15 @@ async def speak(text: str) -> dict:
             "error": "Failed to generate audio",
         }
     
-    # For Twilio, we need to return the audio in a format it can use
+    # For Twilio, encode audio as base64
     import base64
     audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
     
     return {
         "success": True,
         "audio": audio_base64,
-        "format": "mp3",
+        "format": "ulaw",
+        "sample_rate": 8000,
         "text": text,
         "bytes": len(audio_bytes),
     }
@@ -109,3 +112,4 @@ async def stream_audio(text: str) -> bytes:
         Audio bytes
     """
     return await text_to_speech(text)
+
