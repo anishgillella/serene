@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "heartsync-docs": {
+      "url": "https://raw.githubusercontent.com/anishgillella/serene/main/AGENTS.md",
+      "description": "HeartSync AI Agents Guide - Documentation for AI assistants working with HeartSync"
+    }
+  }
+}
+

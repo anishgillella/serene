@@ -1,0 +1,36 @@
+# Node modules and dependencies
+node_modules/
+backend/venv/
+.venv/
+venv/
+env/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE and editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Git
+.git/
+.gitignore
+
+# OS
+Thumbs.db
+.DS_Store
+
