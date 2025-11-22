@@ -20,6 +20,10 @@ app.add_middleware(
 app.include_router(transcription.router)
 from .routes import realtime_transcription
 app.include_router(realtime_transcription.router)
+from .routes import post_fight
+app.include_router(post_fight.router)
+from .routes import pdf_upload
+app.include_router(pdf_upload.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
@@ -98,5 +102,38 @@ async def list_conflicts(relationship_id: str = None):
             "total": len(response.data),
             "conflicts": response.data
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/conflicts/create")
+async def create_conflict(relationship_id: str = "00000000-0000-0000-0000-000000000000"):
+    """Create a new conflict and return its ID"""
+    import uuid
+    from datetime import datetime
+    
+    try:
+        conflict_id = str(uuid.uuid4())
+        data = {
+            "id": conflict_id,
+            "relationship_id": relationship_id,
+            "started_at": datetime.now().isoformat(),
+            "status": "active"
+        }
+        
+        try:
+            supabase.table("conflicts").insert(data).execute()
+            return {
+                "success": True,
+                "conflict_id": conflict_id,
+                "relationship_id": relationship_id
+            }
+        except Exception as e:
+            # If DB insert fails, still return conflict_id for frontend use
+            return {
+                "success": True,
+                "conflict_id": conflict_id,
+                "relationship_id": relationship_id,
+                "warning": f"Database insert failed: {str(e)}"
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

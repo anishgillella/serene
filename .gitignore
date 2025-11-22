@@ -78,3 +78,9 @@ test_output/
 *.wav
 *.mp3
 *.m4a
+
+# Personal/Test Data
+character_desc/
+*.pdf
+test_data/
+sample_profiles/

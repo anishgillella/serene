@@ -131,7 +131,7 @@ async def entrypoint(ctx: JobContext):
     
     def get_speaker_name(speaker_id: int) -> str:
         """Map Deepgram speaker ID to readable name"""
-        nonlocal speaker_counter
+        nonlocal speaker_counter, speaker_map
         if speaker_id not in speaker_map:
             speaker_counter += 1
             # Map first speaker to Boyfriend, second to Girlfriend
@@ -258,8 +258,16 @@ async def entrypoint(ctx: JobContext):
             await transcriber.ws.close()
         
         # End conflict and save data
-        await conflict_manager.end_conflict()
-        logger.info("Conflict session ended and data saved")
+        # Extract speaker labels from the mapping (convert to format expected by ConflictTranscript)
+        # speaker_map maps Deepgram IDs (0, 1) to names ("Boyfriend", "Girlfriend")
+        # We need to reverse this for the speaker_labels dict
+        speaker_labels = {v: k for k, v in speaker_map.items()} if speaker_map else {}
+        conflict_id, conflict_transcript = await conflict_manager.end_conflict(
+            partner_a_id="partner_a",  # TODO: Get from actual participants
+            partner_b_id="partner_b",  # TODO: Get from actual participants
+            speaker_labels=speaker_labels
+        )
+        logger.info(f"Conflict session ended and data saved: {conflict_id}")
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

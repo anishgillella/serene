@@ -22,6 +22,7 @@ const FightCapture = () => {
   const [interimTranscript, setInterimTranscript] = useState<TranscriptItem | null>(null); // Current partial transcript
   const [error, setError] = useState<string>('');
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  const [conflictId, setConflictId] = useState<string | null>(null);
   
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -49,6 +50,23 @@ const FightCapture = () => {
           console.log('✅ WebSocket connected');
           setConnectionStatus('connected');
           setIsRecording(true);
+          
+          // Create conflict and get conflict_id
+          try {
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+            const response = await fetch(`${apiUrl}/api/conflicts/create`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' }
+            });
+            if (response.ok) {
+              const data = await response.json();
+              setConflictId(data.conflict_id);
+              console.log('✅ Conflict created:', data.conflict_id);
+            }
+          } catch (e) {
+            console.error('Failed to create conflict:', e);
+            // Continue anyway, we can generate a temp ID
+          }
           
           // Request microphone access
           try {
@@ -236,17 +254,50 @@ const FightCapture = () => {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
     
-    // Navigate to post-fight after processing
-    setTimeout(() => {
-      // Convert transcript items back to string format for post-fight page compatibility
-      const transcriptStrings = transcript.map(item => `${item.speaker}: ${item.text}`);
-      navigate('/post-fight', { 
-        state: { 
-          transcript: transcriptStrings,
-          interimTranscript: interimTranscript ? `${interimTranscript.speaker}: ${interimTranscript.text}` : ''
-        } 
-      });
-    }, 1000);
+    // Store transcript in Pinecone via backend if we have conflict_id
+    if (conflictId && transcript.length > 0) {
+      try {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+        const transcriptStrings = transcript.map(item => `${item.speaker}: ${item.text}`);
+        
+        // Calculate duration (rough estimate: ~3 seconds per message)
+        const estimatedDuration = transcript.length * 3;
+        
+        // Store transcript in Pinecone
+        const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/store-transcript`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            transcript: transcriptStrings,
+            relationship_id: "00000000-0000-0000-0000-000000000000", // Default for MVP
+            partner_a_id: "partner_a",
+            partner_b_id: "partner_b",
+            duration: estimatedDuration,
+            speaker_labels: { 0: "Boyfriend", 1: "Girlfriend" } // Default mapping
+          })
+        });
+        
+        if (response.ok) {
+          console.log('✅ Transcript stored in Pinecone');
+        } else {
+          console.error('Failed to store transcript:', await response.text());
+        }
+      } catch (e) {
+        console.error('Error storing transcript:', e);
+        // Continue anyway - transcript is still available locally
+      }
+    }
+    
+    // Navigate to post-fight immediately after storing transcript
+    // Convert transcript items back to string format for post-fight page compatibility
+    const transcriptStrings = transcript.map(item => `${item.speaker}: ${item.text}`);
+    navigate('/post-fight', { 
+      state: { 
+        transcript: transcriptStrings,
+        interimTranscript: interimTranscript ? `${interimTranscript.speaker}: ${interimTranscript.text}` : '',
+        conflict_id: conflictId || undefined
+      }
+    });
   };
 
   if (error) {

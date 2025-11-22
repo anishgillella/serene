@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     DEEPGRAM_API_KEY: str
     ELEVENLABS_API_KEY: str
     VOYAGE_API_KEY: str
+    PINECONE_API_KEY: str
+    MISTRAL_API_KEY: str
     DATABASE_URL: str
     SUPABASE_URL: str
     SUPABASE_KEY: str
