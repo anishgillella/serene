@@ -6,20 +6,27 @@ import { MicOffIcon } from 'lucide-react';
 interface TranscriptMessage {
   type: string;
   text: string;
+  speaker?: string; // Speaker name from diarization (e.g., "Speaker 1", "Speaker 2")
   is_final?: boolean;
+}
+
+interface TranscriptItem {
+  speaker: string;
+  text: string;
 }
 
 const FightCapture = () => {
   const navigate = useNavigate();
   const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState<string[]>([]); // Final transcripts only
-  const [interimTranscript, setInterimTranscript] = useState<string>(''); // Current partial transcript
+  const [transcript, setTranscript] = useState<TranscriptItem[]>([]); // Final transcripts with speaker info
+  const [interimTranscript, setInterimTranscript] = useState<TranscriptItem | null>(null); // Current partial transcript
   const [error, setError] = useState<string>('');
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
   
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]); // Store audio chunks for post-processing
 
   // Start recording when component mounts
   useEffect(() => {
@@ -56,7 +63,23 @@ const FightCapture = () => {
             
             streamRef.current = stream;
             
-            // Use AudioContext to capture raw PCM audio
+            // Also record audio with MediaRecorder for post-processing diarization
+            const mediaRecorder = new MediaRecorder(stream, {
+              mimeType: 'audio/webm;codecs=opus'
+            });
+            mediaRecorderRef.current = mediaRecorder;
+            audioChunksRef.current = [];
+            
+            mediaRecorder.ondataavailable = (event) => {
+              if (event.data.size > 0) {
+                audioChunksRef.current.push(event.data);
+              }
+            };
+            
+            mediaRecorder.start(1000); // Collect data every second
+            console.log('🎙️ Started MediaRecorder for post-processing');
+            
+            // Use AudioContext to capture raw PCM audio for real-time streaming
             const audioContext = new AudioContext({ sampleRate: 16000 });
             const source = audioContext.createMediaStreamSource(stream);
             const processor = audioContext.createScriptProcessor(4096, 1, 1);
@@ -93,15 +116,16 @@ const FightCapture = () => {
             const data: TranscriptMessage = JSON.parse(event.data);
             
             if (data.type === 'transcript' && data.text) {
-              console.log('📝 Transcript received:', data.text, 'final:', data.is_final);
+              const speakerName = data.speaker || 'Boyfriend'; // Use speaker from diarization
+              console.log('📝 Transcript received:', speakerName, ':', data.text, 'final:', data.is_final);
               
               if (data.is_final) {
                 // Final transcript: add to permanent list and clear interim
-                setTranscript((prev) => [...prev, `You: ${data.text}`]);
-                setInterimTranscript(''); // Clear interim when final arrives
+                setTranscript((prev) => [...prev, { speaker: speakerName, text: data.text }]);
+                setInterimTranscript(null); // Clear interim when final arrives
               } else {
                 // Interim transcript: update temporary display only
-                setInterimTranscript(data.text);
+                setInterimTranscript({ speaker: speakerName, text: data.text });
               }
             } else if (data.type === 'error') {
               setError(data.text || 'Transcription error');
@@ -121,7 +145,7 @@ const FightCapture = () => {
           console.log('WebSocket closed');
           setConnectionStatus('disconnected');
           setIsRecording(false);
-          setInterimTranscript(''); // Clear interim transcript on disconnect
+          setInterimTranscript(null); // Clear interim transcript on disconnect
         };
         
       } catch (e) {
@@ -144,12 +168,67 @@ const FightCapture = () => {
     };
   }, []);
 
-  const handleEndCapture = () => {
+  const handleEndCapture = async () => {
     setIsRecording(false);
     
-    // Stop recording
+    // Stop WebSocket first
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    
+    // Stop MediaRecorder and process audio for accurate diarization
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+      
+      // Wait for recording to finish
+      await new Promise<void>((resolve) => {
+        if (mediaRecorderRef.current) {
+          mediaRecorderRef.current.onstop = () => {
+            resolve();
+          };
+        } else {
+          resolve();
+        }
+      });
+      
+      // Combine audio chunks
+      if (audioChunksRef.current.length > 0) {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        
+        // Send to REST API for accurate diarization
+        try {
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+          const formData = new FormData();
+          formData.append('audio_file', audioBlob, 'recording.webm');
+          
+          console.log('🔄 Sending audio to REST API for accurate diarization...');
+          const response = await fetch(`${apiUrl}/api/transcription/transcribe`, {
+            method: 'POST',
+            body: formData,
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            console.log('✅ Received diarized transcript:', result);
+            
+            // Update transcripts with accurate speaker labels
+            if (result.utterances && result.utterances.length > 0) {
+              const diarizedTranscripts: TranscriptItem[] = result.utterances.map((utt: any) => {
+                // Map Deepgram speaker IDs: 0 -> Boyfriend, 1 -> Girlfriend
+                const speakerName = utt.speaker === 0 ? 'Boyfriend' : 'Girlfriend';
+                return { speaker: speakerName, text: utt.transcript };
+              });
+              
+              // Replace current transcripts with accurate ones
+              setTranscript(diarizedTranscripts);
+              console.log('✅ Updated transcripts with accurate speaker labels');
+            }
+          }
+        } catch (error) {
+          console.error('❌ Error processing audio with REST API:', error);
+          // Continue anyway with existing transcripts
+        }
+      }
     }
     
     // Stop microphone
@@ -157,20 +236,17 @@ const FightCapture = () => {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
     
-    // Close WebSocket
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-    
-    // Navigate to post-fight after a short delay, passing transcript data
+    // Navigate to post-fight after processing
     setTimeout(() => {
+      // Convert transcript items back to string format for post-fight page compatibility
+      const transcriptStrings = transcript.map(item => `${item.speaker}: ${item.text}`);
       navigate('/post-fight', { 
         state: { 
-          transcript: transcript,
-          interimTranscript: interimTranscript 
+          transcript: transcriptStrings,
+          interimTranscript: interimTranscript ? `${interimTranscript.speaker}: ${interimTranscript.text}` : ''
         } 
       });
-    }, 500);
+    }, 1000);
   };
 
   if (error) {
@@ -218,17 +294,40 @@ const FightCapture = () => {
 
         {(transcript.length > 0 || interimTranscript) && (
           <div className="bg-white/40 backdrop-blur-sm rounded-xl p-4 mb-8 max-h-60 overflow-y-auto">
-            <p className="text-xs text-gray-500 mb-2 font-medium">Live transcript</p>
-            {transcript.map((line, index) => (
-              <p key={index} className="text-sm text-gray-700 mb-2">
-                {line}
-              </p>
-            ))}
-            {interimTranscript && (
-              <p className="text-sm text-gray-500 mb-2 italic opacity-70">
-                You: {interimTranscript}
-              </p>
-            )}
+            <p className="text-xs text-gray-500 mb-3 font-medium">Live transcript</p>
+            <div className="space-y-2">
+              {transcript.map((item, index) => {
+                const isBoyfriend = item.speaker === 'Boyfriend';
+                return (
+                  <div key={index} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`rounded-2xl py-2 px-4 max-w-[80%] ${
+                      isBoyfriend 
+                        ? 'bg-blue-100 text-gray-800' 
+                        : 'bg-pink-100 text-gray-800'
+                    }`}>
+                      <div className="text-xs font-semibold mb-1 text-gray-600">
+                        {item.speaker}
+                      </div>
+                      <div className="text-sm">{item.text}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              {interimTranscript && (
+                <div className={`flex w-full ${interimTranscript.speaker === 'Boyfriend' ? 'justify-start' : 'justify-end'}`}>
+                  <div className={`rounded-2xl py-2 px-4 max-w-[80%] opacity-70 ${
+                    interimTranscript.speaker === 'Boyfriend'
+                      ? 'bg-blue-100 text-gray-800'
+                      : 'bg-pink-100 text-gray-800'
+                  }`}>
+                    <div className="text-xs font-semibold mb-1 text-gray-600">
+                      {interimTranscript.speaker}
+                    </div>
+                    <div className="text-sm italic">{interimTranscript.text}</div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 

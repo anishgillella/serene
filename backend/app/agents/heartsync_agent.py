@@ -23,11 +23,16 @@ class DeepgramTranscriber:
         
     async def connect(self):
         """Connect to Deepgram WebSocket"""
-        # Use API key in URL for proper authentication
-        url = f"wss://api.deepgram.com/v1/listen?punctuate=true&interim_results=false&diarize=true&encoding=linear16&sample_rate=16000&api_key={self.api_key}"
-        logger.info("🔗 Connecting to Deepgram WebSocket...")
-        self.ws = await websockets.connect(url)
-        logger.info("✅ Connected to Deepgram")
+        # Use Authorization header for proper authentication
+        # model=nova-3 provides best diarization accuracy
+        url = "wss://api.deepgram.com/v1/listen?model=nova-3&punctuate=true&interim_results=false&diarize=true&smart_format=true&encoding=linear16&sample_rate=16000"
+        headers = {
+            "Authorization": f"Token {self.api_key}"
+        }
+        logger.info("🔗 Connecting to Deepgram WebSocket with Nova-3 model and diarization enabled...")
+        # Use additional_headers for websockets library v10+
+        self.ws = await websockets.connect(url, additional_headers=headers)
+        logger.info("✅ Connected to Deepgram with speaker diarization")
         
     async def send_audio(self, audio_chunk: bytes):
         """Send audio to Deepgram"""
@@ -35,7 +40,7 @@ class DeepgramTranscriber:
             await self.ws.send(audio_chunk)
             
     async def receive_transcripts(self, callback):
-        """Receive and process transcripts from Deepgram"""
+        """Receive and process transcripts from Deepgram with speaker diarization"""
         try:
             async for message in self.ws:
                 result = json.loads(message)
@@ -44,15 +49,55 @@ class DeepgramTranscriber:
                 if 'channel' in result and 'alternatives' in result['channel']:
                     alternatives = result['channel']['alternatives']
                     if alternatives:
-                        transcript = alternatives[0].get('transcript', '')
-                        if transcript:
-                            logger.info(f"📝 Transcript received: {transcript[:100]}")
-                            await callback(transcript)
+                        alternative = alternatives[0]
+                        transcript = alternative.get('transcript', '').strip()
+                        is_final = result.get('is_final', False)
+                        
+                        if not transcript:
+                            continue
+                        
+                        # Extract speaker ID from words array (most reliable for WebSocket)
+                        speaker_id = None
+                        if 'words' in alternative and len(alternative['words']) > 0:
+                            speaker_counts = {}
+                            words_with_speaker = 0
+                            
+                            for word in alternative['words']:
+                                word_speaker = word.get('speaker')
+                                if word_speaker is not None:
+                                    words_with_speaker += 1
+                                    speaker_counts[word_speaker] = speaker_counts.get(word_speaker, 0) + 1
+                            
+                            if speaker_counts:
+                                speaker_id = max(speaker_counts, key=speaker_counts.get)
+                                logger.info(f"🔍 Speaker detected: {speaker_id} (appears in {speaker_counts[speaker_id]}/{words_with_speaker} words)")
+                            else:
+                                logger.warning(f"⚠️ No speaker info in words array for transcript: {transcript[:50]}...")
+                        
+                        # Fallback: try other locations
+                        if speaker_id is None:
+                            if 'speaker' in result:
+                                speaker_id = result['speaker']
+                            elif 'speaker' in alternative:
+                                speaker_id = alternative.get('speaker')
+                        
+                        # Default to 0 if still no speaker found
+                        if speaker_id is None:
+                            speaker_id = 0
+                            if is_final:
+                                logger.warning(f"⚠️ Final result but no speaker ID found for: {transcript[:50]}...")
+                        
+                        # Only process final results for accurate speaker attribution
+                        if is_final:
+                            logger.info(f"📝 Transcript received (Speaker {speaker_id}): {transcript[:100]}")
+                            await callback(transcript, speaker_id)
                             
         except websockets.exceptions.ConnectionClosed:
             logger.info("Deepgram connection closed")
         except Exception as e:
             logger.error(f"Error receiving transcripts: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
 
 async def audio_sink(transcriber: DeepgramTranscriber, track: rtc.AudioTrack):
     """Read audio from LiveKit track and send to Deepgram"""
@@ -80,14 +125,31 @@ async def entrypoint(ctx: JobContext):
     transcriber = DeepgramTranscriber(settings.DEEPGRAM_API_KEY)
     await transcriber.connect()
 
+    # Speaker mapping for diarization
+    speaker_counter = 0
+    speaker_map = {}
+    
+    def get_speaker_name(speaker_id: int) -> str:
+        """Map Deepgram speaker ID to readable name"""
+        nonlocal speaker_counter
+        if speaker_id not in speaker_map:
+            speaker_counter += 1
+            # Map first speaker to Boyfriend, second to Girlfriend
+            if speaker_counter == 1:
+                speaker_map[speaker_id] = "Boyfriend"
+            else:
+                speaker_map[speaker_id] = "Girlfriend"
+        return speaker_map[speaker_id]
+    
     # Callback to handle transcripts
-    async def on_transcript(text: str):
+    async def on_transcript(text: str, deepgram_speaker_id: int):
         """Called when a transcript is received from Deepgram"""
-        speaker_id = participant.identity if participant else "user"
+        # Use Deepgram's speaker ID for diarization, not LiveKit participant ID
+        speaker_name = get_speaker_name(deepgram_speaker_id)
         current_time = time.time()
         
-        logger.info(f"💾 Saving transcript: {speaker_id}: {text}")
-        conflict_manager.add_transcript(speaker_id, text, current_time)
+        logger.info(f"💾 Saving transcript: {speaker_name} (Deepgram ID: {deepgram_speaker_id}): {text}")
+        conflict_manager.add_transcript(speaker_name, text, current_time)
         
         # Broadcast to frontend
         try:
@@ -95,12 +157,13 @@ async def entrypoint(ctx: JobContext):
                 json.dumps({
                     "type": "transcript",
                     "text": text,
-                    "speaker": speaker_id,
+                    "speaker": speaker_name,
+                    "speaker_id": deepgram_speaker_id,
                     "timestamp": current_time
                 }),
                 reliable=True
             )
-            logger.info(f"📤 Sent to frontend")
+            logger.info(f"📤 Sent to frontend: {speaker_name}")
         except Exception as e:
             logger.error(f"Failed to publish: {e}")
 

@@ -9,6 +9,12 @@ interface LocationState {
   interimTranscript?: string;
 }
 
+interface Message {
+  speaker: 'speaker1' | 'speaker2' | 'heartsync';
+  message: string;
+  isPrivate?: boolean;
+}
+
 const PostFightSession = () => {
   const location = useLocation();
   const state = location.state as LocationState | null;
@@ -16,25 +22,36 @@ const PostFightSession = () => {
   const [isListening, setIsListening] = useState(false);
   const [isPrivateMode, setIsPrivateMode] = useState(false);
   
-  // Initialize messages with HeartSync greeting and transcript from fight capture
-  const [messages, setMessages] = useState<Array<{ speaker: 'you' | 'heartsync'; message: string; isPrivate?: boolean }>>(() => {
-    const initialMessages: Array<{ speaker: 'you' | 'heartsync'; message: string; isPrivate?: boolean }> = [
-      {
-        speaker: 'heartsync',
-        message: 'I noticed there was some tension earlier. How are you feeling now?'
-      }
-    ];
+  // Initialize messages with transcript from fight capture only (no HeartSync greeting)
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const initialMessages: Message[] = [];
     
     // Add transcript from fight capture if available
     if (state?.transcript && state.transcript.length > 0) {
       state.transcript.forEach((line: string) => {
-        // Extract the message text (remove "You: " prefix if present)
-        const messageText = line.replace(/^You:\s*/, '').trim();
-        if (messageText) {
+        // Parse "Boyfriend: text" or "Girlfriend: text" format (also support old "Speaker 1/2" format)
+        const boyfriendMatch = line.match(/^(?:Boyfriend|Speaker\s+1):\s*(.+)$/i);
+        const girlfriendMatch = line.match(/^(?:Girlfriend|Speaker\s+2):\s*(.+)$/i);
+        
+        if (boyfriendMatch) {
           initialMessages.push({
-            speaker: 'you',
-            message: messageText
+            speaker: 'speaker1',
+            message: boyfriendMatch[1].trim()
           });
+        } else if (girlfriendMatch) {
+          initialMessages.push({
+            speaker: 'speaker2',
+            message: girlfriendMatch[1].trim()
+          });
+        } else {
+          // Fallback: treat as Boyfriend if no match
+          const messageText = line.replace(/^(?:You|Boyfriend|Girlfriend|Speaker\s+\d+):\s*/i, '').trim();
+          if (messageText) {
+            initialMessages.push({
+              speaker: 'speaker1',
+              message: messageText
+            });
+          }
         }
       });
     }
@@ -46,7 +63,7 @@ const PostFightSession = () => {
     // Simulate user speaking after a delay
     if (!isListening) {
       setTimeout(() => {
-        addMessage('you', 'I felt ignored when they were on their phone during our conversation.', isPrivateMode);
+        addMessage('speaker1', 'I felt ignored when they were on their phone during our conversation.', isPrivateMode);
         // Simulate HeartSync response
         setTimeout(() => {
           addMessage('heartsync', 'I understand that felt hurtful. Have you shared how that specific behavior makes you feel?');
@@ -55,7 +72,7 @@ const PostFightSession = () => {
       }, 2000);
     }
   };
-  const addMessage = (speaker: 'you' | 'heartsync', message: string, isPrivate: boolean = false) => {
+  const addMessage = (speaker: 'speaker1' | 'speaker2' | 'heartsync', message: string, isPrivate: boolean = false) => {
     setMessages(prev => [...prev, {
       speaker,
       message,
@@ -75,8 +92,31 @@ const PostFightSession = () => {
         </p>
       </div>
       <div className="flex-1 overflow-y-auto mb-4 px-1">
-        <div className="space-y-1">
-          {messages.map((msg, idx) => <TranscriptBubble key={idx} speaker={msg.speaker} message={msg.message} isPrivate={msg.isPrivate} />)}
+        <div className="space-y-2">
+          {messages.map((msg, idx) => {
+            // Handle different speaker types
+            if (msg.speaker === 'heartsync') {
+              return <TranscriptBubble key={idx} speaker="heartsync" message={msg.message} isPrivate={msg.isPrivate} />;
+            } else {
+              // Boyfriend on left, Girlfriend on right
+              const isBoyfriend = msg.speaker === 'speaker1';
+              return (
+                <div key={idx} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
+                  <div className={`rounded-2xl py-2 px-4 max-w-[80%] ${
+                    isBoyfriend 
+                      ? 'bg-blue-100 text-gray-800' 
+                      : 'bg-pink-100 text-gray-800'
+                  } ${msg.isPrivate ? 'opacity-70' : ''}`}>
+                    <div className="text-xs font-semibold mb-1 text-gray-600">
+                      {isBoyfriend ? 'Boyfriend' : 'Girlfriend'}
+                      {msg.isPrivate && <span className="ml-2 text-rose-500 text-[10px]">Private</span>}
+                    </div>
+                    <div className="text-sm">{msg.message}</div>
+                  </div>
+                </div>
+              );
+            }
+          })}
         </div>
       </div>
       <div className="flex flex-col items-center">
