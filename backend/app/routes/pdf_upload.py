@@ -7,6 +7,9 @@ from typing import Optional
 from app.services.ocr_service import ocr_service
 from app.services.embeddings_service import embeddings_service
 from app.services.pinecone_service import pinecone_service
+from app.services.db_service import db_service
+from app.services.s3_service import s3_service
+from app.config import settings
 import uuid
 
 logger = logging.getLogger(__name__)
@@ -17,7 +20,7 @@ router = APIRouter(prefix="/api/pdfs", tags=["pdfs"])
 async def upload_pdf(
     file: UploadFile = File(...),
     relationship_id: str = Form(...),
-    pdf_type: str = Form(...),  # "boyfriend_profile", "girlfriend_profile", "handbook", "notes"
+    pdf_type: str = Form(...),  # "boyfriend_profile", "girlfriend_profile", "handbook"
     partner_id: Optional[str] = Form(None)
 ):
     """
@@ -26,7 +29,7 @@ async def upload_pdf(
     Request:
     - file: PDF file
     - relationship_id: Relationship identifier
-    - pdf_type: Type of PDF (boyfriend_profile, girlfriend_profile, handbook, notes)
+    - pdf_type: Type of PDF (boyfriend_profile, girlfriend_profile, handbook)
     - partner_id: Optional partner ID for profile PDFs
     """
     try:
@@ -46,15 +49,44 @@ async def upload_pdf(
         namespace_map = {
             "boyfriend_profile": "profiles",
             "girlfriend_profile": "profiles",
-            "handbook": "handbooks",
-            "notes": "notes"
+            "handbook": "handbooks"
         }
-        namespace = namespace_map.get(pdf_type, "documents")
+        namespace = namespace_map.get(pdf_type)
+        
+        if not namespace:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid pdf_type: {pdf_type}. Must be one of: boyfriend_profile, girlfriend_profile, handbook"
+            )
         
         # Create unique ID
         pdf_id = str(uuid.uuid4())
         
-        # Store in Pinecone
+        # 1. Upload PDF to AWS S3
+        file_path = None
+        s3_url = None
+        try:
+            # Determine folder based on PDF type (single bucket with folders)
+            folder = "profiles" if pdf_type in ["boyfriend_profile", "girlfriend_profile"] else "handbooks"
+            file_path = f"{folder}/{relationship_id}/{pdf_id}.pdf"
+            
+            # Upload PDF file to S3
+            s3_url = s3_service.upload_file(
+                file_path=file_path,
+                file_content=pdf_bytes,
+                content_type="application/pdf"
+            )
+            if s3_url:
+                logger.info(f"✅ Stored PDF in S3: {file_path} (URL: {s3_url})")
+            else:
+                logger.error(f"❌ Failed to upload PDF to S3: {file_path}")
+        except Exception as e:
+            logger.error(f"❌ Error storing PDF in S3: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # Continue even if S3 fails - Pinecone storage is primary
+        
+        # 2. Store in Pinecone (vector embeddings for semantic search)
         # Note: Pinecone metadata has size limits, so we store full text in a separate field
         # For profile PDFs, we'll store the full text since it's needed for personalization
         metadata = {
@@ -114,11 +146,34 @@ async def upload_pdf(
         
         logger.info(f"✅ Stored PDF in Pinecone: {pdf_id}, namespace: {namespace}")
         
+        # 3. Store metadata in database (with S3 path)
+        profile_id = None
+        if db_service and file_path:
+            try:
+                profile_id = db_service.create_profile(
+                    relationship_id=relationship_id,
+                    pdf_type=pdf_type,
+                    partner_id=partner_id,
+                    filename=file.filename,
+                    file_path=s3_url or file_path,  # Store S3 URL or path
+                    pdf_id=pdf_id,
+                    extracted_text_length=len(extracted_text)
+                )
+                logger.info(f"✅ Stored profile metadata in database: {profile_id}")
+            except Exception as e:
+                logger.error(f"❌ Error storing profile metadata in database: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # Continue even if database fails
+        
         return {
             "success": True,
             "pdf_id": pdf_id,
+            "profile_id": profile_id,
             "extracted_text_length": len(extracted_text),
             "namespace": namespace,
+            "file_path": s3_url or file_path,
+            "s3_url": s3_url,
             "message": "PDF uploaded and processed successfully"
         }
         

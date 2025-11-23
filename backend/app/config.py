@@ -14,6 +14,12 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_KEY: str
     
+    # AWS S3 Configuration
+    AWS_ACCESS_KEY_ID: str
+    AWS_SECRET_ACCESS_KEY: str
+    AWS_REGION: str = "us-east-1"
+    S3_BUCKET_NAME: str = "serene-relationship-mediator"  # S3 bucket name
+    
     class Config:
         env_file = ".env"
 

@@ -132,8 +132,7 @@ const Upload = () => {
   const pdfTypeOptions = [
     { value: 'boyfriend_profile', label: 'Boyfriend Profile', description: 'Character description for boyfriend' },
     { value: 'girlfriend_profile', label: 'Girlfriend Profile', description: 'Character description for girlfriend' },
-    { value: 'handbook', label: 'Relationship Handbook', description: 'Shared relationship guide or handbook' },
-    { value: 'notes', label: 'Notes', description: 'Custom notes or documents' }
+    { value: 'handbook', label: 'Relationship Handbook', description: 'Shared relationship guide or handbook' }
   ];
 
   return (

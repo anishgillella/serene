@@ -72,9 +72,52 @@ const PostFightSession = () => {
       console.log('✅ Initial conflictId from URL:', urlConflictId);
       return urlConflictId;
     }
-    console.log('⚠️ No conflictId found in initial state');
+    console.log('⚠️ No conflictId found in initial state - will generate one');
     return null;
   });
+  
+  // Auto-generate conflict ID if none exists (runs once on mount)
+  useEffect(() => {
+    const generateConflictId = async () => {
+      if (!conflictId) {
+        console.log('🆔 No conflict ID found, generating new one...');
+        try {
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+          const response = await fetch(`${apiUrl}/api/conflicts/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.conflict_id) {
+              console.log('✅ Generated new conflict ID:', data.conflict_id);
+              setConflictId(data.conflict_id);
+              // Update URL to include conflict_id for bookmarking
+              const newUrl = `/post-fight?conflict_id=${data.conflict_id}`;
+              window.history.replaceState({ ...location.state, conflict_id: data.conflict_id }, '', newUrl);
+            }
+          } else {
+            // Fallback: Generate UUID on frontend if API fails
+            const fallbackId = crypto.randomUUID();
+            console.log('⚠️ API failed, using fallback UUID:', fallbackId);
+            setConflictId(fallbackId);
+            const newUrl = `/post-fight?conflict_id=${fallbackId}`;
+            window.history.replaceState({ ...location.state, conflict_id: fallbackId }, '', newUrl);
+          }
+        } catch (error) {
+          // Fallback: Generate UUID on frontend if API fails
+          const fallbackId = crypto.randomUUID();
+          console.log('⚠️ Error generating conflict ID, using fallback UUID:', fallbackId);
+          setConflictId(fallbackId);
+          const newUrl = `/post-fight?conflict_id=${fallbackId}`;
+          window.history.replaceState({ ...location.state, conflict_id: fallbackId }, '', newUrl);
+        }
+      }
+    };
+    
+    generateConflictId();
+  }, []); // Only run once on mount
   
   // Update conflictId when location state changes (e.g., navigating from History)
   useEffect(() => {
@@ -108,11 +151,14 @@ const PostFightSession = () => {
     }
   }, [state?.conflict_id, location.search, location.state, conflictId]);
   
-  const [analysis, setAnalysis] = useState<ConflictAnalysis | null>(null);
-  const [repairPlan, setRepairPlan] = useState<RepairPlan | null>(null);
+  const [analysisBoyfriend, setAnalysisBoyfriend] = useState<ConflictAnalysis | null>(null);
+  const [analysisGirlfriend, setAnalysisGirlfriend] = useState<ConflictAnalysis | null>(null);
+  const [repairPlanBoyfriend, setRepairPlanBoyfriend] = useState<RepairPlan | null>(null);
+  const [repairPlanGirlfriend, setRepairPlanGirlfriend] = useState<RepairPlan | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
   const [activeView, setActiveView] = useState<'analysis' | 'repair' | null>(null);
+  const [povView, setPovView] = useState<'boyfriend' | 'girlfriend'>('boyfriend'); // POV switcher for both analysis and repair plans
   const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -298,109 +344,191 @@ const PostFightSession = () => {
     }
   };
 
-  const handleAnalyzeConflict = useCallback(async () => {
+  const handleGenerateAnalysis = useCallback(async () => {
     if (!conflictId) {
       alert('Conflict ID not available. Please ensure the fight was properly captured.');
       return;
     }
 
-    // If analysis is already loaded, just show it without re-fetching
-    if (analysis) {
-      console.log('📦 Using cached analysis');
+    // If already generated, just show it
+    if (analysisBoyfriend && analysisGirlfriend) {
       setActiveView('analysis');
-      addMessage('heartsync', `I've analyzed your conflict. Check the analysis panel on the right.`);
       return;
     }
 
-    // Prevent duplicate requests while loading
+    // Prevent duplicate requests
     if (loadingAnalysis) {
-      console.log('⏳ Analysis already loading, ignoring duplicate click');
-      setActiveView('analysis');
       return;
     }
 
     setLoadingAnalysis(true);
-    setActiveView('analysis');
     
     try {
-      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/analyze`, {
+      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-analysis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partner_id: 'partner_a' })
+        body: JSON.stringify({})
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-        throw new Error(errorData.detail || `Analysis failed: ${response.statusText}`);
+        throw new Error(errorData.detail || `Generation failed: ${response.statusText}`);
       }
 
       const data = await response.json();
-      if (data.success && data.analysis) {
-        setAnalysis(data.analysis);
-        addMessage('heartsync', `I've analyzed your conflict. Check the analysis panel on the right.`);
+      console.log('📦 Analysis API Response:', data);
+      
+      if (data.success) {
+        if (data.analysis_boyfriend) {
+          console.log('✅ Setting analysisBoyfriend');
+          setAnalysisBoyfriend(data.analysis_boyfriend);
+        }
+        if (data.analysis_girlfriend) {
+          console.log('✅ Setting analysisGirlfriend');
+          setAnalysisGirlfriend(data.analysis_girlfriend);
+        }
+        addMessage('heartsync', `I've analyzed your conflict from both perspectives. Use the POV switcher to see each partner's view.`);
+        setActiveView('analysis');
       } else {
-        throw new Error(data.detail || 'Analysis failed');
+        throw new Error(data.detail || 'Generation failed');
       }
     } catch (error: any) {
-      console.error('Error analyzing conflict:', error);
+      console.error('Error generating analysis:', error);
       const errorMessage = error.message || error.toString() || 'Unknown error';
       addMessage('heartsync', `Sorry, I encountered an error: ${errorMessage}. Please check the backend logs.`);
     } finally {
       setLoadingAnalysis(false);
     }
-  }, [conflictId, apiUrl, addMessage, analysis, loadingAnalysis]);
+  }, [conflictId, apiUrl, addMessage, analysisBoyfriend, analysisGirlfriend, loadingAnalysis]);
 
-  const handleGetRepairPlan = useCallback(async () => {
+  const handleGenerateRepairPlans = useCallback(async () => {
     if (!conflictId) {
       alert('Conflict ID not available. Please ensure the fight was properly captured.');
       return;
     }
 
-    // If repair plan is already loaded, just show it without re-fetching
-    if (repairPlan) {
-      console.log('📦 Using cached repair plan');
+    // If already generated, just show it
+    if (repairPlanBoyfriend && repairPlanGirlfriend) {
       setActiveView('repair');
-      addMessage('heartsync', `I've prepared a personalized repair plan. Check the repair plan panel on the right.`);
       return;
     }
 
-    // Prevent duplicate requests while loading
+    // Prevent duplicate requests
     if (loadingRepairPlan) {
-      console.log('⏳ Repair plan already loading, ignoring duplicate click');
-      setActiveView('repair');
       return;
     }
 
     setLoadingRepairPlan(true);
-    setActiveView('repair');
     
     try {
-      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/repair-plan`, {
+      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-repair-plans`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ partner_id: 'partner_a' })
+        body: JSON.stringify({})
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-        throw new Error(errorData.detail || `Repair plan failed: ${response.statusText}`);
+        throw new Error(errorData.detail || `Generation failed: ${response.statusText}`);
       }
 
       const data = await response.json();
-      if (data.success && data.repair_plan) {
-        setRepairPlan(data.repair_plan);
-        addMessage('heartsync', `I've prepared a personalized repair plan. Check the repair plan panel on the right.`);
+      console.log('📦 Repair Plans API Response:', data);
+      
+      if (data.success) {
+        if (data.repair_plan_boyfriend) {
+          console.log('✅ Setting repairPlanBoyfriend');
+          setRepairPlanBoyfriend(data.repair_plan_boyfriend);
+        }
+        if (data.repair_plan_girlfriend) {
+          console.log('✅ Setting repairPlanGirlfriend');
+          setRepairPlanGirlfriend(data.repair_plan_girlfriend);
+        }
+        addMessage('heartsync', `I've prepared personalized repair plans for both partners. Use the POV switcher to see each partner's view.`);
+        setActiveView('repair');
       } else {
-        throw new Error(data.detail || 'Repair plan generation failed');
+        throw new Error(data.detail || 'Generation failed');
       }
     } catch (error: any) {
-      console.error('Error getting repair plan:', error);
+      console.error('Error generating repair plans:', error);
       const errorMessage = error.message || error.toString() || 'Unknown error';
       addMessage('heartsync', `Sorry, I encountered an error: ${errorMessage}. Please check the backend logs.`);
     } finally {
       setLoadingRepairPlan(false);
     }
-  }, [conflictId, apiUrl, addMessage, repairPlan, loadingRepairPlan]);
+  }, [conflictId, apiUrl, addMessage, repairPlanBoyfriend, repairPlanGirlfriend, loadingRepairPlan]);
+
+  const handleGenerateAll = useCallback(async () => {
+    if (!conflictId) {
+      alert('Conflict ID not available. Please ensure the fight was properly captured.');
+      return;
+    }
+
+    // Prevent duplicate requests while loading
+    if (loadingAnalysis || loadingRepairPlan) {
+      console.log('⏳ Already generating, please wait...');
+      return;
+    }
+
+    setLoadingAnalysis(true);
+    setLoadingRepairPlan(true);
+    
+    try {
+      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || `Generation failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      console.log('📦 API Response:', data);
+      console.log('📦 Response keys:', Object.keys(data));
+      console.log('📦 Has analysis_boyfriend:', !!data.analysis_boyfriend);
+      console.log('📦 Has analysis_girlfriend:', !!data.analysis_girlfriend);
+      
+      if (data.success) {
+        if (data.analysis_boyfriend) {
+          console.log('✅ Setting analysisBoyfriend:', data.analysis_boyfriend);
+          setAnalysisBoyfriend(data.analysis_boyfriend);
+        } else {
+          console.warn('⚠️ No analysis_boyfriend in response');
+        }
+        if (data.analysis_girlfriend) {
+          console.log('✅ Setting analysisGirlfriend:', data.analysis_girlfriend);
+          setAnalysisGirlfriend(data.analysis_girlfriend);
+        } else {
+          console.warn('⚠️ No analysis_girlfriend in response');
+        }
+        if (data.repair_plan_boyfriend) {
+          console.log('✅ Setting repairPlanBoyfriend');
+          setRepairPlanBoyfriend(data.repair_plan_boyfriend);
+        }
+        if (data.repair_plan_girlfriend) {
+          console.log('✅ Setting repairPlanGirlfriend');
+          setRepairPlanGirlfriend(data.repair_plan_girlfriend);
+        }
+        addMessage('heartsync', `I've analyzed your conflict from both perspectives and prepared personalized repair plans for both partners. Use the POV switcher to see each partner's view.`);
+        // Auto-show analysis tab
+        setActiveView('analysis');
+      } else {
+        throw new Error(data.detail || 'Generation failed');
+      }
+    } catch (error: any) {
+      console.error('Error generating analysis and repair plans:', error);
+      const errorMessage = error.message || error.toString() || 'Unknown error';
+      addMessage('heartsync', `Sorry, I encountered an error: ${errorMessage}. Please check the backend logs.`);
+    } finally {
+      setLoadingAnalysis(false);
+      setLoadingRepairPlan(false);
+    }
+  }, [conflictId, apiUrl, addMessage, loadingAnalysis, loadingRepairPlan]);
+
+  // Removed handleGetRepairPlan - now handled by handleGenerateAll
 
   // Debug logging for render state
   useEffect(() => {
@@ -409,13 +537,17 @@ const PostFightSession = () => {
       hasState: !!state,
       stateConflictId: state?.conflict_id,
       messagesCount: messages.length,
-      analysis: !!analysis,
-      repairPlan: !!repairPlan,
+      analysisBoyfriend: !!analysisBoyfriend,
+      analysisGirlfriend: !!analysisGirlfriend,
+      repairPlanBoyfriend: !!repairPlanBoyfriend,
+      repairPlanGirlfriend: !!repairPlanGirlfriend,
+      povView,
+      activeView,
       locationPath: location.pathname,
       locationState: location.state,
       locationKey: location.key
     });
-  }, [conflictId, state, messages.length, analysis, repairPlan, location.pathname, location.state, location.key]);
+  }, [conflictId, state, messages.length, analysisBoyfriend, analysisGirlfriend, repairPlanBoyfriend, repairPlanGirlfriend, povView, activeView, location.pathname, location.state, location.key]);
 
   // Always render something - add error boundary
   if (!conflictId && !state?.conflict_id) {
@@ -444,64 +576,75 @@ const PostFightSession = () => {
         {/* Left Side - Conversation */}
         <div className="flex flex-col flex-1 min-w-0 border-r border-gray-200 pr-6">
           {/* Action Buttons - Top Left */}
-          <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-gray-200">
+          <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-gray-200">
             {!conflictId && (
-              <div className="w-full bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-2">
-                <p className="text-sm text-yellow-800 font-medium">
-                  ⚠️ No conflict ID found
+              <div className="w-full bg-blue-50 border border-blue-200 rounded-lg p-3 mb-2">
+                <p className="text-sm text-blue-800 font-medium">
+                  🆔 Generating conflict ID...
                 </p>
-                <p className="text-xs text-yellow-600 mt-1">
-                  State: {state ? JSON.stringify(state) : 'null'} | Location state: {location.state ? JSON.stringify(location.state) : 'null'}
-                </p>
-                <p className="text-xs text-yellow-600 mt-1">
-                  {state?.conflict_id ? 'Found conflict_id in state, loading...' : 'Please select a conflict from History.'}
+                <p className="text-xs text-blue-600 mt-1">
+                  Creating a new session for you...
                 </p>
               </div>
             )}
-            <button
-              onClick={handleAnalyzeConflict}
-              disabled={!conflictId}
-              className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                activeView === 'analysis' 
-                  ? 'bg-purple-200 text-purple-800 border-2 border-purple-400' 
-                  : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
-              }`}
-              title={loadingAnalysis ? 'Analysis in progress... (running in background)' : analysis ? 'Results cached - instant display' : 'Analyze this conflict'}
-            >
-              {loadingAnalysis && <LoaderIcon size={16} className="mr-2 animate-spin" />}
-              {!loadingAnalysis && <SparklesIcon size={16} className="mr-2" />}
-              {loadingAnalysis ? 'Analyzing...' : analysis ? 'View Analysis' : 'Analyze Conflict'}
-            </button>
             
-            <button
-              onClick={handleGetRepairPlan}
-              disabled={!conflictId}
-              className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                activeView === 'repair' 
-                  ? 'bg-rose-200 text-rose-800 border-2 border-rose-400' 
-                  : 'bg-rose-100 hover:bg-rose-200 text-rose-700'
-              }`}
-              title={loadingRepairPlan ? 'Repair plan in progress... (running in background)' : repairPlan ? 'Results cached - instant display' : 'Generate repair plan'}
-            >
-              {loadingRepairPlan && <LoaderIcon size={16} className="mr-2 animate-spin" />}
-              {!loadingRepairPlan && <HeartIcon size={16} className="mr-2" />}
-              {loadingRepairPlan ? 'Generating...' : repairPlan ? 'View Repair Plan' : 'Get Repair Plan'}
-            </button>
-            
-            <button
-              onClick={() => {
-                console.log('🔘 Talk to Mediator button clicked', { conflictId });
-                setIsMediatorModalOpen(true);
-              }}
-              disabled={!conflictId}
-              className="flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed bg-blue-100 hover:bg-blue-200 text-blue-700"
-            >
-              <MessageCircleIcon size={16} className="mr-2" />
-              Talk to Mediator
-            </button>
-            
+            {/* View Buttons - Always visible */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={async () => {
+                  if (!analysisBoyfriend && !analysisGirlfriend) {
+                    // Generate both analyses
+                    await handleGenerateAnalysis();
+                  }
+                  setActiveView('analysis');
+                }}
+                disabled={!conflictId || loadingAnalysis}
+                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
+                  activeView === 'analysis' 
+                    ? 'bg-purple-200 text-purple-800 border-2 border-purple-400' 
+                    : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
+                }`}
+                title="View conflict analysis (generates both perspectives)"
+              >
+                {loadingAnalysis && <LoaderIcon size={16} className="mr-2 animate-spin" />}
+                {!loadingAnalysis && <SparklesIcon size={16} className="mr-2" />}
+                {loadingAnalysis ? 'Generating Analysis...' : 'View Analysis'}
+              </button>
+              
+              <button
+                onClick={async () => {
+                  if (!repairPlanBoyfriend && !repairPlanGirlfriend) {
+                    // Generate both repair plans
+                    await handleGenerateRepairPlans();
+                  }
+                  setActiveView('repair');
+                }}
+                disabled={!conflictId || loadingRepairPlan}
+                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
+                  activeView === 'repair' 
+                    ? 'bg-rose-200 text-rose-800 border-2 border-rose-400' 
+                    : 'bg-rose-100 hover:bg-rose-200 text-rose-700'
+                }`}
+                title="View repair plans (generates both perspectives)"
+              >
+                {loadingRepairPlan && <LoaderIcon size={16} className="mr-2 animate-spin" />}
+                {!loadingRepairPlan && <HeartIcon size={16} className="mr-2" />}
+                {loadingRepairPlan ? 'Generating Repair Plans...' : 'View Repair Plan'}
+              </button>
+              
+              <button
+                onClick={() => {
+                  console.log('🔘 Talk to Mediator button clicked', { conflictId, activeView, povView });
+                  setIsMediatorModalOpen(true);
+                }}
+                disabled={!conflictId}
+                className="flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed bg-blue-100 hover:bg-blue-200 text-blue-700"
+              >
+                <MessageCircleIcon size={16} className="mr-2" />
+                Talk to Mediator
+              </button>
+            </div>
           </div>
-
 
           {/* Messages/Transcript */}
           <div className="flex-1 overflow-y-auto pr-2">
@@ -565,142 +708,313 @@ const PostFightSession = () => {
                 </button>
               </div>
               
+              {/* POV Switcher for Analysis - Only shows AFTER generation */}
+              {(analysisBoyfriend || analysisGirlfriend) && (
+                <div className="mb-4">
+                  <div className="flex gap-2 pb-3 border-b-2 border-purple-200">
+                    <button
+                      onClick={() => setPovView('boyfriend')}
+                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
+                        povView === 'boyfriend'
+                          ? 'bg-blue-100 text-blue-800 border-2 border-blue-400 shadow-md'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
+                      }`}
+                    >
+                      👤 Boyfriend's Perspective
+                    </button>
+                    <button
+                      onClick={() => setPovView('girlfriend')}
+                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
+                        povView === 'girlfriend'
+                          ? 'bg-pink-100 text-pink-800 border-2 border-pink-400 shadow-md'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
+                      }`}
+                    >
+                      👤 Girlfriend's Perspective
+                    </button>
+                  </div>
+                </div>
+              )}
+              
               {loadingAnalysis ? (
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-purple-500 mr-3" />
-                  <span className="text-gray-600">Analyzing conflict with AI...</span>
+                  <span className="text-gray-600">Analyzing conflict from both perspectives...</span>
                 </div>
-              ) : analysis ? (
-                <div className="space-y-4">
-                  {/* Summary */}
-                  <div className="bg-white rounded-xl p-4 border border-purple-100">
-                    <button
-                      onClick={() => toggleSection('summary')}
-                      className="w-full flex items-center justify-between mb-2"
-                    >
-                      <div className="flex items-center">
-                        <LightbulbIcon size={18} className="text-purple-500 mr-2" />
-                        <h4 className="font-semibold text-gray-800">Summary</h4>
+              ) : (analysisBoyfriend || analysisGirlfriend) ? (
+                <>
+                  {povView === 'boyfriend' && analysisBoyfriend && (
+                    <div className="space-y-4">
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                        <p className="text-sm text-blue-800 font-medium">👤 Boyfriend's Perspective</p>
+                        <p className="text-xs text-blue-600 mt-1">Analysis personalized based on your profile and communication style</p>
                       </div>
-                      {expandedSections.has('summary') ? 
-                        <ChevronUpIcon size={18} className="text-gray-400" /> : 
-                        <ChevronDownIcon size={18} className="text-gray-400" />
-                      }
-                    </button>
-                    {expandedSections.has('summary') && (
-                      <p className="text-gray-700 leading-relaxed">{analysis.fight_summary}</p>
-                    )}
-                  </div>
-
-                  {/* Root Causes */}
-                  {analysis.root_causes.length > 0 && (
-                    <div className="bg-white rounded-xl p-4 border border-purple-100">
-                      <button
-                        onClick={() => toggleSection('root_causes')}
-                        className="w-full flex items-center justify-between mb-2"
-                      >
-                        <div className="flex items-center">
-                          <AlertCircleIcon size={18} className="text-orange-500 mr-2" />
-                          <h4 className="font-semibold text-gray-800">Root Causes</h4>
-                          <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
-                            {analysis.root_causes.length}
-                          </span>
-                        </div>
-                        {expandedSections.has('root_causes') ? 
-                          <ChevronUpIcon size={18} className="text-gray-400" /> : 
-                          <ChevronDownIcon size={18} className="text-gray-400" />
-                        }
-                      </button>
-                      {expandedSections.has('root_causes') && (
-                        <ul className="space-y-2">
-                          {analysis.root_causes.map((cause, idx) => (
-                            <li key={idx} className="flex items-start text-gray-700">
-                              <span className="text-orange-500 mr-2 mt-1">•</span>
-                              <span>{cause}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Unmet Needs */}
-                  {(analysis.unmet_needs_boyfriend.length > 0 || analysis.unmet_needs_girlfriend.length > 0) && (
-                    <div className="grid grid-cols-1 gap-4">
-                      {analysis.unmet_needs_boyfriend.length > 0 && (
-                        <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                            <span className="bg-blue-200 px-2 py-0.5 rounded text-xs mr-2">Boyfriend</span>
-                            Unmet Needs
-                          </h4>
-                          <ul className="space-y-1.5">
-                            {analysis.unmet_needs_boyfriend.map((need, idx) => (
-                              <li key={idx} className="text-sm text-gray-700 flex items-start">
-                                <span className="text-blue-500 mr-2 mt-1">•</span>
-                                <span>{need}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
                       
-                      {analysis.unmet_needs_girlfriend.length > 0 && (
-                        <div className="bg-pink-50 rounded-xl p-4 border border-pink-100">
-                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                            <span className="bg-pink-200 px-2 py-0.5 rounded text-xs mr-2">Girlfriend</span>
-                            Unmet Needs
-                          </h4>
-                          <ul className="space-y-1.5">
-                            {analysis.unmet_needs_girlfriend.map((need, idx) => (
-                              <li key={idx} className="text-sm text-gray-700 flex items-start">
-                                <span className="text-pink-500 mr-2 mt-1">•</span>
-                                <span>{need}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                      {/* Summary */}
+                      <div className="bg-white rounded-xl p-4 border border-purple-100">
+                        <button
+                          onClick={() => toggleSection('summary')}
+                          className="w-full flex items-center justify-between mb-2"
+                        >
+                          <div className="flex items-center">
+                            <LightbulbIcon size={18} className="text-purple-500 mr-2" />
+                            <h4 className="font-semibold text-gray-800">Summary</h4>
+                          </div>
+                          {expandedSections.has('summary') ? 
+                            <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                            <ChevronDownIcon size={18} className="text-gray-400" />
+                          }
+                        </button>
+                        {expandedSections.has('summary') && (
+                          <p className="text-gray-700 leading-relaxed">{analysisBoyfriend.fight_summary}</p>
+                        )}
+                      </div>
 
-                  {/* Escalation Points */}
-                  {analysis.escalation_points && analysis.escalation_points.length > 0 && (
-                    <div className="bg-white rounded-xl p-4 border border-red-100">
-                      <button
-                        onClick={() => toggleSection('escalation')}
-                        className="w-full flex items-center justify-between mb-2"
-                      >
-                        <div className="flex items-center">
-                          <AlertCircleIcon size={18} className="text-red-500 mr-2" />
-                          <h4 className="font-semibold text-gray-800">Escalation Points</h4>
-                          <span className="ml-2 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
-                            {analysis.escalation_points.length}
-                          </span>
-                        </div>
-                        {expandedSections.has('escalation') ? 
-                          <ChevronUpIcon size={18} className="text-gray-400" /> : 
-                          <ChevronDownIcon size={18} className="text-gray-400" />
-                        }
-                      </button>
-                      {expandedSections.has('escalation') && (
-                        <div className="space-y-3">
-                          {analysis.escalation_points.map((point, idx) => (
-                            <div key={idx} className="bg-red-50 rounded-lg p-3">
-                              <p className="font-medium text-gray-800 text-sm">{point.reason}</p>
-                              {point.description && (
-                                <p className="text-xs text-gray-600 mt-1">{point.description}</p>
-                              )}
+                      {/* Root Causes */}
+                      {analysisBoyfriend.root_causes.length > 0 && (
+                        <div className="bg-white rounded-xl p-4 border border-purple-100">
+                          <button
+                            onClick={() => toggleSection('root_causes')}
+                            className="w-full flex items-center justify-between mb-2"
+                          >
+                            <div className="flex items-center">
+                              <AlertCircleIcon size={18} className="text-orange-500 mr-2" />
+                              <h4 className="font-semibold text-gray-800">Root Causes</h4>
+                              <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                                {analysisBoyfriend.root_causes.length}
+                              </span>
                             </div>
-                          ))}
+                            {expandedSections.has('root_causes') ? 
+                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                              <ChevronDownIcon size={18} className="text-gray-400" />
+                            }
+                          </button>
+                          {expandedSections.has('root_causes') && (
+                            <ul className="space-y-2">
+                              {analysisBoyfriend.root_causes.map((cause, idx) => (
+                                <li key={idx} className="flex items-start text-gray-700">
+                                  <span className="text-orange-500 mr-2 mt-1">•</span>
+                                  <span>{cause}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Unmet Needs */}
+                      {(analysisBoyfriend.unmet_needs_boyfriend.length > 0 || analysisBoyfriend.unmet_needs_girlfriend.length > 0) && (
+                        <div className="grid grid-cols-1 gap-4">
+                          {analysisBoyfriend.unmet_needs_boyfriend.length > 0 && (
+                            <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
+                              <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                                <span className="bg-blue-200 px-2 py-0.5 rounded text-xs mr-2">Your Needs</span>
+                                Unmet Needs
+                              </h4>
+                              <ul className="space-y-1.5">
+                                {analysisBoyfriend.unmet_needs_boyfriend.map((need, idx) => (
+                                  <li key={idx} className="text-sm text-gray-700 flex items-start">
+                                    <span className="text-blue-500 mr-2 mt-1">•</span>
+                                    <span>{need}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          
+                          {analysisBoyfriend.unmet_needs_girlfriend.length > 0 && (
+                            <div className="bg-pink-50 rounded-xl p-4 border border-pink-100">
+                              <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                                <span className="bg-pink-200 px-2 py-0.5 rounded text-xs mr-2">Partner's Needs</span>
+                                Unmet Needs
+                              </h4>
+                              <ul className="space-y-1.5">
+                                {analysisBoyfriend.unmet_needs_girlfriend.map((need, idx) => (
+                                  <li key={idx} className="text-sm text-gray-700 flex items-start">
+                                    <span className="text-pink-500 mr-2 mt-1">•</span>
+                                    <span>{need}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Escalation Points */}
+                      {analysisBoyfriend.escalation_points && analysisBoyfriend.escalation_points.length > 0 && (
+                        <div className="bg-white rounded-xl p-4 border border-red-100">
+                          <button
+                            onClick={() => toggleSection('escalation')}
+                            className="w-full flex items-center justify-between mb-2"
+                          >
+                            <div className="flex items-center">
+                              <AlertCircleIcon size={18} className="text-red-500 mr-2" />
+                              <h4 className="font-semibold text-gray-800">Escalation Points</h4>
+                              <span className="ml-2 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                                {analysisBoyfriend.escalation_points.length}
+                              </span>
+                            </div>
+                            {expandedSections.has('escalation') ? 
+                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                              <ChevronDownIcon size={18} className="text-gray-400" />
+                            }
+                          </button>
+                          {expandedSections.has('escalation') && (
+                            <div className="space-y-3">
+                              {analysisBoyfriend.escalation_points.map((point, idx) => (
+                                <div key={idx} className="bg-red-50 rounded-lg p-3">
+                                  <p className="font-medium text-gray-800 text-sm">{point.reason}</p>
+                                  {point.description && (
+                                    <p className="text-xs text-gray-600 mt-1">{point.description}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   )}
-                </div>
+                  
+                  {povView === 'girlfriend' && analysisGirlfriend && (
+                    <div className="space-y-4">
+                      <div className="bg-pink-50 border border-pink-200 rounded-lg p-3 mb-4">
+                        <p className="text-sm text-pink-800 font-medium">👤 Girlfriend's Perspective</p>
+                        <p className="text-xs text-pink-600 mt-1">Analysis personalized based on your profile and communication style</p>
+                      </div>
+                      
+                      {/* Summary */}
+                      <div className="bg-white rounded-xl p-4 border border-purple-100">
+                        <button
+                          onClick={() => toggleSection('summary')}
+                          className="w-full flex items-center justify-between mb-2"
+                        >
+                          <div className="flex items-center">
+                            <LightbulbIcon size={18} className="text-purple-500 mr-2" />
+                            <h4 className="font-semibold text-gray-800">Summary</h4>
+                          </div>
+                          {expandedSections.has('summary') ? 
+                            <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                            <ChevronDownIcon size={18} className="text-gray-400" />
+                          }
+                        </button>
+                        {expandedSections.has('summary') && (
+                          <p className="text-gray-700 leading-relaxed">{analysisGirlfriend.fight_summary}</p>
+                        )}
+                      </div>
+
+                      {/* Root Causes */}
+                      {analysisGirlfriend.root_causes.length > 0 && (
+                        <div className="bg-white rounded-xl p-4 border border-purple-100">
+                          <button
+                            onClick={() => toggleSection('root_causes')}
+                            className="w-full flex items-center justify-between mb-2"
+                          >
+                            <div className="flex items-center">
+                              <AlertCircleIcon size={18} className="text-orange-500 mr-2" />
+                              <h4 className="font-semibold text-gray-800">Root Causes</h4>
+                              <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
+                                {analysisGirlfriend.root_causes.length}
+                              </span>
+                            </div>
+                            {expandedSections.has('root_causes') ? 
+                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                              <ChevronDownIcon size={18} className="text-gray-400" />
+                            }
+                          </button>
+                          {expandedSections.has('root_causes') && (
+                            <ul className="space-y-2">
+                              {analysisGirlfriend.root_causes.map((cause, idx) => (
+                                <li key={idx} className="flex items-start text-gray-700">
+                                  <span className="text-orange-500 mr-2 mt-1">•</span>
+                                  <span>{cause}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Unmet Needs */}
+                      {(analysisGirlfriend.unmet_needs_boyfriend.length > 0 || analysisGirlfriend.unmet_needs_girlfriend.length > 0) && (
+                        <div className="grid grid-cols-1 gap-4">
+                          {analysisGirlfriend.unmet_needs_boyfriend.length > 0 && (
+                            <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
+                              <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                                <span className="bg-blue-200 px-2 py-0.5 rounded text-xs mr-2">Partner's Needs</span>
+                                Unmet Needs
+                              </h4>
+                              <ul className="space-y-1.5">
+                                {analysisGirlfriend.unmet_needs_boyfriend.map((need, idx) => (
+                                  <li key={idx} className="text-sm text-gray-700 flex items-start">
+                                    <span className="text-blue-500 mr-2 mt-1">•</span>
+                                    <span>{need}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          
+                          {analysisGirlfriend.unmet_needs_girlfriend.length > 0 && (
+                            <div className="bg-pink-50 rounded-xl p-4 border border-pink-100">
+                              <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                                <span className="bg-pink-200 px-2 py-0.5 rounded text-xs mr-2">Your Needs</span>
+                                Unmet Needs
+                              </h4>
+                              <ul className="space-y-1.5">
+                                {analysisGirlfriend.unmet_needs_girlfriend.map((need, idx) => (
+                                  <li key={idx} className="text-sm text-gray-700 flex items-start">
+                                    <span className="text-pink-500 mr-2 mt-1">•</span>
+                                    <span>{need}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Escalation Points */}
+                      {analysisGirlfriend.escalation_points && analysisGirlfriend.escalation_points.length > 0 && (
+                        <div className="bg-white rounded-xl p-4 border border-red-100">
+                          <button
+                            onClick={() => toggleSection('escalation')}
+                            className="w-full flex items-center justify-between mb-2"
+                          >
+                            <div className="flex items-center">
+                              <AlertCircleIcon size={18} className="text-red-500 mr-2" />
+                              <h4 className="font-semibold text-gray-800">Escalation Points</h4>
+                              <span className="ml-2 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                                {analysisGirlfriend.escalation_points.length}
+                              </span>
+                            </div>
+                            {expandedSections.has('escalation') ? 
+                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                              <ChevronDownIcon size={18} className="text-gray-400" />
+                            }
+                          </button>
+                          {expandedSections.has('escalation') && (
+                            <div className="space-y-3">
+                              {analysisGirlfriend.escalation_points.map((point, idx) => (
+                                <div key={idx} className="bg-red-50 rounded-lg p-3">
+                                  <p className="font-medium text-gray-800 text-sm">{point.reason}</p>
+                                  {point.description && (
+                                    <p className="text-xs text-gray-600 mt-1">{point.description}</p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <SparklesIcon size={48} className="mx-auto mb-3 text-gray-300" />
-                  <p>Click "Analyze Conflict" to see insights</p>
+                  <p>Click "Generate Analysis & Repair Plans" to see insights</p>
                 </div>
               )}
             </div>
@@ -723,86 +1037,201 @@ const PostFightSession = () => {
                 </button>
               </div>
               
+              {/* POV Switcher for Repair Plans - Only shows AFTER generation */}
+              {(repairPlanBoyfriend || repairPlanGirlfriend) && (
+                <div className="mb-4">
+                  <div className="flex gap-2 pb-3 border-b-2 border-rose-200">
+                    <button
+                      onClick={() => setPovView('boyfriend')}
+                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
+                        povView === 'boyfriend'
+                          ? 'bg-blue-100 text-blue-800 border-2 border-blue-400 shadow-md'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
+                      }`}
+                    >
+                      👤 Boyfriend's Perspective
+                    </button>
+                    <button
+                      onClick={() => setPovView('girlfriend')}
+                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
+                        povView === 'girlfriend'
+                          ? 'bg-pink-100 text-pink-800 border-2 border-pink-400 shadow-md'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
+                      }`}
+                    >
+                      👤 Girlfriend's Perspective
+                    </button>
+                  </div>
+                </div>
+              )}
+              
               {loadingRepairPlan ? (
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-rose-500 mr-3" />
-                  <span className="text-gray-600">Generating personalized repair plan...</span>
+                  <span className="text-gray-600">Generating personalized repair plans...</span>
                 </div>
-              ) : repairPlan ? (
-                <div className="space-y-4">
-                  {/* Steps */}
-                  <div className="bg-white rounded-xl p-4 border border-rose-100">
-                    <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                      <LightbulbIcon size={18} className="text-rose-500 mr-2" />
-                      Action Steps
-                    </h4>
-                    <ol className="space-y-3">
-                      {repairPlan.steps.map((step, idx) => (
-                        <li key={idx} className="flex items-start text-gray-700">
-                          <span className="bg-rose-100 text-rose-700 font-semibold rounded-full w-6 h-6 flex items-center justify-center text-xs mr-3 mt-0.5 flex-shrink-0">
-                            {idx + 1}
-                          </span>
-                          <span className="flex-1">{step}</span>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
+              ) : (repairPlanBoyfriend || repairPlanGirlfriend) ? (
+                <>
+                  {povView === 'boyfriend' && repairPlanBoyfriend && (
+                    <div className="space-y-4">
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                        <p className="text-sm text-blue-800 font-medium">👤 Boyfriend's Personalized Repair Plan</p>
+                        <p className="text-xs text-blue-600 mt-1">Tailored based on your profile and this conflict</p>
+                      </div>
+                      
+                      {/* Steps */}
+                      <div className="bg-white rounded-xl p-4 border border-rose-100">
+                        <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                          <LightbulbIcon size={18} className="text-rose-500 mr-2" />
+                          Action Steps
+                        </h4>
+                        <ol className="space-y-3">
+                          {repairPlanBoyfriend.steps.map((step, idx) => (
+                            <li key={idx} className="flex items-start text-gray-700">
+                              <span className="bg-blue-100 text-blue-700 font-semibold rounded-full w-6 h-6 flex items-center justify-center text-xs mr-3 mt-0.5 flex-shrink-0">
+                                {idx + 1}
+                              </span>
+                              <span className="flex-1">{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
 
-                  {/* Apology Script */}
-                  <div className="bg-gradient-to-r from-rose-50 to-pink-50 rounded-xl p-5 border-2 border-rose-200">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-semibold text-gray-800 flex items-center">
-                        <HeartIcon size={18} className="text-rose-500 mr-2" />
-                        Apology Script
-                      </h4>
-                      <button
-                        onClick={() => copyToClipboard(repairPlan.apology_script, 'apology')}
-                        className="text-gray-400 hover:text-gray-600 transition-colors"
-                        title="Copy to clipboard"
-                      >
-                        {copiedText === 'apology' ? (
-                          <CheckIcon size={18} className="text-green-500" />
-                        ) : (
-                          <CopyIcon size={18} />
-                        )}
-                      </button>
-                    </div>
-                    <p className="text-gray-700 leading-relaxed italic whitespace-pre-wrap">
-                      {repairPlan.apology_script}
-                    </p>
-                  </div>
+                      {/* Apology Script */}
+                      <div className="bg-gradient-to-r from-blue-50 to-rose-50 rounded-xl p-5 border-2 border-blue-200">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="font-semibold text-gray-800 flex items-center">
+                            <HeartIcon size={18} className="text-blue-500 mr-2" />
+                            Apology Script
+                          </h4>
+                          <button
+                            onClick={() => copyToClipboard(repairPlanBoyfriend.apology_script, 'apology-bf')}
+                            className="text-gray-400 hover:text-gray-600 transition-colors"
+                            title="Copy to clipboard"
+                          >
+                            {copiedText === 'apology-bf' ? (
+                              <CheckIcon size={18} className="text-green-500" />
+                            ) : (
+                              <CopyIcon size={18} />
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed italic whitespace-pre-wrap">
+                          {repairPlanBoyfriend.apology_script}
+                        </p>
+                      </div>
 
-                  {/* Timing */}
-                  <div className="bg-white rounded-xl p-4 border border-rose-100">
-                    <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                      <ClockIcon size={18} className="text-blue-500 mr-2" />
-                      Timing Suggestion
-                    </h4>
-                    <p className="text-gray-700 text-sm">{repairPlan.timing_suggestion}</p>
-                  </div>
+                      {/* Timing */}
+                      <div className="bg-white rounded-xl p-4 border border-rose-100">
+                        <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                          <ClockIcon size={18} className="text-blue-500 mr-2" />
+                          Timing Suggestion
+                        </h4>
+                        <p className="text-gray-700 text-sm">{repairPlanBoyfriend.timing_suggestion}</p>
+                      </div>
 
-                  {/* Risk Factors */}
-                  {repairPlan.risk_factors && repairPlan.risk_factors.length > 0 && (
-                    <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-200">
-                      <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                        <ShieldIcon size={18} className="text-yellow-600 mr-2" />
-                        Things to Avoid
-                      </h4>
-                      <ul className="space-y-2">
-                        {repairPlan.risk_factors.map((risk, idx) => (
-                          <li key={idx} className="flex items-start text-sm text-gray-700">
-                            <span className="text-yellow-600 mr-2 mt-1">⚠</span>
-                            <span>{risk}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      {/* Risk Factors */}
+                      {repairPlanBoyfriend.risk_factors && repairPlanBoyfriend.risk_factors.length > 0 && (
+                        <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-200">
+                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                            <ShieldIcon size={18} className="text-yellow-600 mr-2" />
+                            Things to Avoid
+                          </h4>
+                          <ul className="space-y-2">
+                            {repairPlanBoyfriend.risk_factors.map((risk, idx) => (
+                              <li key={idx} className="flex items-start text-sm text-gray-700">
+                                <span className="text-yellow-600 mr-2 mt-1">⚠</span>
+                                <span>{risk}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                  
+                  {povView === 'girlfriend' && repairPlanGirlfriend && (
+                    <div className="space-y-4">
+                      <div className="bg-pink-50 border border-pink-200 rounded-lg p-3 mb-4">
+                        <p className="text-sm text-pink-800 font-medium">👤 Girlfriend's Personalized Repair Plan</p>
+                        <p className="text-xs text-pink-600 mt-1">Tailored based on your profile and this conflict</p>
+                      </div>
+                      
+                      {/* Steps */}
+                      <div className="bg-white rounded-xl p-4 border border-rose-100">
+                        <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                          <LightbulbIcon size={18} className="text-rose-500 mr-2" />
+                          Action Steps
+                        </h4>
+                        <ol className="space-y-3">
+                          {repairPlanGirlfriend.steps.map((step, idx) => (
+                            <li key={idx} className="flex items-start text-gray-700">
+                              <span className="bg-pink-100 text-pink-700 font-semibold rounded-full w-6 h-6 flex items-center justify-center text-xs mr-3 mt-0.5 flex-shrink-0">
+                                {idx + 1}
+                              </span>
+                              <span className="flex-1">{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+
+                      {/* Apology Script */}
+                      <div className="bg-gradient-to-r from-pink-50 to-rose-50 rounded-xl p-5 border-2 border-pink-200">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="font-semibold text-gray-800 flex items-center">
+                            <HeartIcon size={18} className="text-pink-500 mr-2" />
+                            Apology Script
+                          </h4>
+                          <button
+                            onClick={() => copyToClipboard(repairPlanGirlfriend.apology_script, 'apology-gf')}
+                            className="text-gray-400 hover:text-gray-600 transition-colors"
+                            title="Copy to clipboard"
+                          >
+                            {copiedText === 'apology-gf' ? (
+                              <CheckIcon size={18} className="text-green-500" />
+                            ) : (
+                              <CopyIcon size={18} />
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed italic whitespace-pre-wrap">
+                          {repairPlanGirlfriend.apology_script}
+                        </p>
+                      </div>
+
+                      {/* Timing */}
+                      <div className="bg-white rounded-xl p-4 border border-rose-100">
+                        <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                          <ClockIcon size={18} className="text-pink-500 mr-2" />
+                          Timing Suggestion
+                        </h4>
+                        <p className="text-gray-700 text-sm">{repairPlanGirlfriend.timing_suggestion}</p>
+                      </div>
+
+                      {/* Risk Factors */}
+                      {repairPlanGirlfriend.risk_factors && repairPlanGirlfriend.risk_factors.length > 0 && (
+                        <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-200">
+                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                            <ShieldIcon size={18} className="text-yellow-600 mr-2" />
+                            Things to Avoid
+                          </h4>
+                          <ul className="space-y-2">
+                            {repairPlanGirlfriend.risk_factors.map((risk, idx) => (
+                              <li key={idx} className="flex items-start text-sm text-gray-700">
+                                <span className="text-yellow-600 mr-2 mt-1">⚠</span>
+                                <span>{risk}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <HeartIcon size={48} className="mx-auto mb-3 text-gray-300" />
-                  <p>Click "Get Repair Plan" to see personalized steps</p>
+                  <p>Click "Generate Analysis & Repair Plans" to see personalized steps</p>
                 </div>
               )}
             </div>
@@ -824,7 +1253,13 @@ const PostFightSession = () => {
         <MediatorModal
           isOpen={isMediatorModalOpen}
           onClose={() => setIsMediatorModalOpen(false)}
-          conflictId={conflictId}
+          conflictId={conflictId || ''}
+                    context={{
+                      activeView,
+                      povView,
+                      hasAnalysis: !!(analysisBoyfriend || analysisGirlfriend),
+                      hasRepairPlans: !!(repairPlanBoyfriend || repairPlanGirlfriend)
+                    }}
         />
       )}
     </div>

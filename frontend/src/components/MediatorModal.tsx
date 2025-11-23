@@ -6,6 +6,12 @@ interface MediatorModalProps {
   isOpen: boolean;
   onClose: () => void;
   conflictId: string;
+  context?: {
+    activeView?: 'analysis' | 'repair' | null;
+    povView?: 'boyfriend' | 'girlfriend';
+    hasAnalysis?: boolean;
+    hasRepairPlans?: boolean;
+  };
 }
 
 interface TranscriptEntry {
@@ -14,14 +20,14 @@ interface TranscriptEntry {
   timestamp: Date;
 }
 
-const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflictId }) => {
+const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflictId, context }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
   const roomRef = useRef<Room | null>(null);
   const localTracksRef = useRef<any[]>([]);
 
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
   // Generate token from backend
   const generateToken = async (conflictId: string) => {
@@ -125,29 +131,20 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
       });
 
       room.on(RoomEvent.TrackPublished, (publication, participant) => {
-        console.log('Track published:', publication.kind, 'by', participant.identity, 'trackName:', publication.trackName);
+        console.log('🔊 Track published:', publication.kind, 'by', participant.identity, 'trackName:', publication.trackName, 'subscribed:', publication.isSubscribed);
         if (publication.kind === 'audio') {
-          // Subscribe to all audio tracks, especially from agent
-          if (participant.identity.startsWith('agent')) {
-            console.log('Subscribing to agent audio track:', publication.trackName);
-            publication.setSubscribed(true);
-          }
+          // Subscribe to ALL audio tracks (agent will publish TTS audio)
+          console.log('✅ Subscribing to audio track from', participant.identity);
+          publication.setSubscribed(true);
         }
       });
 
       room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
-        console.log('Track subscribed:', track.kind, 'from', participant.identity, 'trackName:', publication.trackName);
+        console.log('🎧 Track subscribed:', track.kind, 'from', participant.identity);
         if (track.kind === 'audio') {
-          console.log('Attaching and playing audio track');
+          // Simple approach - EXACTLY like working Livekit Voice Agent
           const audioElement = track.attach();
-          document.body.appendChild(audioElement); // Ensure it's in DOM
-          audioElement.play().catch(err => {
-            console.error('Error playing audio:', err);
-            // Try again after a short delay
-            setTimeout(() => {
-              audioElement.play().catch(e => console.error('Retry play failed:', e));
-            }, 100);
-          });
+          audioElement.play().catch(err => console.error('Error playing audio:', err));
         }
       });
 

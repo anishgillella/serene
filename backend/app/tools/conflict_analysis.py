@@ -45,11 +45,12 @@ async def analyze_conflict_transcript(
     try:
         logger.info(f"🔍 Analyzing conflict {conflict_id}")
         
-        # Use LLM to extract structured analysis with partner profiles
+        # Use LLM to extract structured analysis with partner profiles, personalized from partner's POV
         analysis = llm_service.analyze_conflict(
             transcript_text=transcript_text,
             conflict_id=conflict_id,
             response_model=ConflictAnalysis,
+            partner_id=partner_id,  # Pass partner_id for POV personalization
             boyfriend_profile=boyfriend_profile,
             girlfriend_profile=girlfriend_profile
         )

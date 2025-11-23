@@ -170,10 +170,34 @@ class PineconeService:
                 filter={"conflict_id": {"$eq": conflict_id}}
             )
             if results.matches:
+                logger.info(f"✅ Found conflict {conflict_id} in namespace {namespace}")
                 return results.matches[0]
+            else:
+                logger.warning(f"⚠️ No conflict found with conflict_id={conflict_id} in namespace {namespace}")
+                # Try fetching by direct ID format (transcript_{conflict_id}, analysis_{conflict_id}, etc.)
+                id_prefix = namespace.rstrip('s')  # transcripts -> transcript, analysis -> analysis
+                direct_id = f"{id_prefix}_{conflict_id}"
+                logger.info(f"🔄 Trying direct ID fetch: {direct_id}")
+                try:
+                    fetch_result = self.index.fetch(
+                        ids=[direct_id],
+                        namespace=namespace
+                    )
+                    if fetch_result.vectors and direct_id in fetch_result.vectors:
+                        vector_data = fetch_result.vectors[direct_id]
+                        # Create a match-like object
+                        class MatchResult:
+                            def __init__(self, metadata):
+                                self.metadata = metadata
+                        logger.info(f"✅ Found conflict {conflict_id} via direct ID fetch")
+                        return MatchResult(vector_data.get('metadata', {}))
+                except Exception as fetch_error:
+                    logger.error(f"❌ Error fetching by direct ID: {fetch_error}")
             return None
         except Exception as e:
             logger.error(f"❌ Error retrieving conflict {conflict_id}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
 # Singleton instance

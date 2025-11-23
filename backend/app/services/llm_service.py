@@ -20,7 +20,7 @@ class LLMService:
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.OPENROUTER_API_KEY,
-            timeout=60.0,  # 60 second timeout for API calls
+            timeout=30.0,  # 30 second timeout for faster API calls (GPT-4o-mini is fast)
         )
         self.model = "openai/gpt-4o-mini"
         logger.info("✅ Initialized LLM service (GPT-4o-mini via OpenRouter)")
@@ -157,10 +157,14 @@ You must respond in valid JSON format matching this exact schema.
         transcript_text: str,
         conflict_id: str,
         response_model: Type[T],
+        partner_id: Optional[str] = None,  # "partner_a" (boyfriend) or "partner_b" (girlfriend)
         boyfriend_profile: Optional[str] = None,
         girlfriend_profile: Optional[str] = None
     ) -> T:
-        """Analyze conflict transcript with structured output, using partner profiles for personalization"""
+        """Analyze conflict transcript with structured output, personalized from a specific partner's POV"""
+        
+        # Determine which partner's perspective we're analyzing from
+        is_boyfriend_pov = partner_id == "partner_a" if partner_id else None
         
         # Gender-aware context
         gender_context = """
@@ -170,37 +174,67 @@ IMPORTANT CONTEXT FOR ANALYSIS:
 - These are general patterns - use partner profiles for specific personalization
 """
         
+        # Build personalized profile context based on POV
         profile_context = ""
-        if boyfriend_profile:
-            profile_context += f"\nBOYFRIEND'S PROFILE:\n{boyfriend_profile}\n"
-        if girlfriend_profile:
-            profile_context += f"\nGIRLFRIEND'S PROFILE:\n{girlfriend_profile}\n"
+        pov_context = ""
+        
+        if is_boyfriend_pov is True:
+            pov_context = """
+ANALYZING FROM BOYFRIEND'S PERSPECTIVE:
+- Focus on what HE experienced, felt, and needed
+- Understand HIS triggers, HIS unmet needs, HIS communication style
+- Consider HIS profile and personality traits
+- What would HE say about this conflict? How did HE perceive what happened?
+"""
+            if boyfriend_profile:
+                profile_context += f"\nBOYFRIEND'S PROFILE (Your Perspective):\n{boyfriend_profile}\n"
+            if girlfriend_profile:
+                profile_context += f"\nGIRLFRIEND'S PROFILE (Partner's Perspective):\n{girlfriend_profile}\n"
+        elif is_boyfriend_pov is False:
+            pov_context = """
+ANALYZING FROM GIRLFRIEND'S PERSPECTIVE:
+- Focus on what SHE experienced, felt, and needed
+- Understand HER triggers, HER unmet needs, HER communication style
+- Consider HER profile and personality traits
+- What would SHE say about this conflict? How did SHE perceive what happened?
+"""
+            if girlfriend_profile:
+                profile_context += f"\nGIRLFRIEND'S PROFILE (Your Perspective):\n{girlfriend_profile}\n"
+            if boyfriend_profile:
+                profile_context += f"\nBOYFRIEND'S PROFILE (Partner's Perspective):\n{boyfriend_profile}\n"
+        else:
+            # Neutral analysis (both perspectives)
+            if boyfriend_profile:
+                profile_context += f"\nBOYFRIEND'S PROFILE:\n{boyfriend_profile}\n"
+            if girlfriend_profile:
+                profile_context += f"\nGIRLFRIEND'S PROFILE:\n{girlfriend_profile}\n"
         
         # Use FULL transcript - no truncation
-        logger.info(f"📝 Using full transcript: {len(transcript_text)} characters")
+        logger.info(f"📝 Using full transcript: {len(transcript_text)} characters, POV: {partner_id or 'neutral'}")
         
-        prompt = f"""Analyze this relationship conflict transcript with deep personalization and gender-aware insights.
+        prompt = f"""Analyze this relationship conflict transcript with deep personalization from a specific partner's perspective.
 
 Conflict ID: {conflict_id}
 
 {gender_context}
+{pov_context}
 {profile_context}
 
 TRANSCRIPT:
 {transcript_text}
 
-ANALYSIS REQUIREMENTS:
-1. **Fight Summary**: Be SPECIFIC to this couple. Reference actual things said, not generic advice.
-2. **Root Causes**: Identify SPECIFIC underlying issues from THIS transcript. What are the REAL problems here?
-3. **Escalation Points**: Exact moments where things escalated - quote what was said.
+ANALYSIS REQUIREMENTS (Personalized from {partner_id or "both partners"} perspective):
+1. **Fight Summary**: Be SPECIFIC to this couple. Reference actual things said, not generic advice. Write from the perspective of the partner whose POV you're analyzing.
+2. **Root Causes**: Identify SPECIFIC underlying issues from THIS transcript. What are the REAL problems here? Consider what THIS partner would identify as root causes.
+3. **Escalation Points**: Exact moments where things escalated - quote what was said. Focus on what triggered THIS partner.
 4. **Unmet Needs**:
-   - Boyfriend's unmet needs: Consider that men often need respect, appreciation, feeling heard without judgment. What SPECIFIC needs did he express?
-   - Girlfriend's unmet needs: Consider that women often need to feel heard, emotional connection, care shown through actions. What SPECIFIC needs did she express?
-5. **Communication Breakdowns**: SPECIFIC moments where communication failed - what was said, what was misunderstood? Return as an array of STRINGS, not objects. Each string should describe one breakdown moment.
+   - Boyfriend's unmet needs: Consider that men often need respect, appreciation, feeling heard without judgment. What SPECIFIC needs did he express? Analyze from HIS perspective.
+   - Girlfriend's unmet needs: Consider that women often need to feel heard, emotional connection, care shown through actions. What SPECIFIC needs did she express? Analyze from HER perspective.
+5. **Communication Breakdowns**: SPECIFIC moments where communication failed - what was said, what was misunderstood? Return as an array of STRINGS, not objects. Focus on breakdowns from THIS partner's perspective.
 
 IMPORTANT: Return communication_breakdowns as an array of strings (not objects). Example: ["Adrian assumed Elara was criticizing him when she was just expressing concern", "Elara felt dismissed when Adrian changed the subject"]
 
-Be SPECIFIC to this couple and this conflict. Reference actual quotes and moments from the transcript. Avoid generic relationship advice."""
+Be SPECIFIC to this couple and this conflict. Reference actual quotes and moments from the transcript. Write the analysis from the perspective of the partner whose POV you're analyzing."""
 
         messages = [
             {
@@ -209,12 +243,19 @@ Be SPECIFIC to this couple and this conflict. Reference actual quotes and moment
             }
         ]
         
-        return self.structured_output(
+        logger.info(f"🚀 Calling GPT-4o-mini for analysis (transcript: {len(transcript_text)} chars, POV: {partner_id or 'neutral'})")
+        start_time = __import__('time').time()
+        
+        result = self.structured_output(
             messages=messages,
             response_model=response_model,
             temperature=0.7,
             max_tokens=2000
         )
+        
+        elapsed = __import__('time').time() - start_time
+        logger.info(f"✅ LLM analysis complete in {elapsed:.2f}s")
+        return result
     
     def generate_repair_plan(
         self,

@@ -33,12 +33,22 @@ const History = () => {
       const response = await fetch(`${apiUrl}/api/conflicts`);
       
       if (!response.ok) {
-        throw new Error('Failed to load conflicts');
+        // Only throw error for actual server errors (5xx)
+        if (response.status >= 500) {
+          throw new Error('Server error loading conflicts');
+        }
+        // For 404 or other client errors, treat as empty list (no conflicts exist yet)
+        setConflicts([]);
+        setLoading(false);
+        return;
       }
       
       const data = await response.json();
+      // Handle empty response gracefully - empty array is valid
+      const conflictsList = data.conflicts || [];
+      
       // Sort by started_at descending (most recent first)
-      const sortedConflicts = (data.conflicts || []).sort((a: Conflict, b: Conflict) => {
+      const sortedConflicts = conflictsList.sort((a: Conflict, b: Conflict) => {
         const dateA = new Date(a.started_at).getTime();
         const dateB = new Date(b.started_at).getTime();
         return dateB - dateA;
@@ -47,8 +57,9 @@ const History = () => {
       // No conversations to load - Private Rant removed
       setConflicts(sortedConflicts.map(conflict => ({ ...conflict, conversations: [], messageCount: 0 })));
     } catch (err: any) {
-      setError(err.message || 'Failed to load conflict history');
+      // Only show error for actual network/server errors
       console.error('Error loading conflicts:', err);
+      setError(err.message || 'Failed to load conflict history');
     } finally {
       setLoading(false);
     }

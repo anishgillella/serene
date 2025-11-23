@@ -1,0 +1,6 @@
+
+# Credentials and sensitive files
+*credentials*.csv
+*credentials*.json
+*credentials*.txt
+anish_credentials*.csv

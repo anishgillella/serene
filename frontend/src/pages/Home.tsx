@@ -16,9 +16,9 @@ const Home = () => {
           <MicIcon size={18} className="mr-2 text-rose-500" />
           <span className="font-medium">Start Fight Capture</span>
         </button>
-        <button onClick={() => navigate('/post-fight')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
-          <HeartIcon size={18} className="mr-2 text-rose-500" />
-          <span className="font-medium">Enter Post-Fight Session</span>
+        <button onClick={() => navigate('/history')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
+          <Clock size={18} className="mr-2 text-rose-500" />
+          <span className="font-medium">View History</span>
         </button>
         <button onClick={() => navigate('/analytics')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
           <BarChartIcon size={18} className="mr-2 text-rose-500" />
@@ -27,10 +27,6 @@ const Home = () => {
         <button onClick={() => navigate('/upload')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
           <FileTextIcon size={18} className="mr-2 text-rose-500" />
           <span className="font-medium">Upload PDFs & Data</span>
-        </button>
-        <button onClick={() => navigate('/history')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
-          <Clock size={18} className="mr-2 text-rose-500" />
-          <span className="font-medium">History</span>
         </button>
       </div>
     </div>;

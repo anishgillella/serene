@@ -21,9 +21,13 @@ async def router_entrypoint(ctx: JobContext):
     """Route to appropriate agent based on room name"""
     room_name = ctx.room.name
     
+    # Enhanced logging to debug why agent isn't being triggered
+    logger.info("=" * 80)
     logger.info(f"🔵 Router called for room: {room_name}")
     logger.info(f"📋 Room ID: {ctx.room.sid}, Job ID: {ctx.job.id}")
     logger.info(f"👥 Participants in room: {len(ctx.room.remote_participants)}")
+    logger.info(f"🏷️ Room name pattern check: starts with 'mediator-' = {room_name.startswith('mediator-')}")
+    logger.info("=" * 80)
     
     try:
         # Route mediator rooms to mediator agent
