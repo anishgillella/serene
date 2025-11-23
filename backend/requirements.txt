@@ -1,11 +1,12 @@
 fastapi
 uvicorn
 python-dotenv
-livekit-agents
+livekit-agents[silero]
 livekit-plugins-openai
 livekit-plugins-deepgram
 livekit-plugins-elevenlabs
 livekit-plugins-silero
+livekit-plugins-noise-cancellation
 livekit-api
 openai
 deepgram-sdk

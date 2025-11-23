@@ -1,23 +1,39 @@
 #!/usr/bin/env python3
 """
 Agent startup script for LiveKit Cloud deployment
+Routes to appropriate agent based on room name
 """
+import logging
+import sys
 from livekit.agents import cli, JobContext
 from app.agents.heartsync_agent import entrypoint as heartsync_entrypoint
+from app.agents.mediator_agent import mediator_entrypoint
 from livekit.agents import WorkerOptions
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("agent-router")
+
 async def router_entrypoint(ctx: JobContext):
-    """Route to Fight Capture agent"""
+    """Route to appropriate agent based on room name"""
     room_name = ctx.room.name
-    import logging
-    import sys
-    logger = logging.getLogger("agent-router")
     
     logger.info(f"🔵 Router called for room: {room_name}")
+    logger.info(f"📋 Room ID: {ctx.room.sid}, Job ID: {ctx.job.id}")
+    logger.info(f"👥 Participants in room: {len(ctx.room.remote_participants)}")
     
     try:
-        # All rooms use Fight Capture agent
-        await heartsync_entrypoint(ctx)
+        # Route mediator rooms to mediator agent
+        if room_name.startswith("mediator-"):
+            logger.info(f"🎙️ Routing to Mediator Agent for room: {room_name}")
+            await mediator_entrypoint(ctx)
+        else:
+            # Default to Fight Capture agent
+            logger.info(f"🎤 Routing to Fight Capture Agent for room: {room_name}")
+            await heartsync_entrypoint(ctx)
     except Exception as e:
         logger.error(f"❌ Error in router_entrypoint: {e}")
         import traceback
@@ -25,5 +41,8 @@ async def router_entrypoint(ctx: JobContext):
         raise
 
 if __name__ == "__main__":
+    logger.info("🚀 Starting agent server...")
+    logger.info("📡 Waiting for job requests from LiveKit Cloud...")
+    logger.info("💡 Make sure your agent is configured in LiveKit Cloud dashboard")
     cli.run_app(WorkerOptions(entrypoint_fnc=router_entrypoint))
 

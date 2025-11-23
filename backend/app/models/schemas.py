@@ -77,3 +77,4 @@ class RepairPlan(BaseModel):
     generated_at: datetime = Field(default_factory=datetime.now)
 
 
+

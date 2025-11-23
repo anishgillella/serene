@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from livekit import api
 from .config import settings
@@ -45,6 +45,43 @@ async def get_token(room_name: str, participant_name: str):
         room=room_name,
     ))
     return {"token": token.to_jwt()}
+
+@app.post("/api/mediator/token")
+async def get_mediator_token(request: dict = Body(...)):
+    """
+    Generate a token for mediator room.
+    Room name format: mediator-{conflict_id}
+    
+    Request body:
+    {
+        "conflict_id": "string",
+        "participant_name": "string" (optional, defaults to "user")
+    }
+    """
+    conflict_id = request.get("conflict_id")
+    participant_name = request.get("participant_name", "user")
+    
+    if not conflict_id:
+        raise HTTPException(status_code=400, detail="conflict_id is required")
+    
+    room_name = f"mediator-{conflict_id}"
+    token = api.AccessToken(
+        settings.LIVEKIT_API_KEY,
+        settings.LIVEKIT_API_SECRET
+    )
+    token.with_identity(participant_name)
+    token.with_name(participant_name)
+    token.with_grants(api.VideoGrants(
+        room_join=True,
+        room=room_name,
+        can_publish=True,
+        can_subscribe=True,
+    ))
+    return {
+        "token": token.to_jwt(),
+        "room": room_name,
+        "url": settings.LIVEKIT_URL
+    }
 
 @app.get("/api/conflicts/{conflict_id}")
 async def get_conflict(conflict_id: str):

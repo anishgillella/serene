@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import TranscriptBubble from '../components/TranscriptBubble';
+import MediatorModal from '../components/MediatorModal';
 import { 
   BarChart4Icon, RefreshCwIcon, FileTextIcon, SparklesIcon, HeartIcon, 
   LoaderIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon, 
-  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, XIcon, SendIcon, MicIcon, MicOffIcon
+  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, XIcon, SendIcon, MicIcon, MicOffIcon, MessageCircleIcon
 } from 'lucide-react';
 
 interface LocationState {
@@ -112,6 +113,7 @@ const PostFightSession = () => {
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
   const [activeView, setActiveView] = useState<'analysis' | 'repair' | null>(null);
+  const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
   
@@ -302,6 +304,21 @@ const PostFightSession = () => {
       return;
     }
 
+    // If analysis is already loaded, just show it without re-fetching
+    if (analysis) {
+      console.log('📦 Using cached analysis');
+      setActiveView('analysis');
+      addMessage('heartsync', `I've analyzed your conflict. Check the analysis panel on the right.`);
+      return;
+    }
+
+    // Prevent duplicate requests while loading
+    if (loadingAnalysis) {
+      console.log('⏳ Analysis already loading, ignoring duplicate click');
+      setActiveView('analysis');
+      return;
+    }
+
     setLoadingAnalysis(true);
     setActiveView('analysis');
     
@@ -331,11 +348,26 @@ const PostFightSession = () => {
     } finally {
       setLoadingAnalysis(false);
     }
-  }, [conflictId, apiUrl, addMessage]);
+  }, [conflictId, apiUrl, addMessage, analysis, loadingAnalysis]);
 
-  const handleGetRepairPlan = async () => {
+  const handleGetRepairPlan = useCallback(async () => {
     if (!conflictId) {
       alert('Conflict ID not available. Please ensure the fight was properly captured.');
+      return;
+    }
+
+    // If repair plan is already loaded, just show it without re-fetching
+    if (repairPlan) {
+      console.log('📦 Using cached repair plan');
+      setActiveView('repair');
+      addMessage('heartsync', `I've prepared a personalized repair plan. Check the repair plan panel on the right.`);
+      return;
+    }
+
+    // Prevent duplicate requests while loading
+    if (loadingRepairPlan) {
+      console.log('⏳ Repair plan already loading, ignoring duplicate click');
+      setActiveView('repair');
       return;
     }
 
@@ -368,7 +400,7 @@ const PostFightSession = () => {
     } finally {
       setLoadingRepairPlan(false);
     }
-  };
+  }, [conflictId, apiUrl, addMessage, repairPlan, loadingRepairPlan]);
 
   // Debug logging for render state
   useEffect(() => {
@@ -428,28 +460,44 @@ const PostFightSession = () => {
             )}
             <button
               onClick={handleAnalyzeConflict}
-              disabled={!conflictId || loadingAnalysis}
+              disabled={!conflictId}
               className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
                 activeView === 'analysis' 
                   ? 'bg-purple-200 text-purple-800 border-2 border-purple-400' 
                   : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
               }`}
+              title={loadingAnalysis ? 'Analysis in progress... (running in background)' : analysis ? 'Results cached - instant display' : 'Analyze this conflict'}
             >
-              <SparklesIcon size={16} className="mr-2" />
-              {loadingAnalysis ? 'Analyzing...' : 'Analyze Conflict'}
+              {loadingAnalysis && <LoaderIcon size={16} className="mr-2 animate-spin" />}
+              {!loadingAnalysis && <SparklesIcon size={16} className="mr-2" />}
+              {loadingAnalysis ? 'Analyzing...' : analysis ? 'View Analysis' : 'Analyze Conflict'}
             </button>
             
             <button
               onClick={handleGetRepairPlan}
-              disabled={!conflictId || loadingRepairPlan}
+              disabled={!conflictId}
               className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
                 activeView === 'repair' 
                   ? 'bg-rose-200 text-rose-800 border-2 border-rose-400' 
                   : 'bg-rose-100 hover:bg-rose-200 text-rose-700'
               }`}
+              title={loadingRepairPlan ? 'Repair plan in progress... (running in background)' : repairPlan ? 'Results cached - instant display' : 'Generate repair plan'}
             >
-              <HeartIcon size={16} className="mr-2" />
-              {loadingRepairPlan ? 'Generating...' : 'Get Repair Plan'}
+              {loadingRepairPlan && <LoaderIcon size={16} className="mr-2 animate-spin" />}
+              {!loadingRepairPlan && <HeartIcon size={16} className="mr-2" />}
+              {loadingRepairPlan ? 'Generating...' : repairPlan ? 'View Repair Plan' : 'Get Repair Plan'}
+            </button>
+            
+            <button
+              onClick={() => {
+                console.log('🔘 Talk to Mediator button clicked', { conflictId });
+                setIsMediatorModalOpen(true);
+              }}
+              disabled={!conflictId}
+              className="flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed bg-blue-100 hover:bg-blue-200 text-blue-700"
+            >
+              <MessageCircleIcon size={16} className="mr-2" />
+              Talk to Mediator
             </button>
             
           </div>
@@ -770,6 +818,15 @@ const PostFightSession = () => {
           )}
         </div>
       </div>
+
+      {/* Mediator Modal */}
+      {conflictId && (
+        <MediatorModal
+          isOpen={isMediatorModalOpen}
+          onClose={() => setIsMediatorModalOpen(false)}
+          conflictId={conflictId}
+        />
+      )}
     </div>
   );
 };

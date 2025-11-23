@@ -279,6 +279,22 @@ const FightCapture = () => {
         
         if (response.ok) {
           console.log('✅ Transcript stored in Pinecone');
+          
+          // Trigger background generation of analysis and repair plan
+          // This will cache the results so they're ready when user clicks buttons
+          console.log('🔄 Triggering background analysis and repair plan generation...');
+          fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              relationship_id: "00000000-0000-0000-0000-000000000000",
+              partner_a_id: "partner_a",
+              partner_b_id: "partner_b"
+            })
+          }).then(res => {
+            if (res.ok) console.log('✅ Background generation started');
+            else console.error('Background generation failed:', res.status);
+          }).catch(err => console.error('Background generation error:', err));
         } else {
           console.error('Failed to store transcript:', await response.text());
         }

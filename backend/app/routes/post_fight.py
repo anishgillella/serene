@@ -191,6 +191,72 @@ async def generate_analysis_and_repair_plan_background(
         import traceback
         logger.error(traceback.format_exc())
 
+@router.post("/conflicts/{conflict_id}/generate-all")
+async def generate_all_analysis_and_repair(
+    conflict_id: str,
+    background_tasks: BackgroundTasks,
+    request: dict = Body(...)
+):
+    """
+    Trigger background generation of analysis AND repair plan in parallel
+    Call this after storing transcript to cache results
+    
+    Request body:
+    {
+        "relationship_id": "id",
+        "partner_a_id": "id", 
+        "partner_b_id": "id"
+    }
+    """
+    try:
+        relationship_id = request.get("relationship_id", "00000000-0000-0000-0000-000000000000")
+        partner_a_id = request.get("partner_a_id", "partner_a")
+        partner_b_id = request.get("partner_b_id", "partner_b")
+        
+        logger.info(f"🚀 Triggering parallel analysis and repair plan generation for {conflict_id}")
+        
+        # Get transcript from Pinecone
+        transcript_result = pinecone_service.get_by_conflict_id(
+            conflict_id=conflict_id,
+            namespace="transcripts"
+        )
+        
+        if not transcript_result or not transcript_result.metadata:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Conflict {conflict_id} not found"
+            )
+        
+        metadata = transcript_result.metadata
+        transcript_text = metadata.get("transcript_text", "")
+        duration = metadata.get("duration", 0.0)
+        speaker_labels = metadata.get("speaker_labels", {})
+        timestamp = datetime.now()
+        
+        # Add background task to generate both in parallel
+        background_tasks.add_task(
+            generate_analysis_and_repair_plan_background,
+            conflict_id=conflict_id,
+            transcript_text=transcript_text,
+            relationship_id=relationship_id,
+            partner_a_id=partner_a_id,
+            partner_b_id=partner_b_id,
+            speaker_labels=speaker_labels,
+            duration=duration,
+            timestamp=timestamp
+        )
+        
+        return {
+            "success": True,
+            "message": "Analysis and repair plan generation started in background",
+            "conflict_id": conflict_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error triggering background generation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/conflicts/{conflict_id}/store-transcript")
 async def store_transcript(
     conflict_id: str,
