@@ -7,8 +7,18 @@ from supabase import create_client, Client
 from app.config import settings
 from app.services.embeddings_service import embeddings_service
 from app.services.pinecone_service import pinecone_service
-from app.services.s3_service import s3_service
+# Import s3_service lazily to avoid multiprocessing issues with boto3
 from app.models.schemas import ConflictTranscript, SpeakerSegment
+
+
+def _get_s3_service():
+    """Lazy import to avoid multiprocessing issues with boto3"""
+    from app.services.s3_service import s3_service
+    return s3_service
+
+def _s3_upload_file(*args, **kwargs):
+    """Lazy wrapper for _s3_upload_file"""
+    return _get_s3_service().upload_file(*args, **kwargs)
 
 class ConflictManager:
     def __init__(self):
@@ -135,7 +145,7 @@ class ConflictManager:
         s3_url = None
         try:
             json_data = json.dumps(self.transcripts, indent=2)
-            s3_url = s3_service.upload_file(
+            s3_url = _s3_upload_file(
                 file_path=file_path,
                 file_content=json_data.encode('utf-8'),
                 content_type="application/json"

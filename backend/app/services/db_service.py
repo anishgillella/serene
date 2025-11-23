@@ -636,7 +636,11 @@ class DatabaseService:
             self.conn = None
 
 # Global instance
-db_service = DatabaseService()
+try:
+    db_service = DatabaseService()
+except Exception as e:
+    print(f"❌ Failed to initialize DatabaseService: {e}")
+    db_service = None
 
 
 

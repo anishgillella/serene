@@ -83,6 +83,53 @@ async def get_mediator_token(request: dict = Body(...)):
         "url": settings.LIVEKIT_URL
     }
 
+@app.post("/api/dispatch-agent")
+async def dispatch_agent(request: dict = Body(...)):
+    """
+    Explicitly dispatch an agent to a room.
+    """
+    room_name = request.get("room_name")
+    agent_name = request.get("agent_name", "Luna")
+    
+    if not room_name:
+        raise HTTPException(status_code=400, detail="room_name is required")
+    
+    try:
+        # Use LiveKitAPI to access agent dispatch service
+        from livekit import api
+        
+        # Initialize LiveKitAPI
+        lkapi = api.LiveKitAPI(
+            settings.LIVEKIT_URL,
+            settings.LIVEKIT_API_KEY,
+            settings.LIVEKIT_API_SECRET
+        )
+        
+        try:
+            # Create dispatch request
+            req = api.CreateAgentDispatchRequest(
+                room=room_name,
+                agent_name=agent_name
+            )
+            
+            # Use the agent_dispatch service from the API client
+            dispatch = await lkapi.agent_dispatch.create_dispatch(req)
+            
+            return {
+                "success": True,
+                "dispatch_id": dispatch.id,
+                "message": f"Agent {agent_name} dispatched to room {room_name}"
+            }
+        finally:
+            # Always close the API client
+            await lkapi.aclose()
+            
+    except Exception as e:
+        print(f"❌ Error dispatching agent: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/conflicts/{conflict_id}")
 async def get_conflict(conflict_id: str):
     """Retrieve conflict data including transcript"""

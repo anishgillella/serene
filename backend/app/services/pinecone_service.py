@@ -12,10 +12,15 @@ class PineconeService:
     """Service for interacting with Pinecone vector database"""
     
     def __init__(self):
-        self.pc = Pinecone(api_key=settings.PINECONE_API_KEY)
-        self.index_name = "serene"
-        self.index = self.pc.Index(self.index_name)
-        logger.info(f"✅ Connected to Pinecone index: {self.index_name}")
+        try:
+            self.pc = Pinecone(api_key=settings.PINECONE_API_KEY)
+            self.index_name = "serene"
+            self.index = self.pc.Index(self.index_name)
+            logger.info(f"✅ Connected to Pinecone index: {self.index_name}")
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to Pinecone: {e}")
+            self.pc = None
+            self.index = None
     
     def upsert_transcript(
         self,
@@ -25,6 +30,10 @@ class PineconeService:
         namespace: str = "transcripts"
     ):
         """Store transcript in Pinecone with full text"""
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping transcript storage")
+            return
+            
         try:
             full_transcript = transcript_data["transcript_text"]
             # Store full transcript (up to 35KB to leave room for other metadata)
@@ -71,6 +80,10 @@ class PineconeService:
         namespace: str = "analysis"
     ):
         """Store analysis results in Pinecone with full JSON"""
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping analysis storage")
+            return
+
         try:
             import json
             # Store full analysis as JSON string (Pinecone metadata can handle up to ~40KB)
@@ -105,6 +118,10 @@ class PineconeService:
         filter: Optional[Dict[str, Any]] = None
     ):
         """Query Pinecone for similar vectors"""
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping query")
+            return None
+
         try:
             results = self.index.query(
                 vector=query_embedding,
@@ -126,6 +143,10 @@ class PineconeService:
         namespace: str = "repair_plans"
     ):
         """Store repair plan in Pinecone with full JSON"""
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping repair plan storage")
+            return
+
         try:
             import json
             # Store full repair plan as JSON string
@@ -160,6 +181,10 @@ class PineconeService:
         namespace: str = "transcripts"
     ):
         """Retrieve a specific conflict by ID"""
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping retrieval")
+            return None
+
         try:
             # Query with filter
             results = self.index.query(

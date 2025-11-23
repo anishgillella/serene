@@ -1,425 +1,307 @@
-# HeartSync Development Challenges & Solutions
+# Voice Agent Integration Challenges
 
-This document outlines all the major challenges encountered during the development of HeartSync and how they were resolved.
-
----
-
-## Frontend Challenges
-
-### 1. Blank White Screen on Localhost
-**Problem:** Frontend displayed a completely blank white screen when opened at `localhost`.
-
-**Root Cause:** Missing `postcss.config.js` file, which is essential for Tailwind CSS to compile CSS properly during development.
-
-**Solution:** Created `postcss.config.js` with proper PostCSS and Tailwind configuration.
-
-**Learning:** Always ensure build tool configurations are complete, especially for CSS frameworks like Tailwind.
+This document outlines the major challenges encountered while integrating the LiveKit voice agent ("Luna") with the Serene application, and how each was resolved.
 
 ---
 
-### 2. ReactDOM.render Deprecation Warning
-**Problem:** Browser console showed warning about ReactDOM.render being deprecated in React 18.
+## Challenge 1: Agent Identity Issues
 
-**Root Cause:** Using older React 17 API in React 18 application.
+### Problem
+The voice agent was appearing in LiveKit with a generic ID like `agent-AJ_Agv8NC4ysLtt` instead of the friendly name "Luna". This made it confusing for users and difficult to identify the agent in logs and the UI.
 
-**Impact:** App functionally worked but with React 17 compatibility mode limitations.
+### Root Cause
+The `WorkerOptions` in `start_agent.py` did not include the `agent_name` parameter, so LiveKit was auto-generating a default identity.
 
-**Status:** Warning acknowledged; using React 18 is correct, warning is expected during transition.
-
----
-
-### 3. React Router Future Flag Warnings
-**Problem:** Multiple warnings about React Router v7 future flags.
-
-**Root Cause:** Using React Router v6 without enabling v7 compatibility flags.
-
-**Impact:** No functional impact; warnings are informational for future upgrades.
-
-**Status:** Can be addressed during next React Router upgrade.
-
----
-
-### 4. WebSocket Connection Failures
-**Problem:** WebSocket connection from frontend to backend was failing with generic connection errors.
-
-**Root Cause:** Backend WebSocket endpoint had incorrect authentication header parameter syntax.
-
-**Solution:** Changed from `extra_headers` to `additional_headers` parameter (correct for websockets v15+).
-
-**Learning:** Always verify library version compatibility for parameter names.
-
----
-
-### 5. Transcript Overwriting Issue
-**Problem:** As user spoke, interim transcripts were overwriting previous final transcripts, causing loss of conversation history.
-
-**Root Cause:** Not distinguishing between interim (partial) and final transcripts in state management.
-
-**Solution:** 
-- Separated state into `transcript` (final) and `interimTranscript` (temporary)
-- Final transcripts added to permanent list and cleared interim
-- Interim transcripts only updated temporary display
-
-**Learning:** Real-time transcription requires careful state management to handle partial results.
-
----
-
-### 6. Transcript Not Passing to Post-Fight Session
-**Problem:** Post-Fight Session page showed hardcoded placeholder text instead of actual transcript from fight capture.
-
-**Root Cause:** No data passing mechanism between FightCapture and PostFightSession components.
-
-**Solution:** 
-- Used React Router `navigate` with state: `navigate('/post-fight', { state: { transcript } })`
-- Updated PostFightSession to receive and parse transcript from location state
-- Display transcript messages with proper formatting
-
-**Learning:** React Router state passing is ideal for sequential view navigation.
-
----
-
-## Backend Challenges
-
-### 1. ModuleNotFoundError for 'livekit'
-**Problem:** Running test scripts resulted in `ModuleNotFoundError: No module named 'livekit'`.
-
-**Root Cause:** Python dependencies not installed from `requirements.txt`.
-
-**Solution:** Ran `pip install -r requirements.txt` to install all dependencies.
-
-**Learning:** Virtual environments require explicit dependency installation.
-
----
-
-### 2. TTS model_id Parameter Error
-**Problem:** ElevenLabs TTS initialization failed with `TypeError: TTS.__init__() got an unexpected keyword argument 'model_id'`.
-
-**Root Cause:** Incorrect parameter name; ElevenLabs uses `model` not `model_id`.
-
-**Solution:** Changed `model_id="eleven_flash_v2_5"` to `model="eleven_flash_v2_5"`.
-
-**Impact:** Fixed across test_components.py and heartsync_agent.py.
-
----
-
-### 3. ChatContext.append() Method Error
-**Problem:** LLM integration failed with `AttributeError: 'ChatContext' object has no attribute 'append'`.
-
-**Root Cause:** API changed; correct method is `add_message()` not `append()`.
-
-**Solution:** Updated all ChatContext usage to use `add_message(role=..., content=...)`.
-
-**Impact:** Fixed OpenRouter LLM integration in agent.
-
----
-
-### 4. PYTHONPATH Issues
-**Problem:** Importing app modules failed with various import errors when running from project root.
-
-**Root Cause:** Python couldn't find the app module without proper path setup.
-
-**Solution:** 
-- Set `PYTHONPATH=/Users/anishgillella/.../backend` when running commands
-- Ran commands from backend directory
-- Used `python -m` module syntax when available
-
-**Learning:** Always be explicit about Python paths in development environments.
-
----
-
-### 5. Address Already in Use (Port 8000)
-**Problem:** Backend failed to start because port 8000 was already in use.
-
-**Root Cause:** Previous backend process wasn't properly terminated.
-
-**Solution:** Used `lsof -ti:8000 | xargs kill -9` to force terminate process.
-
-**Prevention:** Added cleanup scripts to kill old processes before starting.
-
----
-
-### 6. Deepgram WebSocket Authentication Failure
-**Problem:** WebSocket connection to Deepgram failed with HTTP 401 errors.
-
-**Root Cause:** Initial attempt to pass API key in URL instead of Authorization header.
-
-**Solution:** Changed to pass API key via `additional_headers` parameter:
+### Solution
+Added `agent_name="Luna"` to the `WorkerOptions` in `start_agent.py`:
 ```python
-await websockets.connect(url, additional_headers={"Authorization": f"Token {api_key}"})
+cli.run_app(WorkerOptions(entrypoint_fnc=router_entrypoint, agent_name="Luna"))
 ```
 
-**Learning:** Always check API documentation for correct authentication method.
+**Files Modified:**
+- `backend/start_agent.py`
 
 ---
 
-### 7. Deepgram extra_headers vs additional_headers Parameter
-**Problem:** WebSocket connection threw `TypeError: create_connection() got an unexpected keyword argument 'extra_headers'`.
+## Challenge 2: Agent Connection but No Speech
 
-**Root Cause:** Websockets library v15.0.1 uses `additional_headers` not `extra_headers`.
+### Problem
+The agent would successfully connect to the LiveKit room but would not speak. The connection appeared successful, but no audio output was produced.
 
-**Solution:** Updated parameter name to match library version.
+### Root Cause
+The agent's `mediator_entrypoint` function was blocking on slow database/Pinecone operations during initialization. Specifically, it was trying to fetch conflict context (transcript, analysis, repair plans) **before** connecting to the room, which could take 10+ seconds. This caused the agent to timeout or fail to initialize properly.
 
-**Impact:** Fixed in app/routes/realtime_transcription.py.
+### Solution
+Refactored the entrypoint to:
+1. **Connect to the room first** using `session.start()`
+2. **Fetch context asynchronously** after connection
+3. **Update agent instructions dynamically** with the retrieved context
+4. Added a **10-second timeout** for context retrieval to prevent indefinite blocking
+5. Added comprehensive logging to trace execution flow
 
-**Learning:** Library parameter names change between major versions; verify with `inspect.signature()`.
+**Files Modified:**
+- `backend/app/agents/mediator_agent.py` (lines 456-499)
 
----
+**Key Code Change:**
+```python
+# Start session FIRST
+await session.start(room=ctx.room, agent=agent, ...)
 
-### 8. LiveKit Agent CLI Issues
-**Problem:** Multiple issues running the LiveKit agent in development mode.
-
-**Challenges:**
-- Initial: `livekit.agents.cli.__main__` execution failed
-- Then: `Agent.__init__()` missing required `instructions` parameter
-- Then: `ChatContext.add_message()` parameter name changes
-- Finally: Agent was in "silent mode" not capturing user speech events
-
-**Solutions:**
-- Used correct command: `python -m livekit.agents dev app.agents.heartsync_agent`
-- Added `instructions` parameter to agent initialization
-- Updated all message parameter names from `text` to `content`
-- Switched from LiveKit Agent STT to direct Deepgram WebSocket for more control
-
-**Learning:** Complex frameworks require careful reading of latest API documentation.
-
----
-
-### 9. Real-Time Transcription Event Handling
-**Problem:** LiveKit agent wasn't triggering transcription events even though agent was connected.
-
-**Root Cause:** 
-- `user_speech_committed` event doesn't fire in silent/transcription mode
-- LiveKit Agents framework in dev mode has routing limitations
-
-**Solution:** Bypassed LiveKit Agents for STT, using direct Deepgram WebSocket connection instead.
-
-**Result:** Cleaner architecture with more control over transcription flow.
-
-**Learning:** Sometimes simpler direct API calls are better than complex frameworks.
+# THEN fetch context asynchronously
+try:
+    context = await asyncio.wait_for(
+        retrieve_conflict_context(conflict_id),
+        timeout=10.0
+    )
+    # Update instructions dynamically
+    agent.instructions = f"{agent.instructions}\n\n{context}"
+except asyncio.TimeoutError:
+    logger.warning("⚠️ Context retrieval timed out")
+```
 
 ---
 
-### 10. Missing Python Dependencies
-**Problem:** Various import errors when trying to use specific libraries.
+## Challenge 3: Missing LiveKit Plugin Dependencies
 
-**Solution:** Updated requirements.txt with all needed packages:
-- livekit
-- livekit-agents
-- livekit-agents[plugins]
-- deepgram-sdk
-- websockets
-- fastapi
-- uvicorn
-- python-multipart
-- httpx
-- voyageai
+### Problem
+When attempting to restart the agent, it crashed with:
+```
+ModuleNotFoundError: No module named 'livekit.plugins'
+```
 
-**Learning:** Document all dependencies explicitly to avoid runtime surprises.
+### Root Cause
+The LiveKit agent requires additional plugin packages for STT (Deepgram), LLM (OpenAI), TTS (ElevenLabs), and noise cancellation, which were not installed.
 
----
+### Solution
+Installed the required LiveKit plugins:
+```bash
+pip install livekit-plugins-openai livekit-plugins-elevenlabs livekit-plugins-silero livekit-plugins-noise-cancellation
+```
 
-### 11. python-multipart Not Installed
-**Problem:** FastAPI form data handling failed with `RuntimeError: Form data requires "python-multipart" to be installed.`
-
-**Root Cause:** The library wasn't included in requirements.txt.
-
-**Solution:** Added `python-multipart` to requirements.txt.
-
-**Impact:** Fixed file upload endpoint functionality.
+**Files Modified:**
+- None (dependency installation only)
 
 ---
 
-## Architecture & Design Challenges
+## Challenge 4: Service Initialization Crashes
 
-### 1. Choosing STT Approach
-**Problem:** Needed to decide between multiple STT integration approaches:
-1. LiveKit built-in STT (via Inference)
-2. LiveKit Agents plugin for Deepgram
-3. Direct Deepgram WebSocket
+### Problem
+If Pinecone or the database failed to connect during agent startup, the entire agent would crash, preventing it from running at all.
 
-**Challenges Evaluated:**
-- LiveKit Inference: Limited control, pre-configured options
-- LiveKit Agents: Complex framework, event handling issues in dev mode
-- Direct WebSocket: Best latency, full control, but more complexity
+### Root Cause
+The `PineconeService` and `DatabaseService` were initialized at the module level without error handling. Any connection failure would raise an exception and crash the import.
 
-**Solution:** Chose direct Deepgram WebSocket for production-grade real-time transcription.
+### Solution
+Wrapped service initialization in `try-except` blocks:
 
-**Result:** ~100ms latency, real-time interim results, speaker diarization.
+**Pinecone Service:**
+```python
+try:
+    self.pc = Pinecone(api_key=settings.PINECONE_API_KEY)
+    self.index = self.pc.Index(self.index_name)
+except Exception as e:
+    logger.error(f"❌ Failed to connect to Pinecone: {e}")
+    self.index = None
+```
 
----
+Added safety checks before using services:
+```python
+if not self.index:
+    logger.warning("⚠️ Pinecone index not initialized")
+    return None
+```
 
-### 2. Transcript State Management
-**Problem:** How to handle both interim and final transcripts without losing data?
-
-**Challenges:**
-- Interim results come more frequently than final
-- Need to show updates in real-time but keep final records
-- Prevent overwriting of previous final results
-
-**Solution:** 
-- Separate state: `transcript` (final) and `interimTranscript` (current)
-- Clear interim when final arrives
-- Only add to permanent list on final results
-
-**Learning:** Real-time systems require careful state separation.
+**Files Modified:**
+- `backend/app/services/pinecone_service.py`
+- `backend/app/services/db_service.py`
 
 ---
 
-### 3. Data Passing Between Routes
-**Problem:** How to pass captured transcript from FightCapture to PostFightSession?
+## Challenge 5: Agent Dispatch Configuration
 
-**Options Considered:**
-1. Global state management (Context API) - overkill for single data point
-2. URL parameters - transcript too large
-3. Local storage - works but not ideal for single-use data
-4. React Router state - perfect fit
+### Problem
+The agent was running and registered with LiveKit Cloud, but it would not join rooms automatically. Users had to manually dispatch the agent using the CLI command:
+```bash
+lk dispatch create --room mediator-CONFLICT_ID --agent-name Luna
+```
 
-**Solution:** Used React Router state passing with navigation.
+### Root Cause
+LiveKit Cloud requires a **Dispatch Rule** to be configured in the dashboard to automatically assign agents to rooms matching a specific pattern (e.g., `mediator-*`). This configuration was missing.
 
-**Result:** Clean, simple, works perfectly for sequential views.
+### Solution (Attempt 1 - Manual Configuration)
+Attempted to configure the dispatch rule in the LiveKit Cloud dashboard, but the user could not locate the setting.
 
----
+### Solution (Attempt 2 - Programmatic Dispatch)
+Implemented a programmatic solution that bypasses the need for dashboard configuration:
 
-## Deployment & Configuration Challenges
+1. **Backend:** Added `/api/dispatch-agent` endpoint that explicitly dispatches the agent to a room using the LiveKit Server SDK
+2. **Frontend:** Updated `MediatorModal.tsx` to call this endpoint immediately after connecting to the room
 
-### 1. Missing .gitignore
-**Problem:** Almost committed sensitive `.env` file with API keys to GitHub.
+**Backend Implementation:**
+```python
+@app.post("/api/dispatch-agent")
+async def dispatch_agent(request: dict = Body(...)):
+    room_name = request.get("room_name")
+    agent_name = request.get("agent_name", "Luna")
+    
+    lkapi = api.LiveKitAPI(
+        settings.LIVEKIT_URL,
+        settings.LIVEKIT_API_KEY,
+        settings.LIVEKIT_API_SECRET
+    )
+    
+    try:
+        req = api.CreateAgentDispatchRequest(
+            room=room_name,
+            agent_name=agent_name
+        )
+        dispatch = await lkapi.agent_dispatch.create_dispatch(req)
+        return {"success": True, "dispatch_id": dispatch.id}
+    finally:
+        await lkapi.aclose()
+```
 
-**Root Cause:** No `.gitignore` file to exclude sensitive files.
+**Frontend Implementation:**
+```typescript
+// After connecting to room
+await fetch(`${API_BASE_URL}/api/dispatch-agent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        room_name: `mediator-${conflictId}`,
+        agent_name: 'Luna'
+    })
+});
+```
 
-**Solution:** Created comprehensive `.gitignore` excluding:
-- `.env` files
-- `venv/` and node_modules
-- `__pycache__` and cache files
-- OS files (.DS_Store)
-
-**Prevention:** Always create `.gitignore` before first commit.
-
----
-
-### 2. Accidental API Key Exposure
-**Problem:** During development, `.env` file was staged for commit.
-
-**Solution:** 
-- Unstaged `.env` before commit
-- Committed `.env.example` instead with placeholder values
-- Added `.gitignore` rules
-
-**Learning:** Use `git diff --staged` before committing to check for sensitive data.
-
----
-
-### 3. Virtual Environment in Git
-**Problem:** `venv/` directory was attempted to be committed (massive overhead).
-
-**Solution:** Excluded from both `.gitignore` and staged commit.
-
-**Result:** Cleaner repository, faster cloning.
-
----
-
-### 4. Dockerfile Configuration
-**Problem:** Initially unclear how to package the agent for LiveKit Cloud deployment.
-
-**Solution:** Created:
-- `Dockerfile` with proper Python setup
-- `.dockerignore` to exclude unnecessary files
-- `start_agent.py` wrapper for clean startup
-- `livekit.toml` for deployment configuration
-- `DEPLOYMENT.md` with step-by-step instructions
-
-**Learning:** Container deployment requires separate configuration from local development.
+**Files Modified:**
+- `backend/app/main.py` (added `/api/dispatch-agent` endpoint)
+- `frontend/src/components/MediatorModal.tsx` (added dispatch call)
+- `backend/livekit.toml` (updated agent ID to `A_aPV984RTQvBw`)
 
 ---
 
-## Testing & Debugging Challenges
+## Challenge 6: SDK Import Errors
 
-### 1. Browser Console Errors
-**Problem:** Multiple deprecation warnings cluttering console output.
+### Problem
+The initial implementation of the dispatch endpoint failed with:
+```
+ImportError: cannot import name 'AgentDispatchService' from 'livekit.api'
+```
 
-**Status:** Expected warnings, not blocking functionality.
+### Root Cause
+The LiveKit Python SDK does not expose `AgentDispatchService` as a standalone class. Instead, it's accessed through the `LiveKitAPI` client's `agent_dispatch` property.
 
-**Approach:** Acknowledged warnings, will address in future React/Router upgrades.
+### Solution
+Changed from attempting to import a non-existent class to using the correct API pattern:
 
----
+**Before (Incorrect):**
+```python
+from livekit.api import AgentDispatchService
+service = AgentDispatchService(url, key, secret)
+```
 
-### 2. Backend Logs Management
-**Problem:** Hard to track backend issues without persistent logs.
+**After (Correct):**
+```python
+from livekit import api
+lkapi = api.LiveKitAPI(url, key, secret)
+dispatch = await lkapi.agent_dispatch.create_dispatch(req)
+```
 
-**Solution:** Redirected output to `/tmp/backend.log` for monitoring.
-
-**Usage:** `tail -f /tmp/backend.log` for real-time monitoring.
-
----
-
-### 3. Transcription Accuracy Gaps
-**Problem:** Real-time transcription sometimes misses or incorrectly transcribes words.
-
-**Expected:** ~90% accuracy with real-time streaming (normal for STT).
-
-**Trade-off:** Interim results show ~70%, final results ~90% after full phrase processing.
-
-**Mitigation:** Users see updates in real-time, final accuracy improves after short pause.
-
----
-
-## Performance Challenges
-
-### 1. Audio Processing Performance
-**Problem:** Browser audio processing could be intensive for long sessions.
-
-**Solution:** Used `ScriptProcessorNode` (now deprecated) for audio capture.
-
-**Future:** Should migrate to `AudioWorkletNode` for better performance.
+**Files Modified:**
+- `backend/app/main.py`
 
 ---
 
-### 2. WebSocket Latency
-**Problem:** Real-time transcription latency needed to be minimal.
+## Challenge 7: Poor User Experience During Agent Join
 
-**Achieved:** ~200ms STT latency + ~100ms network = ~300ms total.
+### Problem
+There was an 11-second delay between the user connecting to the room and the agent joining. During this time, the UI showed no feedback, making it appear as if nothing was happening.
 
-**Optimization:** Deepgram's Nova-2 model provides this latency out-of-the-box.
+### Root Cause
+The dispatch process takes time (network request + agent startup), but the UI provided no visual indication that the agent was being summoned.
 
----
+### Solution
+Added UX improvements to the frontend:
 
-### 3. Frontend Re-rendering
-**Problem:** Frequent transcript updates could cause unnecessary re-renders.
+1. **Status Indicator:** Added a pulsing "✨ Summoning Luna..." badge that appears while waiting for the agent
+2. **Friendly Logs:** Changed participant join messages from `agent-AJ_Agv8NC4ysLtt joined` to `Luna joined`
 
-**Status:** Currently acceptable with React hooks state management.
+**Implementation:**
+```typescript
+const [isAgentJoining, setIsAgentJoining] = useState(false);
 
-**Future Optimization:** Consider memoization if performance degrades.
+// Set to true when dispatching
+setIsAgentJoining(true);
 
----
+// Set to false when agent joins
+room.on(RoomEvent.ParticipantConnected, (participant) => {
+    const isAgent = participant.identity.startsWith('agent-') || 
+                    participant.name === 'Luna';
+    const displayName = isAgent ? 'Luna' : participant.identity;
+    
+    if (isAgent) {
+        setIsAgentJoining(false);
+    }
+    
+    addTranscriptEntry('system', `${displayName} joined`);
+});
+```
 
-## Summary of Key Learnings
-
-1. **Always verify library versions** - Parameter names and APIs change
-2. **Use `.gitignore` early** - Prevents accidental secrets exposure
-3. **Separate interim and final states** - Essential for real-time systems
-4. **Test API authentication thoroughly** - Especially with external services
-5. **Consider simpler solutions first** - Direct API calls > Complex frameworks
-6. **Document deployment setup** - Dockerfile, config files, step-by-step guides
-7. **Monitor logs actively** - Makes debugging exponentially easier
-8. **Plan state management carefully** - Especially for real-time data flows
-
----
-
-## Still Open/Future Challenges
-
-1. **LiveKit Agent Deployment** - Files ready but not yet deployed to LiveKit Cloud
-2. **Audio Format Compatibility** - May need additional resampling for different browsers
-3. **Error Recovery** - Need better handling of connection drops mid-session
-4. **Transcript Persistence** - Currently only stored during session; need database integration
-5. **Multi-participant Diarization** - Current setup for single participant; scaling to two participants
-6. **Post-Fight AI Responses** - Backend agent responses not yet integrated
-7. **Analytics Integration** - Conflict patterns and metrics collection not yet implemented
-8. **End-to-End Testing** - Automated tests for WebSocket transcription flow
+**Files Modified:**
+- `frontend/src/components/MediatorModal.tsx`
 
 ---
 
-**Last Updated:** November 22, 2025  
-**Status:** Real-time transcription MVP ✅ complete and tested
+## Summary
 
+The voice agent integration faced several interconnected challenges across multiple sessions:
 
+### Session 1: Initial Setup & Identity
+1. **Identity & Branding:** Fixed by configuring `agent_name="Luna"` in `WorkerOptions`
+2. **Connection & Speech:** Resolved by refactoring async initialization to connect before fetching context
+3. **Dependencies:** Installed missing LiveKit plugin packages (`livekit-plugins-openai`, `livekit-plugins-elevenlabs`, `livekit-plugins-silero`, `livekit-plugins-noise-cancellation`)
 
+### Session 2: Reliability & Dispatch
+4. **Resilience:** Added error handling for Pinecone and database service failures
+5. **Dispatch Configuration:** Discovered LiveKit Cloud requires dispatch rules that were difficult to configure via dashboard
+6. **Programmatic Dispatch:** Implemented `/api/dispatch-agent` endpoint to bypass dashboard configuration
+7. **SDK Usage:** Corrected API usage to use `LiveKitAPI.agent_dispatch.create_dispatch()` instead of non-existent `AgentDispatchService` class
+
+### Session 3: User Experience
+8. **UX Feedback:** Added "✨ Summoning Luna..." status indicator during the 11-second agent join delay
+9. **Friendly Logs:** Changed participant join messages from raw agent IDs to "Luna joined"
+
+### Key Learnings
+
+1. **Async Operations:** External service calls (Pinecone, database) should never block the agent's connection to LiveKit
+2. **Graceful Degradation:** Services should fail gracefully with logging rather than crashing the entire agent
+3. **Programmatic Control:** When cloud dashboard configuration is unclear or unavailable, programmatic API calls provide a reliable alternative
+4. **User Feedback:** Even short delays (10-15 seconds) need visual feedback to prevent user confusion
+5. **SDK Documentation:** Always verify class/method names in the actual SDK rather than assuming based on naming patterns
+
+### Final Architecture
+
+The final solution ensures that Luna:
+- ✅ Reliably joins rooms via programmatic dispatch
+- ✅ Speaks immediately upon connection (context loaded asynchronously)
+- ✅ Provides clear visual feedback during connection
+- ✅ Gracefully handles service failures
+- ✅ Appears with a friendly name ("Luna") instead of a generated ID
+
+### Files Modified (Complete List)
+
+**Backend:**
+- `backend/start_agent.py` - Added agent name configuration
+- `backend/app/agents/mediator_agent.py` - Refactored async initialization
+- `backend/app/services/pinecone_service.py` - Added error handling
+- `backend/app/services/db_service.py` - Added error handling
+- `backend/app/main.py` - Added `/api/dispatch-agent` endpoint
+- `backend/livekit.toml` - Updated agent ID to `A_aPV984RTQvBw`
+
+**Frontend:**
+- `frontend/src/components/MediatorModal.tsx` - Added dispatch call and UX improvements
+
+**Documentation:**
+- `docs/CHALLENGES.md` - This document
+- `.gemini/antigravity/brain/.../walkthrough.md` - Testing and verification guide

@@ -39,6 +39,220 @@ except ImportError:
 logger = logging.getLogger("mediator-agent")
 
 
+async def retrieve_conflict_context(conflict_id: str) -> str:
+    """
+    Helper function to retrieve conflict information including transcript, analysis, and repair plans.
+    Used by both the tool and the agent initialization.
+    """
+    try:
+        if not conflict_id:
+            return "I'm sorry, but I don't have a conflict ID to retrieve information for."
+        
+        logger.info(f"🔍 Retrieving conflict context for {conflict_id}")
+        
+        # Check if pinecone_service is available (might be None in console mode)
+        if not pinecone_service:
+            return "I'm running in console mode and don't have access to conflict data. Please run me through the web interface to access conflict information."
+        
+        # Retrieve transcript - try Pinecone first, then Supabase storage as fallback
+        transcript_result = pinecone_service.get_by_conflict_id(
+            conflict_id=conflict_id,
+            namespace="transcripts"
+        )
+        
+        transcript_text = ""
+        if transcript_result and hasattr(transcript_result, 'metadata') and transcript_result.metadata:
+            transcript_text = transcript_result.metadata.get("transcript_text", "")
+            if transcript_text:
+                logger.info(f"✅ Retrieved transcript from Pinecone ({len(transcript_text)} chars)")
+                # Truncate if too long (keep last 2000 chars for context)
+                if len(transcript_text) > 2000:
+                    transcript_text = "..." + transcript_text[-2000:]
+            else:
+                logger.warning(f"⚠️ Transcript found but transcript_text is empty in metadata")
+        
+        # Fallback: Try fetching from S3 if Pinecone doesn't have it
+        if not transcript_text:
+            logger.info(f"🔄 Transcript not in Pinecone, trying S3 storage...")
+            try:
+                from supabase import create_client, Client
+                
+                # Get Supabase credentials from settings (might not be available in console mode)
+                supabase_url = getattr(settings, 'SUPABASE_URL', None) or os.getenv("SUPABASE_URL")
+                supabase_key = getattr(settings, 'SUPABASE_KEY', None) or os.getenv("SUPABASE_KEY")
+                
+                if not supabase_url or not supabase_key:
+                    logger.warning(f"⚠️ Supabase credentials not available, skipping S3 fallback")
+                else:
+                    supabase: Client = create_client(supabase_url, supabase_key)
+                    
+                    # Get conflict record to find transcript_path (which is now S3 URL/path)
+                    conflict_response = supabase.table("conflicts").select("*").eq("id", conflict_id).execute()
+                    
+                    if conflict_response.data and len(conflict_response.data) > 0:
+                        conflict = conflict_response.data[0]
+                        transcript_path = conflict.get("transcript_path")
+                        
+                        if transcript_path:
+                            logger.info(f"📁 Found transcript_path: {transcript_path}")
+                            # Extract S3 key from S3 URL if it's a full URL, otherwise use as-is
+                            if transcript_path.startswith("s3://"):
+                                # Extract key from s3://bucket/key format
+                                s3_key = transcript_path.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+                            elif transcript_path.startswith("transcripts/"):
+                                s3_key = transcript_path
+                            elif "/" in transcript_path:
+                                # Assume it's already a valid path
+                                s3_key = transcript_path
+                            else:
+                                # Old format without folder prefix
+                                s3_key = f"transcripts/{transcript_path}"
+                            
+                            # Download from S3
+                            from app.services.s3_service import s3_service
+                            file_response = s3_service.download_file(s3_key)
+                            
+                            if file_response:
+                                # Parse JSON transcript (file_response is already bytes from S3)
+                                transcript_data = json.loads(file_response.decode('utf-8'))
+                                
+                                # Extract transcript text from segments
+                                if isinstance(transcript_data, list):
+                                    # Array of segments
+                                    transcript_lines = []
+                                    for segment in transcript_data:
+                                        if isinstance(segment, dict):
+                                            speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
+                                            text = segment.get("text", segment.get("transcript", segment.get("message", "")))
+                                            if text:
+                                                transcript_lines.append(f"{speaker}: {text}")
+                                    transcript_text = "\\n".join(transcript_lines)
+                                elif isinstance(transcript_data, dict):
+                                    # Object with transcript_text or segments
+                                    if "transcript_text" in transcript_data:
+                                        transcript_text = transcript_data["transcript_text"]
+                                    elif "segments" in transcript_data:
+                                        transcript_lines = []
+                                        for segment in transcript_data["segments"]:
+                                            speaker = segment.get("speaker", "Speaker")
+                                            text = segment.get("text", "")
+                                            if text:
+                                                transcript_lines.append(f"{speaker}: {text}")
+                                        transcript_text = "\\n".join(transcript_lines)
+                                
+                                if transcript_text:
+                                    logger.info(f"✅ Retrieved transcript from Supabase storage ({len(transcript_text)} chars)")
+                                    # Truncate if too long
+                                    if len(transcript_text) > 2000:
+                                        transcript_text = "..." + transcript_text[-2000:]
+                        else:
+                            logger.warning(f"⚠️ No transcript_path in conflict record")
+                    else:
+                        logger.warning(f"⚠️ Conflict {conflict_id} not found in database")
+            except Exception as e:
+                logger.error(f"❌ Error fetching transcript from Supabase: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+        
+        if not transcript_text:
+            logger.warning(f"⚠️ No transcript found for conflict {conflict_id} in Pinecone or Supabase")
+        
+        # Retrieve analysis
+        analysis_result = pinecone_service.get_by_conflict_id(
+            conflict_id=conflict_id,
+            namespace="analysis"
+        )
+        
+        analysis_summary = ""
+        if analysis_result and analysis_result.metadata:
+            analysis_json_str = analysis_result.metadata.get("full_analysis_json", "")
+            if analysis_json_str:
+                try:
+                    analysis_data = json.loads(analysis_json_str)
+                    fight_summary = analysis_data.get("fight_summary", "")
+                    root_causes = analysis_data.get("root_causes", [])
+                    
+                    analysis_summary = f"Fight Summary: {fight_summary}\\n"
+                    if root_causes:
+                        analysis_summary += f"Root Causes: {', '.join(root_causes[:3])}"  # Limit to 3 causes
+                except Exception as e:
+                    logger.warning(f"Failed to parse analysis JSON: {e}")
+                    analysis_summary = analysis_result.metadata.get("fight_summary", "")
+        
+        # Retrieve repair plans
+        repair_plan_bf = None
+        repair_plan_gf = None
+        
+        bf_result = pinecone_service.get_by_conflict_id(
+            conflict_id=f"{conflict_id}_boyfriend",
+            namespace="repair_plans"
+        )
+        if bf_result and bf_result.metadata:
+            repair_plan_json = bf_result.metadata.get("full_repair_plan_json", "")
+            if repair_plan_json:
+                try:
+                    repair_plan_bf = json.loads(repair_plan_json)
+                except Exception:
+                    pass
+        
+        gf_result = pinecone_service.get_by_conflict_id(
+            conflict_id=f"{conflict_id}_girlfriend",
+            namespace="repair_plans"
+        )
+        if gf_result and gf_result.metadata:
+            repair_plan_json = gf_result.metadata.get("full_repair_plan_json", "")
+            if repair_plan_json:
+                try:
+                    repair_plan_gf = json.loads(repair_plan_json)
+                except Exception:
+                    pass
+        
+        # Build context string
+        context_parts = []
+        
+        if transcript_text:
+            context_parts.append(f"CONFLICT TRANSCRIPT:\\n{transcript_text}")
+        
+        if analysis_summary:
+            context_parts.append(f"ANALYSIS:\\n{analysis_summary}")
+        
+        if repair_plan_bf or repair_plan_gf:
+            context_parts.append("REPAIR SUGGESTIONS:")
+            if repair_plan_bf:
+                apology = repair_plan_bf.get("apology_script", "")
+                steps = repair_plan_bf.get("steps", [])
+                if apology:
+                    context_parts.append(f"For Partner A: {apology[:200]}")
+                if steps:
+                    context_parts.append(f"Steps: {', '.join(steps[:3])}")
+            
+            if repair_plan_gf:
+                apology = repair_plan_gf.get("apology_script", "")
+                steps = repair_plan_gf.get("steps", [])
+                if apology:
+                    context_parts.append(f"For Partner B: {apology[:200]}")
+                if steps:
+                    context_parts.append(f"Steps: {', '.join(steps[:3])}")
+        
+        if not context_parts:
+            error_msg = f"I couldn't find detailed information for conflict {conflict_id[:8]}... "
+            if not transcript_text:
+                error_msg += "The transcript hasn't been stored yet. "
+            if not analysis_summary:
+                error_msg += "The analysis hasn't been generated yet. "
+            error_msg += "Please make sure the conflict has been completed and the transcript has been stored."
+            logger.warning(f"⚠️ No context found for conflict {conflict_id}: transcript={bool(transcript_text)}, analysis={bool(analysis_summary)}")
+            return error_msg
+        
+        return "\\n\\n".join(context_parts)
+        
+    except Exception as e:
+        logger.error(f"Error retrieving conflict context: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return f"I encountered an error retrieving conflict information: {str(e)}"
+
+
 class MediatorAgent(Agent):
     """
     Luna - A friendly mediator that can help with relationship conflicts.
@@ -52,13 +266,15 @@ class MediatorAgent(Agent):
         active_view: str = None,
         repair_plan_view: str = None,
         has_analysis: bool = False,
-        has_repair_plans: bool = False
+        has_repair_plans: bool = False,
+        initial_context: str = None
     ):
         self.conflict_id = conflict_id
         self.active_view = active_view
         self.repair_plan_view = repair_plan_view
         self.has_analysis = has_analysis
         self.has_repair_plans = has_repair_plans
+        self.initial_context = initial_context
         
         instructions = f"""
         You are Luna, a friendly and helpful digital companion who specializes in relationship mediation.
@@ -88,6 +304,9 @@ class MediatorAgent(Agent):
         When users ask about time or what time it is, use the get_current_time tool.
         Always greet users warmly and make them feel welcome.
         """
+        
+        if initial_context:
+            instructions += f"\n\nHERE IS THE CONTEXT FOR THE CURRENT CONFLICT:\n{initial_context}\n\nUse this information to answer user questions immediately without needing to call get_conflict_context, unless specifically asked to refresh or check for new info."
         
         super().__init__(instructions=instructions)
     
@@ -129,207 +348,9 @@ class MediatorAgent(Agent):
             # Use provided conflict_id or fall back to session conflict_id
             target_conflict_id = conflict_id or self.conflict_id
             
-            if not target_conflict_id:
-                return "I'm sorry, but I don't have access to a specific conflict in this session. This might be a configuration issue. Please try reconnecting or contact support."
-            
-            logger.info(f"🔍 Retrieving conflict context for {target_conflict_id}")
-            
-            # Check if pinecone_service is available (might be None in console mode)
-            if not pinecone_service:
-                return "I'm running in console mode and don't have access to conflict data. Please run me through the web interface to access conflict information."
-            
-            # Retrieve transcript - try Pinecone first, then Supabase storage as fallback
-            transcript_result = pinecone_service.get_by_conflict_id(
-                conflict_id=target_conflict_id,
-                namespace="transcripts"
-            )
-            
-            transcript_text = ""
-            if transcript_result and hasattr(transcript_result, 'metadata') and transcript_result.metadata:
-                transcript_text = transcript_result.metadata.get("transcript_text", "")
-                if transcript_text:
-                    logger.info(f"✅ Retrieved transcript from Pinecone ({len(transcript_text)} chars)")
-                    # Truncate if too long (keep last 2000 chars for context)
-                    if len(transcript_text) > 2000:
-                        transcript_text = "..." + transcript_text[-2000:]
-                else:
-                    logger.warning(f"⚠️ Transcript found but transcript_text is empty in metadata")
-            
-            # Fallback: Try fetching from S3 if Pinecone doesn't have it
-            if not transcript_text:
-                logger.info(f"🔄 Transcript not in Pinecone, trying S3 storage...")
-                try:
-                    from supabase import create_client, Client
-                    
-                    # Get Supabase credentials from settings (might not be available in console mode)
-                    supabase_url = getattr(settings, 'SUPABASE_URL', None) or os.getenv("SUPABASE_URL")
-                    supabase_key = getattr(settings, 'SUPABASE_KEY', None) or os.getenv("SUPABASE_KEY")
-                    
-                    if not supabase_url or not supabase_key:
-                        logger.warning(f"⚠️ Supabase credentials not available, skipping S3 fallback")
-                    else:
-                        supabase: Client = create_client(supabase_url, supabase_key)
-                        
-                        # Get conflict record to find transcript_path (which is now S3 URL/path)
-                        conflict_response = supabase.table("conflicts").select("*").eq("id", target_conflict_id).execute()
-                        
-                        if conflict_response.data and len(conflict_response.data) > 0:
-                            conflict = conflict_response.data[0]
-                            transcript_path = conflict.get("transcript_path")
-                            relationship_id = conflict.get("relationship_id")
-                            
-                            if transcript_path:
-                                logger.info(f"📁 Found transcript_path: {transcript_path}")
-                                # Extract S3 key from S3 URL if it's a full URL, otherwise use as-is
-                                if transcript_path.startswith("s3://"):
-                                    # Extract key from s3://bucket/key format
-                                    s3_key = transcript_path.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
-                                elif transcript_path.startswith("transcripts/"):
-                                    s3_key = transcript_path
-                                elif "/" in transcript_path:
-                                    # Assume it's already a valid path
-                                    s3_key = transcript_path
-                                else:
-                                    # Old format without folder prefix
-                                    s3_key = f"transcripts/{transcript_path}"
-                                
-                                # Download from S3
-                                from app.services.s3_service import s3_service
-                                file_response = s3_service.download_file(s3_key)
-                                
-                                if file_response:
-                                    # Parse JSON transcript (file_response is already bytes from S3)
-                                    transcript_data = json.loads(file_response.decode('utf-8'))
-                                    
-                                    # Extract transcript text from segments
-                                    if isinstance(transcript_data, list):
-                                        # Array of segments
-                                        transcript_lines = []
-                                        for segment in transcript_data:
-                                            if isinstance(segment, dict):
-                                                speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
-                                                text = segment.get("text", segment.get("transcript", segment.get("message", "")))
-                                                if text:
-                                                    transcript_lines.append(f"{speaker}: {text}")
-                                        transcript_text = "\n".join(transcript_lines)
-                                    elif isinstance(transcript_data, dict):
-                                        # Object with transcript_text or segments
-                                        if "transcript_text" in transcript_data:
-                                            transcript_text = transcript_data["transcript_text"]
-                                        elif "segments" in transcript_data:
-                                            transcript_lines = []
-                                            for segment in transcript_data["segments"]:
-                                                speaker = segment.get("speaker", "Speaker")
-                                                text = segment.get("text", "")
-                                                if text:
-                                                    transcript_lines.append(f"{speaker}: {text}")
-                                            transcript_text = "\n".join(transcript_lines)
-                                    
-                                    if transcript_text:
-                                        logger.info(f"✅ Retrieved transcript from Supabase storage ({len(transcript_text)} chars)")
-                                        # Truncate if too long
-                                        if len(transcript_text) > 2000:
-                                            transcript_text = "..." + transcript_text[-2000:]
-                            else:
-                                logger.warning(f"⚠️ No transcript_path in conflict record")
-                        else:
-                            logger.warning(f"⚠️ Conflict {target_conflict_id} not found in database")
-                except Exception as e:
-                    logger.error(f"❌ Error fetching transcript from Supabase: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-            
-            if not transcript_text:
-                logger.warning(f"⚠️ No transcript found for conflict {target_conflict_id} in Pinecone or Supabase")
-            
-            # Retrieve analysis
-            analysis_result = pinecone_service.get_by_conflict_id(
-                conflict_id=target_conflict_id,
-                namespace="analysis"
-            )
-            
-            analysis_summary = ""
-            if analysis_result and analysis_result.metadata:
-                analysis_json_str = analysis_result.metadata.get("full_analysis_json", "")
-                if analysis_json_str:
-                    try:
-                        analysis_data = json.loads(analysis_json_str)
-                        fight_summary = analysis_data.get("fight_summary", "")
-                        root_causes = analysis_data.get("root_causes", [])
-                        
-                        analysis_summary = f"Fight Summary: {fight_summary}\n"
-                        if root_causes:
-                            analysis_summary += f"Root Causes: {', '.join(root_causes[:3])}"  # Limit to 3 causes
-                    except Exception as e:
-                        logger.warning(f"Failed to parse analysis JSON: {e}")
-                        analysis_summary = analysis_result.metadata.get("fight_summary", "")
-            
-            # Retrieve repair plans
-            repair_plan_bf = None
-            repair_plan_gf = None
-            
-            bf_result = pinecone_service.get_by_conflict_id(
-                conflict_id=f"{target_conflict_id}_boyfriend",
-                namespace="repair_plans"
-            )
-            if bf_result and bf_result.metadata:
-                repair_plan_json = bf_result.metadata.get("full_repair_plan_json", "")
-                if repair_plan_json:
-                    try:
-                        repair_plan_bf = json.loads(repair_plan_json)
-                    except Exception:
-                        pass
-            
-            gf_result = pinecone_service.get_by_conflict_id(
-                conflict_id=f"{target_conflict_id}_girlfriend",
-                namespace="repair_plans"
-            )
-            if gf_result and gf_result.metadata:
-                repair_plan_json = gf_result.metadata.get("full_repair_plan_json", "")
-                if repair_plan_json:
-                    try:
-                        repair_plan_gf = json.loads(repair_plan_json)
-                    except Exception:
-                        pass
-            
-            # Build context string
-            context_parts = []
-            
-            if transcript_text:
-                context_parts.append(f"CONFLICT TRANSCRIPT:\n{transcript_text}")
-            
-            if analysis_summary:
-                context_parts.append(f"ANALYSIS:\n{analysis_summary}")
-            
-            if repair_plan_bf or repair_plan_gf:
-                context_parts.append("REPAIR SUGGESTIONS:")
-                if repair_plan_bf:
-                    apology = repair_plan_bf.get("apology_script", "")
-                    steps = repair_plan_bf.get("steps", [])
-                    if apology:
-                        context_parts.append(f"For Partner A: {apology[:200]}")
-                    if steps:
-                        context_parts.append(f"Steps: {', '.join(steps[:3])}")
-                
-                if repair_plan_gf:
-                    apology = repair_plan_gf.get("apology_script", "")
-                    steps = repair_plan_gf.get("steps", [])
-                    if apology:
-                        context_parts.append(f"For Partner B: {apology[:200]}")
-                    if steps:
-                        context_parts.append(f"Steps: {', '.join(steps[:3])}")
-            
-            if not context_parts:
-                error_msg = f"I couldn't find detailed information for conflict {target_conflict_id[:8]}... "
-                if not transcript_text:
-                    error_msg += "The transcript hasn't been stored yet. "
-                if not analysis_summary:
-                    error_msg += "The analysis hasn't been generated yet. "
-                error_msg += "Please make sure the conflict has been completed and the transcript has been stored."
-                logger.warning(f"⚠️ No context found for conflict {target_conflict_id}: transcript={bool(transcript_text)}, analysis={bool(analysis_summary)}")
-                return error_msg
-            
-            return "\n\n".join(context_parts)
+            # If we already have context and it's for the same conflict, we could return it,
+            # but the tool might be called to refresh data, so we'll fetch again.
+            return await retrieve_conflict_context(target_conflict_id)
             
         except Exception as e:
             logger.error(f"Error retrieving conflict context: {e}")
@@ -432,13 +453,14 @@ async def mediator_entrypoint(ctx: agents.JobContext):
     )
     logger.info("✅ AgentSession configured with STT, LLM, TTS, and VAD")
     
-    # Create the agent instance with conflict context
+    # Create the agent instance WITHOUT initial context first (so we can connect immediately)
     agent = MediatorAgent(
         conflict_id=conflict_id,
         active_view=active_view,
         repair_plan_view=repair_plan_view,
         has_analysis=has_analysis,
-        has_repair_plans=has_repair_plans
+        has_repair_plans=has_repair_plans,
+        initial_context=None
     )
     # Store session_id on agent instance for callbacks
     agent.session_id = session_id
@@ -447,6 +469,7 @@ async def mediator_entrypoint(ctx: agents.JobContext):
     # For now, we'll skip message saving in console mode to keep it simple
     
     # Start the session with room options (EXACTLY like working Livekit Voice Agent)
+    logger.info("🚀 Starting agent session (connecting to room)...")
     await session.start(
         room=ctx.room,
         agent=agent,
@@ -460,15 +483,37 @@ async def mediator_entrypoint(ctx: agents.JobContext):
             ),
         ),
     )
+    logger.info("✅ Agent session started (connected to room)")
+    
+    # Now fetch context asynchronously while connected
+    initial_context = None
+    if conflict_id:
+        logger.info(f"⏳ Fetching context for conflict {conflict_id}...")
+        try:
+            # Add a timeout to prevent hanging indefinitely
+            initial_context = await asyncio.wait_for(retrieve_conflict_context(conflict_id), timeout=10.0)
+            logger.info(f"📋 Context retrieved (length: {len(initial_context) if initial_context else 0})")
+            
+            # Update agent instructions with the retrieved context
+            if initial_context:
+                new_instructions = agent.instructions + f"\n\nHERE IS THE CONTEXT FOR THE CURRENT CONFLICT:\n{initial_context}\n\nUse this information to answer user questions immediately without needing to call get_conflict_context, unless specifically asked to refresh or check for new info."
+                agent.instructions = new_instructions
+                logger.info("✅ Agent instructions updated with context")
+        except asyncio.TimeoutError:
+            logger.warning("⚠️ Context retrieval timed out (10s), proceeding without initial context")
+        except Exception as e:
+            logger.error(f"❌ Error fetching context: {e}")
     
     # Generate initial greeting (EXACTLY like working Livekit Voice Agent)
     greeting_instruction = "Greet the user warmly. Introduce yourself as Luna, their friendly digital companion and mediator. Ask how you can help them today."
     if conflict_id:
         greeting_instruction += f" You can help them discuss conflict {conflict_id[:8]}... if they'd like."
     
+    logger.info("🗣️ Generating initial greeting...")
     await session.generate_reply(
         instructions=greeting_instruction
     )
+    logger.info("✅ Initial greeting generated")
 
 
 # Allow running standalone for testing (console mode)

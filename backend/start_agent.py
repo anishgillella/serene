@@ -10,6 +10,8 @@ from app.agents.heartsync_agent import entrypoint as heartsync_entrypoint
 from app.agents.mediator_agent import mediator_entrypoint
 from livekit.agents import WorkerOptions
 
+print("🚀 STARTING AGENT SCRIPT...")
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -48,5 +50,5 @@ if __name__ == "__main__":
     logger.info("🚀 Starting agent server...")
     logger.info("📡 Waiting for job requests from LiveKit Cloud...")
     logger.info("💡 Make sure your agent is configured in LiveKit Cloud dashboard")
-    cli.run_app(WorkerOptions(entrypoint_fnc=router_entrypoint))
+    cli.run_app(WorkerOptions(entrypoint_fnc=router_entrypoint, agent_name="Luna"))
 

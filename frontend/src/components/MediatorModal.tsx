@@ -24,6 +24,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
   const [isConnected, setIsConnected] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isAgentJoining, setIsAgentJoining] = useState(false);
   const roomRef = useRef<Room | null>(null);
   const localTracksRef = useRef<any[]>([]);
 
@@ -33,14 +34,14 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
   const generateToken = async (conflictId: string) => {
     console.log('🔑 generateToken called with conflictId:', conflictId);
     console.log('🌐 API_BASE_URL:', API_BASE_URL);
-    
+
     try {
       const requestBody = {
         conflict_id: conflictId,
         participant_name: 'user'
       };
       console.log('📤 Sending token request:', requestBody);
-      
+
       const response = await fetch(`${API_BASE_URL}/api/mediator/token`, {
         method: 'POST',
         headers: {
@@ -48,23 +49,23 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         },
         body: JSON.stringify(requestBody)
       });
-      
+
       console.log('📥 Response status:', response.status, response.statusText);
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         console.error('❌ Token request failed:', errorText);
         throw new Error(`Failed to generate token: ${response.status} ${errorText}`);
       }
-      
+
       const data = await response.json();
-      console.log('✅ Token response received:', { 
-        hasToken: !!data.token, 
-        room: data.room, 
+      console.log('✅ Token response received:', {
+        hasToken: !!data.token,
+        room: data.room,
         url: data.url,
         tokenPreview: data.token?.substring(0, 30) + '...'
       });
-      
+
       return { token: data.token, room: data.room, url: data.url };
     } catch (error) {
       console.error('❌ Error generating token:', error);
@@ -74,19 +75,19 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
 
   const startCall = async () => {
     console.log('🚀 startCall called', { isConnecting, isConnected, conflictId });
-    
+
     if (isConnecting || isConnected) {
       console.log('⚠️ Already connecting or connected, skipping');
       return;
     }
 
     setIsConnecting(true);
-    
+
     try {
       console.log('📝 Generating token for conflict:', conflictId);
       const { token, url } = await generateToken(conflictId);
       console.log('✅ Token generated:', { token: token?.substring(0, 20) + '...', url, room: conflictId });
-      
+
       if (!token) {
         console.error('❌ No token received');
         alert('Failed to generate token. Please try again.');
@@ -103,20 +104,29 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         console.log('Connected to mediator room');
         setIsConnected(true);
         setIsConnecting(false);
-        addTranscriptEntry('system', 'Connected to Luna!');
+        addTranscriptEntry('system', 'Connected to room. Waiting for Luna...');
       });
 
       room.on(RoomEvent.Disconnected, () => {
         console.log('Disconnected from mediator room');
         setIsConnected(false);
+        setIsAgentJoining(false);
         addTranscriptEntry('system', 'Disconnected from Luna');
         cleanup();
       });
 
       room.on(RoomEvent.ParticipantConnected, (participant) => {
         console.log('Participant connected:', participant.identity);
-        addTranscriptEntry('system', `${participant.identity} joined`);
-        
+        // Check if it's the agent (usually starts with agent- or has name Luna)
+        const isAgent = participant.identity.startsWith('agent-') || participant.name === 'Luna';
+        const displayName = isAgent ? 'Luna' : participant.identity;
+
+        addTranscriptEntry('system', `${displayName} joined`);
+
+        if (isAgent) {
+          setIsAgentJoining(false);
+        }
+
         // Subscribe to all audio tracks from the agent
         if (participant.audioTracks && participant.audioTracks.size > 0) {
           participant.audioTracks.forEach((publication) => {
@@ -167,6 +177,29 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         await room.connect(url, token);
         console.log('✅ Connected to room:', room.name);
         console.log('👥 Remote participants:', room.remoteParticipants.size);
+
+        // Explicitly dispatch agent to ensure it joins
+        try {
+          console.log('🚀 Dispatching agent to room...');
+          setIsAgentJoining(true); // Start showing "Summoning Luna..."
+
+          await fetch(`${API_BASE_URL}/api/dispatch-agent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              room_name: `mediator-${conflictId}`,
+              agent_name: 'Luna'
+            })
+          });
+          console.log('✅ Agent dispatch requested');
+        } catch (dispatchError) {
+          console.error('⚠️ Failed to dispatch agent:', dispatchError);
+          setIsAgentJoining(false); // Hide indicator on error (or keep it if we hope auto-dispatch works)
+          // Don't fail the whole connection, agent might join via auto-dispatch
+        }
+
       } catch (connectError) {
         console.error('❌ Connection error:', connectError);
         throw connectError;
@@ -189,7 +222,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         console.log('Found remote participant:', participant.identity);
         console.log('  Audio tracks:', participant.audioTracks?.size || 0);
         console.log('  Video tracks:', participant.videoTracks?.size || 0);
-        
+
         if (participant.audioTracks && participant.audioTracks.size > 0) {
           participant.audioTracks.forEach((publication) => {
             console.log('  Audio track:', publication.trackName, 'subscribed:', publication.isSubscribed);
@@ -207,6 +240,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
       console.error('Error connecting to room:', error);
       alert('Failed to connect: ' + error.message);
       setIsConnecting(false);
+      setIsAgentJoining(false);
       cleanup();
     }
   };
@@ -218,6 +252,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
       await roomRef.current.disconnect();
       cleanup();
       setIsConnected(false);
+      setIsAgentJoining(false);
       addTranscriptEntry('system', 'Call ended');
     } catch (error) {
       console.error('Error disconnecting:', error);
@@ -246,7 +281,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
   // Cleanup on unmount or modal close
   useEffect(() => {
     console.log('🔄 MediatorModal useEffect - isOpen changed:', isOpen, 'conflictId:', conflictId);
-    
+
     if (!isOpen) {
       console.log('🚪 Modal closed, cleaning up');
       if (roomRef.current) {
@@ -254,11 +289,12 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
       }
       setTranscript([]);
       setIsConnected(false);
+      setIsAgentJoining(false);
     } else {
       console.log('🚪 Modal opened, ready to connect');
       // Don't auto-start - let user click "Start Call" button
     }
-    
+
     return () => {
       console.log('🧹 MediatorModal cleanup');
       cleanup();
@@ -286,12 +322,19 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
 
         {/* Status */}
         <div className="px-6 py-3 border-b border-gray-200">
-          <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-            isConnected 
-              ? 'bg-green-100 text-green-800' 
-              : 'bg-gray-100 text-gray-600'
-          }`}>
-            {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+          <div className="flex items-center gap-3">
+            <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${isConnected
+                ? 'bg-green-100 text-green-800'
+                : 'bg-gray-100 text-gray-600'
+              }`}>
+              {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+            </div>
+
+            {isAgentJoining && (
+              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-purple-100 text-purple-800 animate-pulse">
+                ✨ Summoning Luna...
+              </div>
+            )}
           </div>
         </div>
 
@@ -302,8 +345,8 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
               <div className="text-center">
                 <MicIcon size={48} className="mx-auto mb-3 opacity-30" />
                 <p className="text-sm">
-                  {isConnecting 
-                    ? 'Connecting to Luna...' 
+                  {isConnecting
+                    ? 'Connecting to Luna...'
                     : 'Click "Start Call" to begin talking with Luna'}
                 </p>
               </div>
@@ -313,13 +356,12 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
               {transcript.map((entry, index) => (
                 <div
                   key={index}
-                  className={`p-3 rounded-lg ${
-                    entry.speaker === 'agent'
-                      ? 'bg-purple-50 border-l-4 border-purple-400'
-                      : entry.speaker === 'user'
+                  className={`p-3 rounded-lg ${entry.speaker === 'agent'
+                    ? 'bg-purple-50 border-l-4 border-purple-400'
+                    : entry.speaker === 'user'
                       ? 'bg-blue-50 border-l-4 border-blue-400'
                       : 'bg-gray-100 border-l-4 border-gray-400'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">

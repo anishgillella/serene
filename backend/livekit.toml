@@ -2,6 +2,6 @@
   subdomain = "voice-agent-qnma0l98"  # Your LiveKit Cloud project subdomain
 
 [agent]
-  id = "CA_yuejkXotk5qC"  # Agent ID from LiveKit Cloud
+  id = "A_aPV984RTQvBw"  # Agent ID from LiveKit Cloud
   entrypoint = "start_agent:router_entrypoint"  # Router entrypoint
 
