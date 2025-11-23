@@ -44,6 +44,28 @@ class LLMService:
             logger.error(f"❌ Error in chat completion: {e}")
             raise
     
+    def chat_completion_stream(
+        self,
+        messages: list,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None
+    ):
+        """Streaming chat completion - yields text chunks as they're generated (sync generator)"""
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+        except Exception as e:
+            logger.error(f"❌ Error in streaming chat completion: {e}")
+            raise
+    
     def structured_output(
         self,
         messages: list,

@@ -3,6 +3,7 @@ Post-fight session API endpoints
 """
 import logging
 import asyncio
+import sys
 from fastapi import APIRouter, HTTPException, Body, BackgroundTasks
 from typing import Optional, List
 from datetime import datetime
@@ -12,6 +13,9 @@ from app.services.reranker_service import reranker_service
 from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
 from app.models.schemas import ConflictAnalysis, RepairPlan, ConflictTranscript, SpeakerSegment
+from app.config import settings
+from supabase import create_client
+from app.services.db_service import db_service
 
 logger = logging.getLogger(__name__)
 
@@ -144,29 +148,35 @@ async def generate_analysis_and_repair_plan_background(
             )
         )
         
-        # Store repair plans in Pinecone
+        # Store repair plans in Pinecone (with error handling for rate limits)
         try:
             repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
-            repair_plan_embedding_bf = embeddings_service.embed_text(repair_plan_text_bf)
-            repair_plan_dict_bf = repair_plan_boyfriend.model_dump()
-            repair_plan_dict_bf["generated_at"] = datetime.now()
-            pinecone_service.upsert_repair_plan(
-                conflict_id=f"{conflict_id}_boyfriend",
-                embedding=repair_plan_embedding_bf,
-                repair_plan_data=repair_plan_dict_bf,
-                namespace="repair_plans"
-            )
+            try:
+                repair_plan_embedding_bf = embeddings_service.embed_text(repair_plan_text_bf)
+                repair_plan_dict_bf = repair_plan_boyfriend.model_dump()
+                repair_plan_dict_bf["generated_at"] = datetime.now()
+                pinecone_service.upsert_repair_plan(
+                    conflict_id=f"{conflict_id}_boyfriend",
+                    embedding=repair_plan_embedding_bf,
+                    repair_plan_data=repair_plan_dict_bf,
+                    namespace="repair_plans"
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to store boyfriend repair plan embedding (rate limit?): {e}")
             
             repair_plan_text_gf = f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.steps)}"
-            repair_plan_embedding_gf = embeddings_service.embed_text(repair_plan_text_gf)
-            repair_plan_dict_gf = repair_plan_girlfriend.model_dump()
-            repair_plan_dict_gf["generated_at"] = datetime.now()
-            pinecone_service.upsert_repair_plan(
-                conflict_id=f"{conflict_id}_girlfriend",
-                embedding=repair_plan_embedding_gf,
-                repair_plan_data=repair_plan_dict_gf,
-                namespace="repair_plans"
-            )
+            try:
+                repair_plan_embedding_gf = embeddings_service.embed_text(repair_plan_text_gf)
+                repair_plan_dict_gf = repair_plan_girlfriend.model_dump()
+                repair_plan_dict_gf["generated_at"] = datetime.now()
+                pinecone_service.upsert_repair_plan(
+                    conflict_id=f"{conflict_id}_girlfriend",
+                    embedding=repair_plan_embedding_gf,
+                    repair_plan_data=repair_plan_dict_gf,
+                    namespace="repair_plans"
+                )
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to store girlfriend repair plan embedding (rate limit?): {e}")
             
             logger.info(f"✅ Repair plans stored for {conflict_id} (both partners)")
         except Exception as e:
@@ -644,183 +654,5 @@ async def get_repair_plan(
         raise
     except Exception as e:
         logger.error(f"❌ Error generating repair plan: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/conflicts/{conflict_id}/rant")
-async def store_rant(
-    conflict_id: str,
-    request: dict = Body(...)
-):
-    """
-    Handle private rant chat messages with HeartSync AI that has full context
-    
-    Request body:
-    {
-        "message": "user's message",
-        "partner_id": "id",
-        "conversation_history": [{"role": "user|assistant", "content": "..."}]
-    }
-    """
-    try:
-        from app.services.llm_service import llm_service
-        
-        message = request.get("message", "")
-        partner_id = request.get("partner_id", "partner_a")
-        conversation_history = request.get("conversation_history", [])
-        
-        if not message:
-            raise HTTPException(
-                status_code=400,
-                detail="message is required"
-            )
-        
-        # Get full context: transcript, analysis, profiles
-        transcript_text = ""
-        analysis_summary = ""
-        boyfriend_profile = None
-        girlfriend_profile = None
-        relationship_id = ""
-        
-        try:
-            # Get transcript
-            transcript_result = pinecone_service.get_by_conflict_id(
-                conflict_id=conflict_id,
-                namespace="transcripts"
-            )
-            
-            if transcript_result and transcript_result.metadata:
-                metadata = transcript_result.metadata
-                transcript_text = metadata.get("transcript_text", "")
-                relationship_id = metadata.get("relationship_id", "")
-                
-                # Get analysis if available
-                analysis_result = pinecone_service.get_by_conflict_id(
-                    conflict_id=conflict_id,
-                    namespace="analysis"
-                )
-                if analysis_result and analysis_result.metadata:
-                    import json
-                    analysis_json = analysis_result.metadata.get("full_analysis_json")
-                    if analysis_json:
-                        try:
-                            analysis_data = json.loads(analysis_json)
-                            analysis_summary = analysis_data.get("fight_summary", "")
-                            root_causes = analysis_data.get("root_causes", [])
-                            if root_causes:
-                                analysis_summary += f"\n\nRoot causes: {', '.join(root_causes[:3])}"
-                        except Exception:
-                            pass
-                
-                # Get profiles via RAG
-                try:
-                    query_embedding = embeddings_service.embed_query(message)
-                    
-                    boyfriend_results = pinecone_service.query(
-                        query_embedding=query_embedding,
-                        top_k=3,
-                        namespace="profiles",
-                        filter={
-                            "relationship_id": {"$eq": relationship_id},
-                            "pdf_type": {"$eq": "boyfriend_profile"}
-                        }
-                    )
-                    boyfriend_chunks = [match.metadata.get("extracted_text", "") for match in boyfriend_results.matches if match.metadata.get("extracted_text", "")]
-                    if boyfriend_chunks:
-                        reranked_bf = reranker_service.rerank(query=message[:500], documents=boyfriend_chunks, top_k=2)
-                        boyfriend_profile = "\n\n".join([chunk for chunk, score in reranked_bf])
-                    
-                    girlfriend_results = pinecone_service.query(
-                        query_embedding=query_embedding,
-                        top_k=3,
-                        namespace="profiles",
-                        filter={
-                            "relationship_id": {"$eq": relationship_id},
-                            "pdf_type": {"$eq": "girlfriend_profile"}
-                        }
-                    )
-                    girlfriend_chunks = [match.metadata.get("extracted_text", "") for match in girlfriend_results.matches if match.metadata.get("extracted_text", "")]
-                    if girlfriend_chunks:
-                        reranked_gf = reranker_service.rerank(query=message[:500], documents=girlfriend_chunks, top_k=2)
-                        girlfriend_profile = "\n\n".join([chunk for chunk, score in reranked_gf])
-                except Exception as e:
-                    logger.info(f"⚠️ RAG retrieval failed for rant: {e}")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not retrieve full context: {e}")
-        
-        # Build context for HeartSync
-        context_parts = []
-        if transcript_text:
-            context_parts.append(f"CONFLICT TRANSCRIPT:\n{transcript_text[:2000]}...")  # Truncate for context
-        if analysis_summary:
-            context_parts.append(f"CONFLICT ANALYSIS:\n{analysis_summary}")
-        if boyfriend_profile:
-            context_parts.append(f"BOYFRIEND'S PROFILE:\n{boyfriend_profile}")
-        if girlfriend_profile:
-            context_parts.append(f"GIRLFRIEND'S PROFILE:\n{girlfriend_profile}")
-        
-        context = "\n\n".join(context_parts)
-        
-        # Build conversation messages
-        system_message = """You are HeartSync, a compassionate AI relationship mediator. You're having a private conversation with someone who just had a conflict with their partner.
-
-You have full context of:
-- The entire conflict transcript
-- Analysis of what went wrong
-- Both partners' profiles and preferences
-
-Your role:
-- Listen empathetically
-- Help them process their feelings
-- Provide gentle, personalized guidance
-- Reference specific moments from the conflict when helpful
-- Be warm, understanding, and non-judgmental
-- Help them understand their partner's perspective without invalidating their feelings
-
-Keep responses conversational, supportive, and under 200 words."""
-        
-        messages = [{"role": "system", "content": system_message}]
-        
-        if context:
-            messages.append({
-                "role": "system",
-                "content": f"CONTEXT ABOUT THIS CONFLICT:\n{context}"
-            })
-        
-        # Add conversation history
-        for msg in conversation_history[-6:]:  # Last 6 messages for context
-            messages.append({
-                "role": msg.get("role", "user"),
-                "content": msg.get("content", "")
-            })
-        
-        # Add current message
-        messages.append({
-            "role": "user",
-            "content": message
-        })
-        
-        # Get HeartSync's response
-        response = llm_service.chat_completion(
-            messages=messages,
-            temperature=0.8,
-            max_tokens=300
-        )
-        
-        logger.info(f"💬 HeartSync responded to rant for conflict {conflict_id}")
-        
-        return {
-            "success": True,
-            "response": response,
-            "conflict_id": conflict_id,
-            "partner_id": partner_id
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"❌ Error handling rant: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -50,6 +50,8 @@ async def get_token(room_name: str, participant_name: str):
 async def get_conflict(conflict_id: str):
     """Retrieve conflict data including transcript"""
     try:
+        from app.services.pinecone_service import pinecone_service
+        
         # Get conflict metadata
         response = supabase.table("conflicts").select("*").eq("id", conflict_id).execute()
         
@@ -58,14 +60,35 @@ async def get_conflict(conflict_id: str):
         
         conflict = response.data[0]
         
-        # If transcript_path is stored, try to retrieve it from Storage
+        # Get transcript from Pinecone (where it's actually stored)
         transcript_data = None
-        if conflict.get("transcript_path"):
-            try:
-                transcript_content = supabase.storage.from_("transcripts").download(conflict["transcript_path"])
-                transcript_data = json.loads(transcript_content.decode('utf-8'))
-            except Exception as e:
-                print(f"Error retrieving transcript from storage: {e}")
+        try:
+            transcript_result = pinecone_service.get_by_conflict_id(
+                conflict_id=conflict_id,
+                namespace="transcripts"
+            )
+            
+            if transcript_result and transcript_result.metadata:
+                metadata = transcript_result.metadata
+                transcript_text = metadata.get("transcript_text", "")
+                
+                # Convert transcript text to array format for frontend
+                if transcript_text:
+                    # Split by newlines and filter empty lines
+                    transcript_lines = [line.strip() for line in transcript_text.split('\n') if line.strip()]
+                    transcript_data = transcript_lines
+                else:
+                    # Try to get segments if available
+                    segments = metadata.get("segments", [])
+                    if segments:
+                        transcript_data = [
+                            f"{seg.get('speaker', 'Speaker')}: {seg.get('text', '')}"
+                            for seg in segments
+                        ]
+        except Exception as e:
+            print(f"Error retrieving transcript from Pinecone: {e}")
+            import traceback
+            traceback.print_exc()
         
         return {
             "conflict": conflict,

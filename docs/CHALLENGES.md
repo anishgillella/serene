@@ -421,3 +421,4 @@ await websockets.connect(url, additional_headers={"Authorization": f"Token {api_
 **Last Updated:** November 22, 2025  
 **Status:** Real-time transcription MVP ✅ complete and tested
 
+

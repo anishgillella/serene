@@ -61,3 +61,4 @@ class RerankerService:
 # Singleton instance
 reranker_service = RerankerService()
 
+

@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import TranscriptBubble from '../components/TranscriptBubble';
 import { 
   BarChart4Icon, RefreshCwIcon, FileTextIcon, SparklesIcon, HeartIcon, 
   LoaderIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon, 
-  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, XIcon, SendIcon
+  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, XIcon, SendIcon, MicIcon, MicOffIcon
 } from 'lucide-react';
 
 interface LocationState {
@@ -40,26 +40,84 @@ interface RepairPlan {
 
 const PostFightSession = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const state = location.state as LocationState | null;
   
+  console.log('🚀 PostFightSession Component Mounted/Rendered');
+  console.log('📍 Location:', {
+    pathname: location.pathname,
+    search: location.search,
+    state: location.state,
+    key: location.key
+  });
+  
   const [isPrivateMode, setIsPrivateMode] = useState(false);
-  const [conflictId, setConflictId] = useState<string | null>(state?.conflict_id || null);
-  const [rantInput, setRantInput] = useState('');
-  const [sendingRant, setSendingRant] = useState(false);
-  const [rantHistory, setRantHistory] = useState<Array<{role: 'user' | 'assistant', content: string}>>([]);
-  const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Refs must be declared before useEffects that use them
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const hasAutoAnalyzedRef = useRef<boolean>(false);
+  
+  // Initialize conflictId from state - use a function to access location.state safely
+  const [conflictId, setConflictId] = useState<string | null>(() => {
+    const initialState = (location.state as LocationState | null)?.conflict_id;
+    if (initialState) {
+      console.log('✅ Initial conflictId from state:', initialState);
+      return initialState;
+    }
+    // Try to get from URL params if state is lost (e.g., page refresh)
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlConflictId = urlParams.get('conflict_id');
+    if (urlConflictId) {
+      console.log('✅ Initial conflictId from URL:', urlConflictId);
+      return urlConflictId;
+    }
+    console.log('⚠️ No conflictId found in initial state');
+    return null;
+  });
+  
+  // Update conflictId when location state changes (e.g., navigating from History)
+  useEffect(() => {
+    console.log('🔄 useEffect: Checking for conflictId updates', {
+      stateConflictId: state?.conflict_id,
+      currentConflictId: conflictId,
+      locationState: location.state,
+      locationSearch: location.search
+    });
+    
+    // Check navigation state
+    if (state?.conflict_id) {
+      if (state.conflict_id !== conflictId) {
+        console.log('✅ Updating conflictId from navigation state:', state.conflict_id);
+        setConflictId(state.conflict_id);
+        hasAutoAnalyzedRef.current = false;
+      } else {
+        console.log('ℹ️ conflictId already set to:', conflictId);
+      }
+    } else {
+      console.log('⚠️ No conflict_id in navigation state');
+    }
+    
+    // Also check URL params as fallback
+    const urlParams = new URLSearchParams(location.search);
+    const urlConflictId = urlParams.get('conflict_id');
+    if (urlConflictId && urlConflictId !== conflictId) {
+      console.log('✅ Updating conflictId from URL params:', urlConflictId);
+      setConflictId(urlConflictId);
+      hasAutoAnalyzedRef.current = false;
+    }
+  }, [state?.conflict_id, location.search, location.state, conflictId]);
+  
   const [analysis, setAnalysis] = useState<ConflictAnalysis | null>(null);
   const [repairPlan, setRepairPlan] = useState<RepairPlan | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
   const [activeView, setActiveView] = useState<'analysis' | 'repair' | null>(null);
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary']));
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
   
-  // Initialize messages with transcript
+  // Initialize messages with transcript (merge consecutive messages from same speaker)
   const [messages, setMessages] = useState<Message[]>(() => {
     const initialMessages: Message[] = [];
     
@@ -68,21 +126,33 @@ const PostFightSession = () => {
         const boyfriendMatch = line.match(/^(?:Boyfriend|Speaker\s+1):\s*(.+)$/i);
         const girlfriendMatch = line.match(/^(?:Girlfriend|Speaker\s+2):\s*(.+)$/i);
         
+        let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
+        let messageText = '';
+        
         if (boyfriendMatch) {
-          initialMessages.push({
-            speaker: 'speaker1',
-            message: boyfriendMatch[1].trim()
-          });
+          currentSpeaker = 'speaker1';
+          messageText = boyfriendMatch[1].trim();
         } else if (girlfriendMatch) {
-          initialMessages.push({
-            speaker: 'speaker2',
-            message: girlfriendMatch[1].trim()
-          });
+          currentSpeaker = 'speaker2';
+          messageText = girlfriendMatch[1].trim();
         } else {
-          const messageText = line.replace(/^(?:You|Boyfriend|Girlfriend|Speaker\s+\d+):\s*/i, '').trim();
-          if (messageText) {
+          const cleanedText = line.replace(/^(?:You|Boyfriend|Girlfriend|Speaker\s+\d+):\s*/i, '').trim();
+          if (cleanedText) {
+            currentSpeaker = 'speaker1';
+            messageText = cleanedText;
+          }
+        }
+        
+        if (currentSpeaker && messageText) {
+          // Check if last message is from same speaker - merge them
+          const lastMessage = initialMessages[initialMessages.length - 1];
+          if (lastMessage && lastMessage.speaker === currentSpeaker) {
+            // Merge with previous message from same speaker
+            lastMessage.message += ' ' + messageText;
+          } else {
+            // New speaker or first message - add as new message
             initialMessages.push({
-              speaker: 'speaker1',
+              speaker: currentSpeaker,
               message: messageText
             });
           }
@@ -97,6 +167,112 @@ const PostFightSession = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Load transcript from API if conflictId is present but transcript is not in state
+  useEffect(() => {
+    const loadTranscript = async () => {
+      // Only load if we have conflictId but no transcript in state
+      if (conflictId && (!state?.transcript || state.transcript.length === 0)) {
+        try {
+          console.log(`📖 Loading transcript for conflict ${conflictId}...`);
+          const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`);
+          
+          if (response.ok) {
+            const data = await response.json();
+            console.log('📄 API response:', data);
+            
+            // Check if transcript is in the response (API returns { conflict: {...}, transcript: [...], message: "..." })
+            let transcriptLines: string[] = [];
+            
+            if (data.transcript) {
+              if (Array.isArray(data.transcript)) {
+                transcriptLines = data.transcript;
+              } else if (data.transcript.segments && Array.isArray(data.transcript.segments)) {
+                // Convert segments to lines
+                transcriptLines = data.transcript.segments.map((seg: any) => {
+                  const speaker = seg.speaker || seg.speaker_name || 'Speaker';
+                  return `${speaker}: ${seg.text || seg.transcript || ''}`;
+                });
+              } else if (typeof data.transcript === 'string') {
+                // Single transcript text - split by lines
+                transcriptLines = data.transcript.split('\n').filter((line: string) => line.trim());
+              } else if (data.transcript.transcript_text) {
+                // Nested transcript_text
+                const text = data.transcript.transcript_text;
+                transcriptLines = text.split('\n').filter((line: string) => line.trim());
+              }
+            }
+            
+            if (transcriptLines.length > 0) {
+              console.log(`📝 Parsing ${transcriptLines.length} transcript lines...`);
+              // Parse and add to messages
+              const newMessages: Message[] = [];
+              transcriptLines.forEach((line: string) => {
+                const boyfriendMatch = line.match(/^(?:Boyfriend|Speaker\s+1|partner_a|Speaker\s+0):\s*(.+)$/i);
+                const girlfriendMatch = line.match(/^(?:Girlfriend|Speaker\s+2|partner_b|Speaker\s+1):\s*(.+)$/i);
+                
+                let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
+                let messageText = '';
+                
+                if (boyfriendMatch) {
+                  currentSpeaker = 'speaker1';
+                  messageText = boyfriendMatch[1].trim();
+                } else if (girlfriendMatch) {
+                  currentSpeaker = 'speaker2';
+                  messageText = girlfriendMatch[1].trim();
+                } else {
+                  // Try to extract any text after colon
+                  const colonIndex = line.indexOf(':');
+                  if (colonIndex > 0) {
+                    const cleanedText = line.substring(colonIndex + 1).trim();
+                    if (cleanedText) {
+                      currentSpeaker = 'speaker1'; // Default to speaker1
+                      messageText = cleanedText;
+                    }
+                  }
+                }
+                
+                if (currentSpeaker && messageText) {
+                  const lastMessage = newMessages[newMessages.length - 1];
+                  if (lastMessage && lastMessage.speaker === currentSpeaker) {
+                    // Merge with previous message from same speaker
+                    lastMessage.message += ' ' + messageText;
+                  } else {
+                    // New speaker or first message - add as new message
+                    newMessages.push({
+                      speaker: currentSpeaker,
+                      message: messageText
+                    });
+                  }
+                }
+              });
+              
+              if (newMessages.length > 0) {
+                setMessages(newMessages);
+                console.log(`✅ Loaded ${newMessages.length} messages from transcript`);
+              } else {
+                console.warn('⚠️ No valid messages parsed from transcript lines');
+              }
+            } else {
+              console.log('⚠️ No transcript lines found in API response');
+            }
+          } else {
+            const errorText = await response.text();
+            console.error('Failed to load transcript:', response.status, errorText);
+          }
+        } catch (error) {
+          console.error('Error loading transcript:', error);
+        }
+      }
+    };
+    
+    loadTranscript();
+  }, [conflictId, state?.transcript, apiUrl]);
+
+  // Define functions before useEffects that use them
+  const addMessage = useCallback((speaker: 'speaker1' | 'speaker2' | 'heartsync', message: string, isPrivate: boolean = false) => {
+    setMessages(prev => [...prev, { speaker, message, isPrivate }]);
+  }, []);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => {
@@ -120,7 +296,7 @@ const PostFightSession = () => {
     }
   };
 
-  const handleAnalyzeConflict = async () => {
+  const handleAnalyzeConflict = useCallback(async () => {
     if (!conflictId) {
       alert('Conflict ID not available. Please ensure the fight was properly captured.');
       return;
@@ -155,7 +331,7 @@ const PostFightSession = () => {
     } finally {
       setLoadingAnalysis(false);
     }
-  };
+  }, [conflictId, apiUrl, addMessage]);
 
   const handleGetRepairPlan = async () => {
     if (!conflictId) {
@@ -194,70 +370,62 @@ const PostFightSession = () => {
     }
   };
 
-  const handleStoreRant = async () => {
-    if (!conflictId) {
-      alert('Conflict ID not available.');
-      return;
-    }
+  // Debug logging for render state
+  useEffect(() => {
+    console.log('🔍 PostFightSession State:', {
+      conflictId,
+      hasState: !!state,
+      stateConflictId: state?.conflict_id,
+      messagesCount: messages.length,
+      analysis: !!analysis,
+      repairPlan: !!repairPlan,
+      locationPath: location.pathname,
+      locationState: location.state,
+      locationKey: location.key
+    });
+  }, [conflictId, state, messages.length, analysis, repairPlan, location.pathname, location.state, location.key]);
 
-    const rantText = prompt('What would you like to say? (This will be stored privately)');
-    if (!rantText) return;
-
-    try {
-      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/rant`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: rantText,
-          partner_id: 'partner_a',
-          is_shared: false
-        })
-      });
-
-      if (response.ok) {
-        addMessage('speaker1', rantText, isPrivateMode);
-        addMessage('heartsync', 'Your private rant has been saved.');
-      }
-    } catch (error) {
-      console.error('Error storing rant:', error);
-    }
-  };
-
-  const toggleListening = () => {
-    setIsListening(!isListening);
-    if (!isListening) {
-      setTimeout(() => {
-        addMessage('speaker1', 'I felt ignored when they were on their phone during our conversation.', isPrivateMode);
-        setTimeout(() => {
-          addMessage('heartsync', 'I understand that felt hurtful. Have you shared how that specific behavior makes you feel?');
-          setIsListening(false);
-        }, 2000);
-      }, 2000);
-    }
-  };
-
-  const addMessage = (speaker: 'speaker1' | 'speaker2' | 'heartsync', message: string, isPrivate: boolean = false) => {
-    setMessages(prev => [...prev, { speaker, message, isPrivate }]);
-  };
+  // Always render something - add error boundary
+  if (!conflictId && !state?.conflict_id) {
+    console.warn('⚠️ No conflictId found - showing fallback UI');
+  }
 
   return (
-    <div className="flex flex-col h-[85vh] w-full max-w-full">
+    <div className="flex flex-col min-h-[85vh] w-full max-w-full bg-white/50 backdrop-blur-sm rounded-xl p-6 shadow-lg relative z-10">
       {/* Header */}
-      <div className="text-center mb-4 px-6">
+      <div className="text-center mb-4">
         <h2 className="text-2xl font-semibold text-gray-800 mb-1">
           Post-Fight Session
         </h2>
         <p className="text-sm text-gray-600">
           Talk freely — HeartSync is here to help you understand and repair.
         </p>
+        {conflictId && (
+          <p className="text-xs text-gray-500 mt-2 font-mono">
+            Conflict ID: {conflictId.substring(0, 8)}...
+          </p>
+        )}
       </div>
 
       {/* Main Content - Split Screen */}
-      <div className="flex flex-1 gap-6 px-6 pb-4 overflow-hidden w-full">
+      <div className="flex flex-1 gap-6 pb-4 w-full min-h-0">
         {/* Left Side - Conversation */}
         <div className="flex flex-col flex-1 min-w-0 border-r border-gray-200 pr-6">
           {/* Action Buttons - Top Left */}
           <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-gray-200">
+            {!conflictId && (
+              <div className="w-full bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-2">
+                <p className="text-sm text-yellow-800 font-medium">
+                  ⚠️ No conflict ID found
+                </p>
+                <p className="text-xs text-yellow-600 mt-1">
+                  State: {state ? JSON.stringify(state) : 'null'} | Location state: {location.state ? JSON.stringify(location.state) : 'null'}
+                </p>
+                <p className="text-xs text-yellow-600 mt-1">
+                  {state?.conflict_id ? 'Found conflict_id in state, loading...' : 'Please select a conflict from History.'}
+                </p>
+              </div>
+            )}
             <button
               onClick={handleAnalyzeConflict}
               disabled={!conflictId || loadingAnalysis}
@@ -284,78 +452,49 @@ const PostFightSession = () => {
               {loadingRepairPlan ? 'Generating...' : 'Get Repair Plan'}
             </button>
             
-            <button
-              onClick={handleStoreRant}
-              disabled={!conflictId}
-              className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                isPrivateMode ? 'bg-rose-200 text-rose-700 border-2 border-rose-400' : 'bg-white/70 text-gray-600 hover:bg-white/90'
-              }`}
-            >
-              <FileTextIcon size={16} className="mr-2" />
-              {isPrivateMode ? 'Exit Private Rant' : 'Private Rant'}
-            </button>
           </div>
 
-          {/* Private Rant Chat Input */}
-          {isPrivateMode && (
-            <div className="mb-4 p-3 bg-rose-50 rounded-xl border-2 border-rose-200">
-              <div className="flex gap-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  value={rantInput}
-                  onChange={(e) => setRantInput(e.target.value)}
-                  onKeyPress={handleRantKeyPress}
-                  placeholder="Share your thoughts privately with HeartSync..."
-                  disabled={sendingRant}
-                  className="flex-1 px-4 py-2 bg-white rounded-lg border border-rose-200 focus:outline-none focus:ring-2 focus:ring-rose-400 focus:border-transparent text-sm disabled:opacity-50"
-                />
-                <button
-                  onClick={handleSendRant}
-                  disabled={!rantInput.trim() || sendingRant}
-                  className="px-4 py-2 bg-rose-500 text-white rounded-lg hover:bg-rose-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
-                >
-                  {sendingRant ? (
-                    <LoaderIcon size={18} className="animate-spin" />
-                  ) : (
-                    <SendIcon size={18} />
-                  )}
-                </button>
-              </div>
-              <p className="text-xs text-rose-600 mt-2 flex items-center">
-                <span className="mr-1">🔒</span>
-                This conversation is private and confidential
-              </p>
-            </div>
-          )}
 
           {/* Messages/Transcript */}
           <div className="flex-1 overflow-y-auto pr-2">
-            <div className="space-y-3">
-              {messages.map((msg, idx) => {
-                if (msg.speaker === 'heartsync') {
-                  return <TranscriptBubble key={idx} speaker="heartsync" message={msg.message} isPrivate={msg.isPrivate} />;
-                } else {
-                  const isBoyfriend = msg.speaker === 'speaker1';
-                  return (
-                    <div key={idx} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
-                      <div className={`rounded-2xl py-2.5 px-4 max-w-[85%] shadow-sm ${
-                        isBoyfriend 
-                          ? 'bg-blue-100 text-gray-800' 
-                          : 'bg-pink-100 text-gray-800'
-                      } ${msg.isPrivate ? 'opacity-70 border-2 border-rose-300' : ''}`}>
-                        <div className="text-xs font-semibold mb-1 text-gray-600">
-                          {isBoyfriend ? 'Boyfriend' : 'Girlfriend'}
-                          {msg.isPrivate && <span className="ml-2 text-rose-500 text-[10px]">🔒 Private</span>}
+            {messages.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-gray-400">
+                <div className="text-center">
+                  <FileTextIcon size={48} className="mx-auto mb-3 opacity-30" />
+                  <p className="text-sm">
+                    {conflictId 
+                      ? 'Loading transcript...' 
+                      : 'No transcript available. Start a fight capture session to record a conflict.'}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {messages.map((msg, idx) => {
+                  if (msg.speaker === 'heartsync') {
+                    return <TranscriptBubble key={idx} speaker="heartsync" message={msg.message} isPrivate={msg.isPrivate} />;
+                  } else {
+                    const isBoyfriend = msg.speaker === 'speaker1';
+                    return (
+                      <div key={idx} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
+                        <div className={`rounded-2xl py-2.5 px-4 max-w-[85%] shadow-sm ${
+                          isBoyfriend 
+                            ? 'bg-blue-100 text-gray-800' 
+                            : 'bg-pink-100 text-gray-800'
+                        } ${msg.isPrivate ? 'opacity-70 border-2 border-rose-300' : ''}`}>
+                          <div className="text-xs font-semibold mb-1 text-gray-600">
+                            {isBoyfriend ? 'Boyfriend' : 'Girlfriend'}
+                            {msg.isPrivate && <span className="ml-2 text-rose-500 text-[10px]">🔒 Private</span>}
+                          </div>
+                          <div className="text-sm leading-relaxed">{msg.message}</div>
                         </div>
-                        <div className="text-sm leading-relaxed">{msg.message}</div>
                       </div>
-                    </div>
-                  );
-                }
-              })}
-              <div ref={messagesEndRef} />
-            </div>
+                    );
+                  }
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
           </div>
         </div>
 
