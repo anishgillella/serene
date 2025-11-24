@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { UploadIcon, FileTextIcon, CheckCircleIcon, LoaderIcon, XIcon, AlertCircleIcon, SparklesIcon } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { UploadIcon, FileTextIcon, CheckCircleIcon, LoaderIcon, XIcon, AlertCircleIcon, SparklesIcon, ArrowLeftIcon } from 'lucide-react';
 
 interface UploadedFile {
   id: string;
@@ -12,6 +13,7 @@ interface UploadedFile {
 }
 
 const Upload = () => {
+  const navigate = useNavigate();
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedPdfType, setSelectedPdfType] = useState<string>('boyfriend_profile');
@@ -137,6 +139,17 @@ const Upload = () => {
 
   return (
     <div className="flex flex-col min-h-[80vh] py-6">
+      {/* Back Button */}
+      <div className="mb-4">
+        <button
+          onClick={() => navigate('/')}
+          className="flex items-center text-gray-600 hover:text-gray-800 transition-colors"
+        >
+          <ArrowLeftIcon size={20} className="mr-2" />
+          <span className="text-sm font-medium">Back to Home</span>
+        </button>
+      </div>
+
       <div className="text-center mb-6">
         <h2 className="text-2xl font-semibold text-gray-800 mb-2">
           Upload PDFs for RAG Pipeline
