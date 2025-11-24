@@ -19,5 +19,6 @@ COPY start_agent.py .
 # Set Python path
 ENV PYTHONPATH=/app
 
-# Run the agent (LiveKit Cloud uses 'start' command)
-CMD ["python", "start_agent.py", "start"]
+# Run the agent (LiveKit Cloud will call this directly)
+# cli.run_app() handles both 'dev' and 'start' commands internally
+CMD ["python", "start_agent.py"]

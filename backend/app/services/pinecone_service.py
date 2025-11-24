@@ -224,6 +224,117 @@ class PineconeService:
             import traceback
             logger.error(traceback.format_exc())
             return None
+    
+    def upsert_transcript_chunks(
+        self,
+        chunks: List[Dict[str, Any]],
+        embeddings: List[List[float]],
+        namespace: str = "transcript_chunks"
+    ):
+        """
+        Store multiple transcript chunks in Pinecone.
+        
+        Args:
+            chunks: List of chunk dictionaries with metadata
+            embeddings: List of embeddings (one per chunk)
+            namespace: Pinecone namespace for transcript chunks
+        """
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping chunk storage")
+            return
+        
+        if len(chunks) != len(embeddings):
+            logger.error(f"❌ Mismatch: {len(chunks)} chunks but {len(embeddings)} embeddings")
+            return
+        
+        try:
+            vectors = []
+            for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+                conflict_id = chunk.get("conflict_id", "unknown")
+                chunk_index = chunk.get("chunk_index", idx)
+                chunk_id = f"chunk_{conflict_id}_{chunk_index}"
+                
+                metadata = chunk.get("metadata", {})
+                # Ensure all required fields are present
+                metadata.update({
+                    "conflict_id": chunk.get("conflict_id", ""),
+                    "relationship_id": chunk.get("relationship_id", ""),
+                    "chunk_index": chunk_index,
+                    "speaker": chunk.get("speaker", "Unknown"),
+                    "text": chunk.get("content", "")[:10000],  # Limit text size for metadata
+                })
+                
+                if "timestamp" in chunk:
+                    metadata["timestamp"] = str(chunk["timestamp"])
+                
+                vectors.append({
+                    "id": chunk_id,
+                    "values": embedding,
+                    "metadata": metadata
+                })
+            
+            # Upsert in batches if needed (Pinecone supports up to 100 vectors per upsert)
+            batch_size = 100
+            for i in range(0, len(vectors), batch_size):
+                batch = vectors[i:i + batch_size]
+                self.index.upsert(
+                    vectors=batch,
+                    namespace=namespace
+                )
+            
+            logger.info(f"✅ Stored {len(chunks)} transcript chunks in namespace {namespace}")
+        except Exception as e:
+            logger.error(f"❌ Error storing transcript chunks: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
+    
+    def query_transcript_chunks(
+        self,
+        query_embedding: List[float],
+        conflict_id: Optional[str] = None,
+        relationship_id: Optional[str] = None,
+        top_k: int = 5,
+        namespace: str = "transcript_chunks"
+    ):
+        """
+        Query Pinecone for relevant transcript chunks.
+        
+        Args:
+            query_embedding: Query embedding vector
+            conflict_id: Filter by conflict_id (priority)
+            relationship_id: Filter by relationship_id (fallback)
+            top_k: Number of results to return
+            namespace: Pinecone namespace
+            
+        Returns:
+            Query results with matches
+        """
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping query")
+            return None
+        
+        try:
+            filter_dict = None
+            if conflict_id:
+                filter_dict = {"conflict_id": {"$eq": conflict_id}}
+            elif relationship_id:
+                filter_dict = {"relationship_id": {"$eq": relationship_id}}
+            
+            results = self.index.query(
+                vector=query_embedding,
+                top_k=top_k,
+                namespace=namespace,
+                include_metadata=True,
+                filter=filter_dict
+            )
+            
+            return results
+        except Exception as e:
+            logger.error(f"❌ Error querying transcript chunks: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
 
 # Singleton instance
 pinecone_service = PineconeService()

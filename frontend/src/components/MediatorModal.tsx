@@ -171,34 +171,50 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         }
       });
 
-      // Connect to room
-      console.log('🔌 Connecting to room:', { url, roomName: `mediator-${conflictId}`, tokenLength: token.length });
-      try {
-        await room.connect(url, token);
-        console.log('✅ Connected to room:', room.name);
-        console.log('👥 Remote participants:', room.remoteParticipants.size);
-
-        // Explicitly dispatch agent to ensure it joins
+        // Connect to room
+        console.log('🔌 Connecting to room:', { url, roomName: `mediator-${conflictId}`, tokenLength: token.length });
         try {
-          console.log('🚀 Dispatching agent to room...');
-          setIsAgentJoining(true); // Start showing "Summoning Luna..."
+          await room.connect(url, token);
+          console.log('✅ Connected to room:', room.name);
+          console.log('👥 Remote participants:', room.remoteParticipants.size);
+          
+          // Wait a moment for auto-join, then check if agent joined
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          // Check if agent already joined (auto-join)
+          const agentJoined = Array.from(room.remoteParticipants.values()).some(
+            p => p.identity?.toLowerCase().includes('luna') || p.identity?.toLowerCase().includes('agent')
+          );
+          
+          if (!agentJoined) {
+            // For local dev, explicit dispatch may be needed if auto-join doesn't work
+            console.log('🚀 Agent not auto-joined, creating explicit dispatch...');
+            setIsAgentJoining(true); // Show "Summoning Luna..."
 
-          await fetch(`${API_BASE_URL}/api/dispatch-agent`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              room_name: `mediator-${conflictId}`,
-              agent_name: 'Luna'
-            })
-          });
-          console.log('✅ Agent dispatch requested');
-        } catch (dispatchError) {
-          console.error('⚠️ Failed to dispatch agent:', dispatchError);
-          setIsAgentJoining(false); // Hide indicator on error (or keep it if we hope auto-dispatch works)
-          // Don't fail the whole connection, agent might join via auto-dispatch
-        }
+            try {
+              const dispatchResponse = await fetch(`${API_BASE_URL}/api/dispatch-agent`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  room_name: `mediator-${conflictId}`
+                })
+              });
+              
+              if (dispatchResponse.ok) {
+                const dispatchData = await dispatchResponse.json();
+                console.log('✅ Dispatch created:', dispatchData.dispatch_id);
+              } else {
+                console.warn('⚠️ Dispatch creation failed');
+              }
+            } catch (dispatchError) {
+              console.error('⚠️ Dispatch error:', dispatchError);
+            }
+          } else {
+            console.log('✅ Agent already joined (auto-join worked)');
+            setIsAgentJoining(false);
+          }
 
       } catch (connectError) {
         console.error('❌ Connection error:', connectError);

@@ -49,8 +49,11 @@ async def get_token(room_name: str, participant_name: str):
 @app.post("/api/mediator/token")
 async def get_mediator_token(request: dict = Body(...)):
     """
-    Generate a token for mediator room.
+    Generate a token for mediator room and PRE-CREATE agent dispatch.
     Room name format: mediator-{conflict_id}
+    
+    IMPORTANT: For trial accounts/local dev agents, we create the dispatch
+    BEFORE the user connects, as automatic assignment may not work.
     
     Request body:
     {
@@ -64,7 +67,17 @@ async def get_mediator_token(request: dict = Body(...)):
     if not conflict_id:
         raise HTTPException(status_code=400, detail="conflict_id is required")
     
+    # Verify API credentials are set
+    if not settings.LIVEKIT_API_KEY or not settings.LIVEKIT_API_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="LiveKit API credentials not configured. Please check LIVEKIT_API_KEY and LIVEKIT_API_SECRET in .env"
+        )
+    
     room_name = f"mediator-{conflict_id}"
+    
+    # Generate token with embedded dispatch
+    # Token-based dispatch should work for cloud-deployed agents
     token = api.AccessToken(
         settings.LIVEKIT_API_KEY,
         settings.LIVEKIT_API_SECRET
@@ -76,7 +89,13 @@ async def get_mediator_token(request: dict = Body(...)):
         room=room_name,
         can_publish=True,
         can_subscribe=True,
+        can_publish_data=True,  # Required for agent communication
     ))
+    
+    # Note: AgentServer pattern auto-joins when participants connect
+    # No need for explicit agent_name or RoomAgentDispatch (like Voice Agent RAG)
+    # The @server.rtc_session() decorator handles automatic agent assignment
+    
     return {
         "token": token.to_jwt(),
         "room": room_name,
@@ -86,19 +105,23 @@ async def get_mediator_token(request: dict = Body(...)):
 @app.post("/api/dispatch-agent")
 async def dispatch_agent(request: dict = Body(...)):
     """
-    Explicitly dispatch an agent to a room.
+    NOTE: This endpoint is kept for compatibility but may not be needed.
+    
+    With AgentServer pattern (like Voice Agent RAG), agents auto-join when participants connect.
+    The @server.rtc_session() decorator handles automatic agent assignment.
+    
+    Explicit dispatch is only needed if auto-dispatch fails.
     """
     room_name = request.get("room_name")
-    agent_name = request.get("agent_name", "Luna")
     
     if not room_name:
         raise HTTPException(status_code=400, detail="room_name is required")
     
+    # With AgentServer pattern, agent auto-joins - no explicit dispatch needed
+    # But we can still create a dispatch as a fallback
     try:
-        # Use LiveKitAPI to access agent dispatch service
         from livekit import api
         
-        # Initialize LiveKitAPI
         lkapi = api.LiveKitAPI(
             settings.LIVEKIT_URL,
             settings.LIVEKIT_API_KEY,
@@ -106,29 +129,78 @@ async def dispatch_agent(request: dict = Body(...)):
         )
         
         try:
-            # Create dispatch request
-            req = api.CreateAgentDispatchRequest(
-                room=room_name,
-                agent_name=agent_name
-            )
+            # For local dev agents, explicit dispatch is needed
+            # Create dispatch - LiveKit Cloud will route to available agent server
+            req = api.CreateAgentDispatchRequest(room=room_name)
             
-            # Use the agent_dispatch service from the API client
+            print(f"🚀 Creating explicit dispatch for local dev agent:")
+            print(f"   Room: {room_name}")
+            print(f"   This will route to available agent server (AW_cfqEGsYKyNzB)")
+            
             dispatch = await lkapi.agent_dispatch.create_dispatch(req)
+            
+            print(f"✅ Dispatch created (ID: {dispatch.id})")
+            print(f"   Check agent logs for 'MEDIATOR ENTRYPOINT CALLED'")
             
             return {
                 "success": True,
                 "dispatch_id": dispatch.id,
-                "message": f"Agent {agent_name} dispatched to room {room_name}"
+                "room": room_name,
+                "message": f"Dispatch created. Agent should auto-join via AgentServer pattern.",
+                "note": "Check agent logs for 'MEDIATOR ENTRYPOINT CALLED'"
             }
         finally:
-            # Always close the API client
             await lkapi.aclose()
             
     except Exception as e:
-        print(f"❌ Error dispatching agent: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"⚠️  Dispatch creation failed (agent may still auto-join): {e}")
+        # Don't fail - AgentServer should handle it automatically
+        return {
+            "success": False,
+            "message": f"Dispatch failed but agent may auto-join: {str(e)}",
+            "note": "AgentServer pattern should handle automatic assignment"
+        }
+
+@app.get("/api/dispatch-status/{room_name}")
+async def get_dispatch_status(room_name: str):
+    """
+    Check dispatch status for a room.
+    Useful for debugging why agents aren't joining.
+    """
+    try:
+        from livekit import api
+        
+        lkapi = api.LiveKitAPI(
+            settings.LIVEKIT_URL,
+            settings.LIVEKIT_API_KEY,
+            settings.LIVEKIT_API_SECRET
+        )
+        
+        try:
+            # List dispatches for this room
+            dispatches = await lkapi.agent_dispatch.list_dispatches(room=room_name)
+            
+            return {
+                "room": room_name,
+                "dispatches": [
+                    {
+                        "id": d.id,
+                        "agent_name": d.agent_name,
+                        "room": d.room,
+                        "state": str(d.state) if hasattr(d, 'state') else "unknown"
+                    }
+                    for d in dispatches
+                ],
+                "count": len(dispatches)
+            }
+        finally:
+            await lkapi.aclose()
+    except Exception as e:
+        return {
+            "room": room_name,
+            "error": str(e),
+            "dispatches": []
+        }
 
 @app.get("/api/conflicts/{conflict_id}")
 async def get_conflict(conflict_id: str):

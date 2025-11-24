@@ -13,6 +13,7 @@ from app.services.pinecone_service import pinecone_service
 from app.services.embeddings_service import embeddings_service
 from app.services.reranker_service import reranker_service
 from app.services.s3_service import s3_service
+from app.services.transcript_chunker import TranscriptChunker
 from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
 from app.models.schemas import ConflictAnalysis, RepairPlan, ConflictTranscript, SpeakerSegment
@@ -1111,6 +1112,36 @@ async def store_transcript(
             import traceback
             logger.error(traceback.format_exc())
             # Continue even if Pinecone fails - we still want Supabase storage
+        
+        # 1b. Chunk transcript and store chunks in Pinecone for RAG
+        try:
+            chunker = TranscriptChunker(chunk_size=1000, chunk_overlap=200)
+            chunks = chunker.chunk_transcript(
+                transcript_text=transcript_text,
+                conflict_id=conflict_id,
+                relationship_id=relationship_id,
+                timestamp=conflict_transcript.timestamp.isoformat() if hasattr(conflict_transcript.timestamp, 'isoformat') else str(conflict_transcript.timestamp)
+            )
+            
+            if chunks:
+                # Generate embeddings for all chunks
+                chunk_texts = [chunk["content"] for chunk in chunks]
+                chunk_embeddings = embeddings_service.embed_batch(chunk_texts)
+                
+                # Store chunks in Pinecone
+                pinecone_service.upsert_transcript_chunks(
+                    chunks=chunks,
+                    embeddings=chunk_embeddings,
+                    namespace="transcript_chunks"
+                )
+                logger.info(f"✅ Stored {len(chunks)} transcript chunks for conflict {conflict_id} in Pinecone")
+            else:
+                logger.warning(f"⚠️ No chunks created for conflict {conflict_id}")
+        except Exception as e:
+            logger.error(f"❌ Error chunking and storing transcript chunks: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # Continue even if chunking fails - full transcript is already stored
         
         # 2. Store raw transcript in AWS S3
         file_path = None

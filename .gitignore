@@ -85,3 +85,6 @@ character_desc/
 test_data/
 sample_profiles/
 anish_credentials*
+
+# Voice Agent RAG reference implementation
+Voice Agent RAG/

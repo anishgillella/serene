@@ -19,7 +19,7 @@
 
 3. **Set Default Project** (optional)
    ```bash
-   lk project set-default "voice-agent-qnma0l98"
+   lk project set-default "rag-q8jnl16x"
    ```
 
 ---
@@ -108,7 +108,7 @@ lk agent logs --log-type deploy
 The agent needs these environment variables (set via `--secrets-file .env`):
 
 ```bash
-LIVEKIT_URL=wss://voice-agent-qnma0l98.livekit.cloud
+LIVEKIT_URL=wss://rag-q8jnl16x.livekit.cloud
 LIVEKIT_API_KEY=...
 LIVEKIT_API_SECRET=...
 DEEPGRAM_API_KEY=...
@@ -166,6 +166,9 @@ Once deployed, your agent will:
 2. Click "Start Fight Capture"
 3. Speak into microphone
 4. See transcripts appear in real-time!
+
+
+
 
 
 
