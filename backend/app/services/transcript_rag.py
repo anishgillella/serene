@@ -1,4 +1,4 @@
-"""RAG system for retrieving relevant transcript chunks from Pinecone."""
+"""RAG system for retrieving relevant transcript chunks and profile PDFs from Pinecone."""
 import logging
 from typing import Optional, List, Dict, Any
 from app.services.pinecone_service import pinecone_service
@@ -8,20 +8,23 @@ logger = logging.getLogger(__name__)
 
 
 class TranscriptRAGSystem:
-    """Retrieval-Augmented Generation system for conversation transcripts."""
+    """Retrieval-Augmented Generation system for conversation transcripts and profile PDFs."""
     
     def __init__(
         self,
         k: int = 5,
+        include_profiles: bool = True,
     ):
         """
         Initialize transcript RAG system.
         
         Args:
             k: Number of chunks to retrieve
+            include_profiles: Whether to also query profile PDFs (Adrian/Elara profiles)
         """
         self.k = k
-        logger.info(f"Initialized TranscriptRAGSystem with k={k}")
+        self.include_profiles = include_profiles
+        logger.info(f"Initialized TranscriptRAGSystem with k={k}, include_profiles={include_profiles}")
     
     def rag_lookup(
         self,
@@ -92,7 +95,53 @@ class TranscriptRAGSystem:
                     f"[Chunk {idx} from conflict {conflict_id_chunk}, chunk {chunk_idx}, {speaker}]:\n{text}\n"
                 )
             
-            context = "\n".join(context_parts)
+            # Also query profile PDFs if enabled
+            profile_context = ""
+            if self.include_profiles and relationship_id:
+                try:
+                    # Query boyfriend profile (Adrian)
+                    boyfriend_results = pinecone_service.query(
+                        query_embedding=query_embedding,
+                        top_k=2,
+                        namespace="profiles",
+                        filter={
+                            "relationship_id": {"$eq": relationship_id},
+                            "pdf_type": {"$eq": "boyfriend_profile"}
+                        }
+                    )
+                    
+                    # Query girlfriend profile (Elara)
+                    girlfriend_results = pinecone_service.query(
+                        query_embedding=query_embedding,
+                        top_k=2,
+                        namespace="profiles",
+                        filter={
+                            "relationship_id": {"$eq": relationship_id},
+                            "pdf_type": {"$eq": "girlfriend_profile"}
+                        }
+                    )
+                    
+                    profile_parts = []
+                    if boyfriend_results and boyfriend_results.matches:
+                        for match in boyfriend_results.matches:
+                            profile_text = match.metadata.get("extracted_text", "")
+                            if profile_text:
+                                profile_parts.append(f"[Adrian's Profile]:\n{profile_text[:1000]}...")  # Limit to 1000 chars
+                    
+                    if girlfriend_results and girlfriend_results.matches:
+                        for match in girlfriend_results.matches:
+                            profile_text = match.metadata.get("extracted_text", "")
+                            if profile_text:
+                                profile_parts.append(f"[Elara's Profile]:\n{profile_text[:1000]}...")  # Limit to 1000 chars
+                    
+                    if profile_parts:
+                        profile_context = "\n\n" + "\n\n".join(profile_parts)
+                        logger.info(f"Retrieved profile context for query: {query[:50]}...")
+                except Exception as e:
+                    logger.warning(f"Error querying profiles (non-fatal): {e}")
+                    # Don't fail the whole lookup if profiles fail
+            
+            context = "\n".join(context_parts) + profile_context
             
             logger.info(f"Retrieved {len(chunks)} transcript chunks for query: {query[:50]}...")
             return context
@@ -113,9 +162,14 @@ class TranscriptRAGSystem:
         Returns:
             Formatted context string
         """
-        return f"""Additional information relevant to the user's question from the conversation transcript:
+        return f"""Additional information relevant to the user's question from the conversation transcript and partner profiles:
 
 {context}
 
-Use this information to provide accurate and detailed answers about what was said in the conversation. Reference specific speakers and their statements when relevant. If the information doesn't directly answer the question, say so and provide what information is available."""
+Use this information to provide accurate and detailed answers about:
+- What was said in the conversation (reference specific speakers: Adrian or Elara)
+- Adrian's personality, preferences, and background (from his profile)
+- Elara's personality, preferences, and background (from her profile)
+
+Reference specific speakers and their statements when relevant. If the information doesn't directly answer the question, say so and provide what information is available."""
 
