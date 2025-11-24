@@ -3,6 +3,7 @@ import logging
 from typing import Optional, List, Dict, Any
 from app.services.pinecone_service import pinecone_service
 from app.services.embeddings_service import embeddings_service
+from app.services.reranker_service import reranker_service
 
 logger = logging.getLogger(__name__)
 
@@ -12,14 +13,14 @@ class TranscriptRAGSystem:
     
     def __init__(
         self,
-        k: int = 5,
+        k: int = 10,  # Increased default to get more context from entire corpus
         include_profiles: bool = True,
     ):
         """
         Initialize transcript RAG system.
         
         Args:
-            k: Number of chunks to retrieve
+            k: Number of chunks to retrieve from entire corpus
             include_profiles: Whether to also query profile PDFs (Adrian/Elara profiles)
         """
         self.k = k
@@ -33,12 +34,13 @@ class TranscriptRAGSystem:
         relationship_id: Optional[str] = None,
     ) -> str:
         """
-        Perform RAG lookup and return formatted context.
+        Perform RAG lookup across ENTIRE corpus (all transcripts + profiles).
+        Returns top relevant chunks from entire corpus for contextualized responses.
         
         Args:
             query: User query string
-            conflict_id: Current conflict ID (priority filter)
-            relationship_id: Relationship ID (fallback filter)
+            conflict_id: Current conflict ID (for prioritization, not filtering)
+            relationship_id: Relationship ID (for profile filtering)
             
         Returns:
             Formatted context string for LLM injection
@@ -47,62 +49,43 @@ class TranscriptRAGSystem:
             # Generate query embedding
             query_embedding = embeddings_service.embed_query(query)
             
-            # Primary: Query current conflict chunks
-            chunks = []
-            if conflict_id:
-                logger.info(f"Querying transcript chunks for conflict {conflict_id}")
-                results = pinecone_service.query_transcript_chunks(
-                    query_embedding=query_embedding,
-                    conflict_id=conflict_id,
-                    top_k=self.k,
-                )
-                
-                if results and hasattr(results, 'matches') and results.matches:
-                    chunks = results.matches
-                    logger.info(f"Found {len(chunks)} chunks for conflict {conflict_id}")
+            # Query ENTIRE corpus - get candidate chunks from ALL sources (transcripts + profiles)
+            # Then rerank ALL together to get most relevant ones (saves tokens, better context)
+            logger.info(f"Querying ENTIRE corpus (transcripts + profiles) for query: {query[:50]}...")
             
-            # Fallback: Query relationship-level chunks if insufficient results
-            if len(chunks) < self.k and relationship_id:
-                logger.info(f"Querying relationship-level chunks for relationship {relationship_id}")
-                fallback_results = pinecone_service.query_transcript_chunks(
-                    query_embedding=query_embedding,
-                    relationship_id=relationship_id,
-                    top_k=self.k - len(chunks),
-                )
-                
-                if fallback_results and hasattr(fallback_results, 'matches') and fallback_results.matches:
-                    # Avoid duplicates
-                    existing_conflict_ids = {chunk.metadata.get("conflict_id") for chunk in chunks if hasattr(chunk, 'metadata')}
-                    for match in fallback_results.matches:
-                        if hasattr(match, 'metadata') and match.metadata.get("conflict_id") not in existing_conflict_ids:
-                            chunks.append(match)
-                    logger.info(f"Added {len(fallback_results.matches)} relationship-level chunks")
+            # Step 1: Query transcript chunks from entire corpus (no filter)
+            candidate_top_k = 30  # Get 30 candidate chunks from transcripts
+            transcript_candidates = []
+            transcript_results = pinecone_service.index.query(
+                vector=query_embedding,
+                top_k=candidate_top_k,
+                namespace="transcript_chunks",
+                include_metadata=True,
+                # No filter - query entire corpus
+            )
             
-            if not chunks:
-                logger.warning(f"No relevant transcript chunks found for query: {query[:50]}...")
-                return "No relevant information found in the conversation transcript."
+            if transcript_results and hasattr(transcript_results, 'matches') and transcript_results.matches:
+                for match in transcript_results.matches:
+                    metadata = match.metadata if hasattr(match, 'metadata') else {}
+                    text = metadata.get("text", "")
+                    if text:
+                        transcript_candidates.append({
+                            'text': text,
+                            'match': match,
+                            'type': 'transcript',
+                            'conflict_id': metadata.get("conflict_id", ""),
+                            'speaker': metadata.get("speaker", "Unknown"),
+                        })
+                logger.info(f"Found {len(transcript_candidates)} transcript candidate chunks")
             
-            # Format retrieved chunks into context
-            context_parts = []
-            for idx, chunk in enumerate(chunks[:self.k], 1):
-                metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
-                speaker = metadata.get("speaker", "Unknown")
-                text = metadata.get("text", "")
-                chunk_idx = metadata.get("chunk_index", "?")
-                conflict_id_chunk = metadata.get("conflict_id", "unknown")
-                
-                context_parts.append(
-                    f"[Chunk {idx} from conflict {conflict_id_chunk}, chunk {chunk_idx}, {speaker}]:\n{text}\n"
-                )
-            
-            # Also query profile PDFs if enabled
-            profile_context = ""
+            # Step 2: Query profile chunks from entire corpus (no filter)
+            profile_candidates = []
             if self.include_profiles and relationship_id:
                 try:
-                    # Query boyfriend profile (Adrian)
-                    boyfriend_results = pinecone_service.query(
+                    # Query boyfriend profile chunks
+                    bf_results = pinecone_service.query(
                         query_embedding=query_embedding,
-                        top_k=2,
+                        top_k=15,  # Get candidate chunks
                         namespace="profiles",
                         filter={
                             "relationship_id": {"$eq": relationship_id},
@@ -110,10 +93,10 @@ class TranscriptRAGSystem:
                         }
                     )
                     
-                    # Query girlfriend profile (Elara)
-                    girlfriend_results = pinecone_service.query(
+                    # Query girlfriend profile chunks
+                    gf_results = pinecone_service.query(
                         query_embedding=query_embedding,
-                        top_k=2,
+                        top_k=15,  # Get candidate chunks
                         namespace="profiles",
                         filter={
                             "relationship_id": {"$eq": relationship_id},
@@ -121,29 +104,91 @@ class TranscriptRAGSystem:
                         }
                     )
                     
-                    profile_parts = []
-                    if boyfriend_results and boyfriend_results.matches:
-                        for match in boyfriend_results.matches:
-                            profile_text = match.metadata.get("extracted_text", "")
-                            if profile_text:
-                                profile_parts.append(f"[Adrian's Profile]:\n{profile_text[:1000]}...")  # Limit to 1000 chars
+                    if bf_results and bf_results.matches:
+                        for match in bf_results.matches:
+                            text = match.metadata.get("extracted_text", "") if hasattr(match, 'metadata') else ""
+                            if text:
+                                profile_candidates.append({
+                                    'text': text,
+                                    'match': match,
+                                    'type': 'profile',
+                                    'profile_type': 'boyfriend',
+                                    'speaker': 'Adrian',
+                                })
                     
-                    if girlfriend_results and girlfriend_results.matches:
-                        for match in girlfriend_results.matches:
-                            profile_text = match.metadata.get("extracted_text", "")
-                            if profile_text:
-                                profile_parts.append(f"[Elara's Profile]:\n{profile_text[:1000]}...")  # Limit to 1000 chars
+                    if gf_results and gf_results.matches:
+                        for match in gf_results.matches:
+                            text = match.metadata.get("extracted_text", "") if hasattr(match, 'metadata') else ""
+                            if text:
+                                profile_candidates.append({
+                                    'text': text,
+                                    'match': match,
+                                    'type': 'profile',
+                                    'profile_type': 'girlfriend',
+                                    'speaker': 'Elara',
+                                })
                     
-                    if profile_parts:
-                        profile_context = "\n\n" + "\n\n".join(profile_parts)
-                        logger.info(f"Retrieved profile context for query: {query[:50]}...")
+                    logger.info(f"Found {len(profile_candidates)} profile candidate chunks")
                 except Exception as e:
-                    logger.warning(f"Error querying profiles (non-fatal): {e}")
-                    # Don't fail the whole lookup if profiles fail
+                    logger.warning(f"Error querying profiles for reranking (non-fatal): {e}")
             
-            context = "\n".join(context_parts) + profile_context
+            # Step 3: Combine ALL candidates (transcripts + profiles)
+            all_candidates = transcript_candidates + profile_candidates
+            logger.info(f"Total candidates: {len(all_candidates)} ({len(transcript_candidates)} transcripts + {len(profile_candidates)} profiles)")
             
-            logger.info(f"Retrieved {len(chunks)} transcript chunks for query: {query[:50]}...")
+            # Step 4: Rerank ALL candidates together to get most relevant ones
+            chunks = []
+            if all_candidates:
+                logger.info(f"Reranking {len(all_candidates)} candidate chunks (transcripts + profiles) to get top {self.k} most relevant...")
+                candidate_texts = [c['text'] for c in all_candidates]
+                reranked_results = reranker_service.rerank(
+                    query=query,
+                    documents=candidate_texts,
+                    top_k=self.k  # Get top_k most relevant after reranking
+                )
+                
+                # Map reranked results back to original chunks
+                reranked_chunks = []
+                for doc_text, score in reranked_results:
+                    # Find the original candidate that matches this text
+                    for candidate in all_candidates:
+                        if candidate['text'] == doc_text:
+                            reranked_chunks.append(candidate['match'])
+                            break
+                
+                chunks = reranked_chunks
+                logger.info(f"✅ Reranked to {len(chunks)} most relevant chunks from entire corpus (transcripts + profiles)")
+            
+            # Format reranked chunks into context (mix of transcripts and profiles)
+            if not chunks:
+                logger.warning(f"No relevant chunks found for query: {query[:50]}...")
+                return "No relevant information found in the conversation transcript or profiles."
+            
+            context_parts = []
+            for idx, chunk in enumerate(chunks, 1):
+                metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
+                
+                # Determine if this is a transcript chunk or profile chunk
+                if 'pdf_type' in metadata:
+                    # Profile chunk
+                    profile_type = metadata.get("pdf_type", "")
+                    speaker = "Adrian" if "boyfriend" in profile_type else "Elara"
+                    text = metadata.get("extracted_text", "")
+                    context_parts.append(
+                        f"[{speaker}'s Profile - Background & Personality]:\n{text}\n"
+                    )
+                else:
+                    # Transcript chunk
+                    speaker = metadata.get("speaker", "Unknown")
+                    text = metadata.get("text", "")
+                    chunk_idx = metadata.get("chunk_index", "?")
+                    conflict_id_chunk = metadata.get("conflict_id", "unknown")
+                    context_parts.append(
+                        f"[Chunk {idx} from conflict {conflict_id_chunk}, chunk {chunk_idx}, {speaker}]:\n{text}\n"
+                    )
+            
+            context = "\n".join(context_parts)
+            logger.info(f"Retrieved {len(chunks)} most relevant chunks from entire corpus (transcripts + profiles) for query: {query[:50]}...")
             return context
             
         except Exception as e:
@@ -162,14 +207,31 @@ class TranscriptRAGSystem:
         Returns:
             Formatted context string
         """
-        return f"""Additional information relevant to the user's question from the conversation transcript and partner profiles:
+        return f"""Additional information relevant to the user's question from the ENTIRE conversation corpus and partner profiles:
 
 {context}
 
-Use this information to provide accurate and detailed answers about:
-- What was said in the conversation (reference specific speakers: Adrian or Elara)
-- Adrian's personality, preferences, and background (from his profile)
-- Elara's personality, preferences, and background (from her profile)
+CRITICAL: Use ALL available context to provide empathetic, contextualized responses:
 
-Reference specific speakers and their statements when relevant. If the information doesn't directly answer the question, say so and provide what information is available."""
+1. **Transcript Context**: What was said in conversations (from current and past conflicts)
+   - Reference specific speakers: Adrian or Elara
+   - Relate current situation to past conversations when relevant
+
+2. **Profile Context**: Adrian's and Elara's backgrounds, personalities, preferences, values
+   - Use profile information to understand WHY someone feels a certain way
+   - Example: If Adrian is passionate about sports (from profile) and hurt about a missed game (from transcript), 
+     connect these: "I understand you're coming from a sports background and passionate about football, 
+     so it hurt when Elara didn't attend the game even though she said 'sure'."
+
+3. **Empathetic Understanding**: 
+   - Show deep understanding by connecting transcript events to profile traits
+   - Validate feelings by explaining WHY they make sense given the person's background
+   - Be specific: "Given your passion for sports and how much football means to you..."
+
+4. **Cross-Reference**: 
+   - Connect current conflict to patterns from past conversations
+   - Use profile information to explain emotional reactions
+   - Show you understand the FULL context, not just the immediate situation
+
+Reference specific speakers and their statements when relevant. Always connect transcript events to profile traits to show deep understanding."""
 

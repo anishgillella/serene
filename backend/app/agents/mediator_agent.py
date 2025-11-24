@@ -118,18 +118,31 @@ Your personality:
 
 Your role:
 - Listen to what Adrian has to say with empathy and understanding
-- Validate his feelings and perspective
+- Validate his feelings and perspective by connecting them to his background and personality
+- Use ALL available context: transcripts from ALL conversations + profile information
+- Show deep understanding by relating current situations to his passions, values, and background
+- Example: If he's hurt about a missed game and his profile shows passion for sports, say:
+  "I understand you're coming from a sports background and passionate about football, so it hurt when 
+  Elara didn't attend the game even though she said 'sure'. Your love for sports makes these moments 
+  especially meaningful to you."
 - Help him understand Elara's perspective while staying on his side
 - Suggest practical ways to resolve conflicts that work for him
 - Be supportive and encouraging
-- Answer questions about what was said in the conversation using the transcript context provided
+- Answer questions using context from the ENTIRE corpus (all transcripts + profiles)
+
+You have access to:
+- Conversation transcripts from ALL past conflicts (not just current one)
+- Adrian's complete profile (background, personality, passions, values)
+- Elara's complete profile (background, personality, preferences)
+
+When answering questions:
+- Use transcript context to reference what was said
+- Use profile context to explain WHY feelings make sense
+- Connect transcript events to profile traits for empathetic understanding
 - Reference Adrian and Elara by name when discussing the conversation
+- Show you understand the FULL context by relating current situations to past conversations and personality traits
 
-You have access to the conversation transcript and can reference specific things that were said.
-When answering questions about the conversation, use the provided transcript context to give accurate answers.
-Reference specific speakers (Adrian or Elara) and their statements when relevant.
-
-Remember: You're here to help Adrian, validate his feelings, and subtly guide him towards resolution while being empathetic to his situation.
+Remember: You're here to help Adrian, validate his feelings by connecting them to his background, and subtly guide him towards resolution while being deeply empathetic to his situation.
 """
         
         super().__init__(instructions=instructions)
@@ -402,17 +415,19 @@ async def mediator_entrypoint(ctx: JobContext):
                 from app.services.pinecone_service import pinecone_service
                 from app.services.embeddings_service import embeddings_service
                 
-                # Use a very broad query to get diverse chunks, or fetch all chunks
-                # For initial context, we want an overview, so use a general query
-                overview_query = "conversation discussion topics concerns"
+                # Query ENTIRE corpus for initial context (not just current conflict)
+                # This gives Luna access to all past conversations and patterns
+                overview_query = "conversation discussion topics concerns relationship"
                 query_embedding = embeddings_service.embed_query(overview_query)
                 
-                # Fetch more chunks for initial context (k=10 for overview)
-                logger.info(f"   🔍 Querying Pinecone for transcript chunks (conflict_id={conflict_id}, top_k=10)...")
-                results = pinecone_service.query_transcript_chunks(
-                    query_embedding=query_embedding,
-                    conflict_id=conflict_id,
-                    top_k=10,  # Get more chunks for initial context
+                # Query entire corpus (no conflict_id filter) for comprehensive initial context
+                logger.info(f"   🔍 Querying ENTIRE corpus for initial context (top_k=15)...")
+                results = pinecone_service.index.query(
+                    vector=query_embedding,
+                    top_k=15,  # Get more chunks from entire corpus
+                    namespace="transcript_chunks",
+                    include_metadata=True,
+                    # No filter - get top chunks from all conflicts
                 )
                 
                 logger.info(f"   📊 Query results: {results}")
@@ -420,12 +435,24 @@ async def mediator_entrypoint(ctx: JobContext):
                     logger.info(f"   📊 Results type: {type(results)}, has matches: {hasattr(results, 'matches')}")
                 
                 if results and hasattr(results, 'matches') and results.matches:
-                    chunks = results.matches
-                    logger.info(f"   ✅ Retrieved {len(chunks)} transcript chunks for initial context")
+                    all_chunks = results.matches
+                    # Prioritize current conflict chunks, but include relevant chunks from entire corpus
+                    current_conflict_chunks = []
+                    other_chunks = []
+                    for chunk in all_chunks:
+                        chunk_conflict_id = chunk.metadata.get("conflict_id", "") if hasattr(chunk, 'metadata') else ""
+                        if conflict_id and chunk_conflict_id == conflict_id:
+                            current_conflict_chunks.append(chunk)
+                        else:
+                            other_chunks.append(chunk)
+                    
+                    # Combine: current conflict first, then top relevant from corpus
+                    chunks = current_conflict_chunks + other_chunks[:10]
+                    logger.info(f"   ✅ Retrieved {len(current_conflict_chunks)} chunks from current conflict, {len(other_chunks)} from entire corpus")
                     
                     # Format chunks into context string
                     context_parts = []
-                    for idx, chunk in enumerate(chunks, 1):
+                    for idx, chunk in enumerate(chunks[:10], 1):  # Limit to top 10 for initial greeting
                         metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
                         speaker = metadata.get("speaker", "Unknown")
                         text = metadata.get("text", "")

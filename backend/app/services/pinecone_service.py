@@ -224,7 +224,7 @@ class PineconeService:
             import traceback
             logger.error(traceback.format_exc())
             return None
-    
+
     def upsert_transcript_chunks(
         self,
         chunks: List[Dict[str, Any]],
