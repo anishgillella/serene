@@ -5,6 +5,13 @@ from .config import settings
 from supabase import create_client
 from .routes import transcription
 import json
+import logging
+
+# Configure logging to show INFO level and above
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 app = FastAPI(title="HeartSync API")
 
@@ -215,37 +222,64 @@ async def get_conflict(conflict_id: str):
 @app.get("/api/conflicts")
 async def list_conflicts(relationship_id: str = None):
     """List all conflicts, optionally filtered by relationship"""
-    try:
-        # Try using db_service first (direct PostgreSQL connection, bypasses RLS)
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    async def fetch_conflicts():
+        """Fetch conflicts with timeout protection"""
         try:
-            from app.services.db_service import db_service
-            conflicts_data = db_service.get_all_conflicts(relationship_id=relationship_id)
+            # Try using db_service first (direct PostgreSQL connection, bypasses RLS)
+            try:
+                from app.services.db_service import db_service
+                # Run database query in thread pool to avoid blocking
+                import concurrent.futures
+                loop = asyncio.get_event_loop()
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    conflicts_data = await loop.run_in_executor(
+                        executor,
+                        lambda: db_service.get_all_conflicts(relationship_id=relationship_id)
+                    )
+                return {
+                    "total": len(conflicts_data),
+                    "conflicts": conflicts_data
+                }
+            except ImportError:
+                # Fallback to Supabase if db_service not available
+                pass
+            
+            # Fallback to Supabase
+            if relationship_id:
+                response = supabase.table("conflicts").select("*").eq("relationship_id", relationship_id).execute()
+            else:
+                response = supabase.table("conflicts").select("*").execute()
+            
+            # Ensure data is always a list, even if empty or None
+            conflicts_data = response.data if response.data is not None else []
+            
             return {
                 "total": len(conflicts_data),
                 "conflicts": conflicts_data
             }
-        except ImportError:
-            # Fallback to Supabase if db_service not available
-            pass
-        
-        # Fallback to Supabase
-        if relationship_id:
-            response = supabase.table("conflicts").select("*").eq("relationship_id", relationship_id).execute()
-        else:
-            response = supabase.table("conflicts").select("*").execute()
-        
-        # Ensure data is always a list, even if empty or None
-        conflicts_data = response.data if response.data is not None else []
-        
+        except Exception as e:
+            logger.error(f"❌ Error fetching conflicts: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            raise
+    
+    try:
+        # Add 10 second timeout to prevent hanging
+        result = await asyncio.wait_for(fetch_conflicts(), timeout=10.0)
+        return result
+    except asyncio.TimeoutError:
+        logger.error("⏱️ Timeout fetching conflicts (10s), returning empty list")
         return {
-            "total": len(conflicts_data),
-            "conflicts": conflicts_data
+            "total": 0,
+            "conflicts": []
         }
     except Exception as e:
-        import traceback
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"❌ Error listing conflicts: {e}")
+        import traceback
         logger.error(traceback.format_exc())
         # Return empty list instead of raising error for better UX
         return {

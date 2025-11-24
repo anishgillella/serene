@@ -2,12 +2,10 @@
 Conflict analysis tool - analyzes transcripts and extracts insights
 """
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 from app.services.llm_service import llm_service
-from app.services.embeddings_service import embeddings_service
-from app.services.pinecone_service import pinecone_service
-from app.services.reranker_service import reranker_service
 from app.models.schemas import ConflictAnalysis
 
 logger = logging.getLogger(__name__)
@@ -23,7 +21,8 @@ async def analyze_conflict_transcript(
     timestamp: datetime,
     partner_id: Optional[str] = None,
     boyfriend_profile: Optional[str] = None,
-    girlfriend_profile: Optional[str] = None
+    girlfriend_profile: Optional[str] = None,
+    use_rag_context: bool = False
 ) -> ConflictAnalysis:
     """
     Analyze a conflict transcript and extract structured insights
@@ -43,36 +42,36 @@ async def analyze_conflict_transcript(
         ConflictAnalysis with structured insights
     """
     try:
+        analysis_start = time.time()
         logger.info(f"🔍 Analyzing conflict {conflict_id}")
         
         # Use LLM to extract structured analysis with partner profiles, personalized from partner's POV
+        llm_start = time.time()
         analysis = llm_service.analyze_conflict(
             transcript_text=transcript_text,
             conflict_id=conflict_id,
             response_model=ConflictAnalysis,
             partner_id=partner_id,  # Pass partner_id for POV personalization
             boyfriend_profile=boyfriend_profile,
-            girlfriend_profile=girlfriend_profile
+            girlfriend_profile=girlfriend_profile,
+            use_rag_context=use_rag_context
         )
+        llm_time = time.time() - llm_start
         
         # Ensure conflict_id is set
         analysis.conflict_id = conflict_id
         
-        # Generate embedding for the analysis
-        analysis_text = f"{analysis.fight_summary} {' '.join(analysis.root_causes)}"
-        embedding = embeddings_service.embed_text(analysis_text)
+        # NOTE: Storage (embedding + Pinecone + S3 + DB) happens ASYNCHRONOUSLY in background
+        # after the response is sent to the frontend. This ensures results appear on screen immediately.
+        # See: backend/app/routes/post_fight.py -> store_analysis_background()
         
-        # Store analysis in Pinecone
-        analysis_dict = analysis.model_dump()
-        analysis_dict["analyzed_at"] = datetime.now()
-        pinecone_service.upsert_analysis(
-            conflict_id=conflict_id,
-            embedding=embedding,
-            analysis_data=analysis_dict,
-            namespace="analysis"
-        )
+        total_analysis_time = time.time() - analysis_start
         
-        logger.info(f"✅ Analysis complete for conflict {conflict_id}")
+        timing_breakdown = f"⏱️ Analysis timing breakdown: LLM API={llm_time:.2f}s, Total={total_analysis_time:.2f}s (Storage happens in background after response)"
+        logger.info(timing_breakdown)
+        print(timing_breakdown)  # Also print to stdout for visibility
+        
+        logger.info(f"✅ Analysis complete for conflict {conflict_id} (will be stored in background)")
         return analysis
         
     except Exception as e:

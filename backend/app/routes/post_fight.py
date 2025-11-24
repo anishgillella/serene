@@ -3,6 +3,7 @@ Post-fight session API endpoints
 """
 import logging
 import json
+import asyncio
 from fastapi import APIRouter, HTTPException, Body, BackgroundTasks
 from typing import Optional, List
 from datetime import datetime
@@ -610,7 +611,8 @@ async def generate_all_analysis_and_repair(
 @router.post("/conflicts/{conflict_id}/generate-analysis")
 async def generate_analysis_only(
     conflict_id: str,
-    request: dict = Body(...)
+    request: dict = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
     Generate analysis from both perspectives (boyfriend + girlfriend POV)
@@ -620,6 +622,10 @@ async def generate_analysis_only(
         partner_a_id = request.get("partner_a_id", "partner_a")
         partner_b_id = request.get("partner_b_id", "partner_b")
         
+        import time
+        endpoint_start = time.time()
+        import time
+        endpoint_start = time.time()
         logger.info(f"🚀 Generating analysis for {conflict_id}")
         
         # Get transcript (same logic as generate-all)
@@ -691,110 +697,167 @@ async def generate_analysis_only(
                 detail=f"Transcript not found for conflict {conflict_id}"
             )
         
-        # Get profiles via RAG (OPTIONAL - skip if slow, can be done in parallel or skipped)
-        boyfriend_profile = None
-        girlfriend_profile = None
-        # Skip RAG for faster analysis - profiles are optional
-        # Uncomment below if you want profile-based personalization (adds ~2-3s latency)
-        # try:
-        #     query_embedding = embeddings_service.embed_query(transcript_text)
-        #     boyfriend_results = pinecone_service.query(...)
-        #     girlfriend_results = pinecone_service.query(...)
-        # except Exception as e:
-        #     logger.warning(f"⚠️ RAG retrieval skipped for speed: {e}")
+        # Use RAG system to get relevant context from ENTIRE corpus (transcripts + profiles)
+        # This is faster than sending full transcript and provides better context
+        from app.services.transcript_rag import TranscriptRAGSystem
         
-        # Generate both analyses in parallel (FAST - just LLM calls)
-        timestamp_now = datetime.now()
-        analysis_boyfriend, analysis_girlfriend = await asyncio.gather(
-            analyze_conflict_transcript(
-                conflict_id=conflict_id,
-                transcript_text=transcript_text,
-                relationship_id=relationship_id,
-                partner_a_id=partner_a_id,
-                partner_b_id=partner_b_id,
-                speaker_labels=speaker_labels,
-                duration=duration,
-                timestamp=timestamp_now,
-                partner_id="partner_a",
-                boyfriend_profile=boyfriend_profile,
-                girlfriend_profile=girlfriend_profile
-            ),
-            analyze_conflict_transcript(
-                conflict_id=conflict_id,
-                transcript_text=transcript_text,
-                relationship_id=relationship_id,
-                partner_a_id=partner_a_id,
-                partner_b_id=partner_b_id,
-                speaker_labels=speaker_labels,
-                duration=duration,
-                timestamp=timestamp_now,
-                partner_id="partner_b",
-                boyfriend_profile=boyfriend_profile,
-                girlfriend_profile=girlfriend_profile
-            )
+        import time
+        rag_start = time.time()
+        logger.info(f"🔍 Using RAG to retrieve relevant context from entire corpus...")
+        # Optimized k=7 for faster LLM processing while maintaining quality (7 chunks ~3000-3500 chars is sufficient)
+        rag_system = TranscriptRAGSystem(k=7, include_profiles=True)  # Get top 7 most relevant chunks
+        
+        # Create query from transcript for RAG lookup
+        # Use first 500 chars as query to get relevant context from entire corpus
+        query_for_rag = transcript_text[:500] if len(transcript_text) > 500 else transcript_text
+        rag_context = rag_system.rag_lookup(
+            query=query_for_rag,
+            conflict_id=conflict_id,
+            relationship_id=relationship_id
         )
         
-        # Store analyses
-        try:
-            analysis_path_bf = f"analysis/{relationship_id}/{conflict_id}_analysis_boyfriend.json"
-            analysis_json_bf = json.dumps(analysis_boyfriend.model_dump(), default=str, indent=2)
-            s3_url_bf = s3_service.upload_file(
-                file_path=analysis_path_bf,
-                file_content=analysis_json_bf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_bf:
-                analysis_embedding_bf = embeddings_service.embed_text(analysis_boyfriend.fight_summary)
-                analysis_dict_bf = analysis_boyfriend.model_dump()
-                analysis_dict_bf["analyzed_at"] = datetime.now()
-                analysis_dict_bf["partner_pov"] = "boyfriend"
-                pinecone_service.upsert_analysis(
-                    conflict_id=f"{conflict_id}_boyfriend",
-                    embedding=analysis_embedding_bf,
-                    analysis_data=analysis_dict_bf,
-                    namespace="analysis"
-                )
-            
-            analysis_path_gf = f"analysis/{relationship_id}/{conflict_id}_analysis_girlfriend.json"
-            analysis_json_gf = json.dumps(analysis_girlfriend.model_dump(), default=str, indent=2)
-            s3_url_gf = s3_service.upload_file(
-                file_path=analysis_path_gf,
-                file_content=analysis_json_gf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_gf:
-                analysis_embedding_gf = embeddings_service.embed_text(analysis_girlfriend.fight_summary)
-                analysis_dict_gf = analysis_girlfriend.model_dump()
-                analysis_dict_gf["analyzed_at"] = datetime.now()
-                analysis_dict_gf["partner_pov"] = "girlfriend"
-                pinecone_service.upsert_analysis(
-                    conflict_id=f"{conflict_id}_girlfriend",
-                    embedding=analysis_embedding_gf,
-                    analysis_data=analysis_dict_gf,
-                    namespace="analysis"
-                )
-            
-            if db_service:
-                if s3_url_bf:
-                    db_service.create_conflict_analysis(
-                        conflict_id=conflict_id,
-                        relationship_id=relationship_id,
-                        analysis_path=s3_url_bf
-                    )
-                if s3_url_gf:
-                    db_service.create_conflict_analysis(
-                        conflict_id=conflict_id,
-                        relationship_id=relationship_id,
-                        analysis_path=s3_url_gf
-                    )
-        except Exception as e:
-            logger.error(f"❌ Error storing analyses: {e}")
+        # Extract profile information from RAG context (if present)
+        boyfriend_profile = None
+        girlfriend_profile = None
         
-        return {
+        # Parse RAG context to extract profile sections
+        # RAG context format: "[Adrian's Profile - Background & Personality]:\n{text}\n"
+        bf_markers = ["[Adrian's Profile", "[Boyfriend's Profile"]
+        for marker in bf_markers:
+            if marker in rag_context:
+                bf_start = rag_context.find(marker)
+                if bf_start != -1:
+                    # Find the end of this profile section
+                    bf_end = rag_context.find("\n\n[", bf_start + len(marker))
+                    if bf_end == -1:
+                        bf_end = len(rag_context)
+                    # Extract text after "]:\n"
+                    profile_section = rag_context[bf_start:bf_end]
+                    if "]:\n" in profile_section:
+                        boyfriend_profile = profile_section.split("]:\n", 1)[1].strip()
+                        break
+        
+        gf_markers = ["[Elara's Profile", "[Girlfriend's Profile"]
+        for marker in gf_markers:
+            if marker in rag_context:
+                gf_start = rag_context.find(marker)
+                if gf_start != -1:
+                    # Find the end of this profile section
+                    gf_end = rag_context.find("\n\n[", gf_start + len(marker))
+                    if gf_end == -1:
+                        gf_end = len(rag_context)
+                    # Extract text after "]:\n"
+                    profile_section = rag_context[gf_start:gf_end]
+                    if "]:\n" in profile_section:
+                        girlfriend_profile = profile_section.split("]:\n", 1)[1].strip()
+                        break
+        
+        rag_time = time.time() - rag_start
+        logger.info(f"📋 Extracted profiles: BF={bool(boyfriend_profile)}, GF={bool(girlfriend_profile)}")
+        
+        # Use RAG context instead of full transcript for faster, more contextualized analysis
+        # RAG context includes: relevant transcript chunks + profile chunks from entire corpus
+        rag_summary = f"✅ Retrieved RAG context: {len(rag_context)} chars (vs {len(transcript_text)} chars full transcript) in {rag_time:.2f}s"
+        logger.info(rag_summary)
+        print(rag_summary)  # Also print to stdout for visibility
+        
+        # Generate ONLY boyfriend (Adrian's) analysis using RAG context
+        timestamp_now = datetime.now()
+        analysis_boyfriend = await analyze_conflict_transcript(
+            conflict_id=conflict_id,
+            transcript_text=rag_context,  # Use RAG context instead of full transcript
+            relationship_id=relationship_id,
+            partner_a_id=partner_a_id,
+            partner_b_id=partner_b_id,
+            speaker_labels=speaker_labels,
+            duration=duration,
+            timestamp=timestamp_now,
+            partner_id="partner_a",  # Only generate boyfriend (Adrian's) perspective
+            boyfriend_profile=boyfriend_profile,
+            girlfriend_profile=girlfriend_profile,
+            use_rag_context=True  # Flag to indicate we're using RAG context
+        )
+        
+        # Calculate timing BEFORE storage
+        total_time = time.time() - endpoint_start
+        llm_analysis_time = total_time - rag_time
+        summary_msg = f"""
+⏱️  === ANALYSIS GENERATION SUMMARY ===
+   RAG Lookup: {rag_time:.2f}s
+   LLM Analysis: {llm_analysis_time:.2f}s (includes API call + embedding + Pinecone storage)
+   Total Time: {total_time:.2f}s
+✅ Analysis generation complete! (Boyfriend perspective only)
+   
+   💡 Breakdown: Check logs above for detailed LLM API, embedding, and Pinecone timing
+"""
+        logger.info(summary_msg)
+        print(summary_msg)  # Also print to stdout for visibility
+        
+        # RETURN RESULTS FIRST (don't block on storage)
+        response_data = {
             "success": True,
-            "analysis_boyfriend": analysis_boyfriend.model_dump(),
-            "analysis_girlfriend": analysis_girlfriend.model_dump()
+            "analysis_boyfriend": analysis_boyfriend.model_dump()
         }
+        
+        # Store analysis ASYNCHRONOUSLY in background (don't block response)
+        # All storage operations run in parallel for speed
+        async def store_analysis_background():
+            try:
+                analysis_path_bf = f"analysis/{relationship_id}/{conflict_id}_analysis_boyfriend.json"
+                analysis_json_bf = json.dumps(analysis_boyfriend.model_dump(), default=str, indent=2)
+                
+                # Run S3 upload and embedding generation in parallel (both are sync, run in thread pool)
+                loop = asyncio.get_event_loop()
+                s3_url_bf, analysis_embedding_bf = await asyncio.gather(
+                    loop.run_in_executor(
+                        None,
+                        lambda: s3_service.upload_file(
+                            file_path=analysis_path_bf,
+                            file_content=analysis_json_bf.encode('utf-8'),
+                            content_type="application/json"
+                        )
+                    ),
+                    loop.run_in_executor(
+                        None,
+                        lambda: embeddings_service.embed_text(analysis_boyfriend.fight_summary)
+                    )
+                )
+                
+                if s3_url_bf:
+                    analysis_dict_bf = analysis_boyfriend.model_dump()
+                    analysis_dict_bf["analyzed_at"] = datetime.now()
+                    analysis_dict_bf["partner_pov"] = "boyfriend"
+                    
+                    # Store in Pinecone and DB in parallel (both sync, run in thread pool)
+                    await asyncio.gather(
+                        loop.run_in_executor(
+                            None,
+                            lambda: pinecone_service.upsert_analysis(
+                                conflict_id=f"{conflict_id}_boyfriend",
+                                embedding=analysis_embedding_bf,
+                                analysis_data=analysis_dict_bf,
+                                namespace="analysis"
+                            )
+                        ),
+                        loop.run_in_executor(
+                            None,
+                            lambda: db_service.create_conflict_analysis(
+                                conflict_id=conflict_id,
+                                relationship_id=relationship_id,
+                                analysis_path=s3_url_bf
+                            )
+                        ) if db_service else asyncio.sleep(0)
+                    )
+                
+                logger.info("✅ Stored analysis in background (S3 + Pinecone + DB) - all parallel")
+            except Exception as e:
+                logger.error(f"❌ Error storing analysis in background: {e}")
+        
+        # Schedule background storage (non-blocking) using FastAPI BackgroundTasks
+        # BackgroundTasks is automatically injected by FastAPI - it will run after response is sent
+        background_tasks.add_task(store_analysis_background)
+        
+        return response_data
     except HTTPException:
         raise
     except Exception as e:
@@ -814,6 +877,8 @@ async def generate_repair_plans_only(
         partner_a_id = request.get("partner_a_id", "partner_a")
         partner_b_id = request.get("partner_b_id", "partner_b")
         
+        import time
+        repair_start = time.time()
         logger.info(f"🚀 Generating repair plans for {conflict_id}")
         
         # Get transcript (same logic)
@@ -970,7 +1035,7 @@ async def generate_repair_plans_only(
                 )
             
             # Store in Pinecone
-            repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.action_steps)}"
+            repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
             repair_plan_embedding_bf = embeddings_service.embed_text(repair_plan_text_bf)
             pinecone_service.upsert_repair_plan(
                 conflict_id=f"{conflict_id}_boyfriend",
@@ -979,7 +1044,7 @@ async def generate_repair_plans_only(
                 namespace="repair_plans"
             )
             
-            repair_plan_text_gf = f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.action_steps)}"
+            repair_plan_text_gf = f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.steps)}"
             repair_plan_embedding_gf = embeddings_service.embed_text(repair_plan_text_gf)
             pinecone_service.upsert_repair_plan(
                 conflict_id=f"{conflict_id}_girlfriend",
@@ -989,6 +1054,11 @@ async def generate_repair_plans_only(
             )
         except Exception as e:
             logger.error(f"❌ Error storing repair plans: {e}")
+        
+        repair_total_time = time.time() - repair_start
+        logger.info(f"\n⏱️  === REPAIR PLAN GENERATION SUMMARY ===")
+        logger.info(f"   Total Time: {repair_total_time:.2f}s")
+        logger.info(f"✅ Repair plan generation complete!\n")
         
         return {
             "success": True,

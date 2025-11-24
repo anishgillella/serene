@@ -13,17 +13,18 @@ logger = logging.getLogger(__name__)
 T = TypeVar('T', bound=BaseModel)
 
 class LLMService:
-    """Service for interacting with GPT-4o-mini via OpenRouter"""
+    """Service for interacting with GPT-4o-mini via OpenRouter with structured output using Pydantic models"""
     
     def __init__(self):
         # OpenRouter uses OpenAI-compatible API
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.OPENROUTER_API_KEY,
-            timeout=30.0,  # 30 second timeout for faster API calls (GPT-4o-mini is fast)
+            timeout=60.0,  # Increased timeout for structured output generation
         )
+        # Use GPT-4o-mini with structured output via Pydantic models
         self.model = "openai/gpt-4o-mini"
-        logger.info("✅ Initialized LLM service (GPT-4o-mini via OpenRouter)")
+        logger.info("✅ Initialized LLM service (GPT-4o-mini via OpenRouter with Pydantic structured output)")
     
     def chat_completion(
         self,
@@ -73,7 +74,10 @@ class LLMService:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None
     ) -> T:
-        """Generate structured output using JSON mode"""
+        """
+        Generate structured output using GPT-4o-mini with Pydantic models via OpenRouter.
+        Uses JSON mode with strict schema enforcement.
+        """
         content = None
         try:
             # Build system message using Pydantic model docstrings and field descriptions
@@ -85,8 +89,9 @@ class LLMService:
             if "properties" in schema:
                 for field_name, field_info in schema["properties"].items():
                     desc = field_info.get("description", "")
+                    field_type = field_info.get("type", "")
                     if desc:
-                        field_descriptions.append(f"- {field_name}: {desc}")
+                        field_descriptions.append(f"- {field_name} ({field_type}): {desc}")
             
             schema_description = f"""
 Model: {response_model.__name__}
@@ -95,28 +100,51 @@ Description: {model_doc}
 Field Requirements:
 {chr(10).join(field_descriptions)}
 
-You must respond in valid JSON format matching this exact schema.
+CRITICAL: You MUST respond with valid JSON that EXACTLY matches this schema.
+All required fields must be present. Arrays must be arrays, strings must be strings.
 """
             
             # Add system message to enforce JSON output with schema details
             system_message = {
                 "role": "system",
-                "content": f"You are a helpful assistant that responds in valid JSON format matching this schema:\n\n{schema_description}\n\nSchema JSON: {json.dumps(schema, indent=2)}"
+                "content": f"""You are a helpful assistant that generates structured JSON responses using Pydantic models.
+
+You MUST respond ONLY with valid JSON matching this exact schema:
+
+{schema_description}
+
+Schema JSON:
+{json.dumps(schema, indent=2)}
+
+IMPORTANT:
+- Return ONLY valid JSON, no markdown, no code blocks, no explanations
+- All required fields must be present
+- Arrays must be arrays of the correct type (e.g., List[str] means array of strings)
+- Strings must be strings, not objects
+- Follow the schema EXACTLY"""
             }
             
             # Prepend system message if not already present
             if messages[0].get("role") != "system":
                 messages = [system_message] + messages
             
+            # Use GPT-4o-mini via OpenRouter with JSON mode
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"}
+                max_tokens=max_tokens or 4000,  # Increased for structured output
+                response_format={"type": "json_object"}  # Force JSON mode
             )
             
             content = response.choices[0].message.content
+            
+            # Clean content - remove markdown code blocks if present
+            if content.startswith("```json"):
+                content = content.replace("```json", "").replace("```", "").strip()
+            elif content.startswith("```"):
+                content = content.replace("```", "").strip()
+            
             # Parse JSON and validate with Pydantic
             data = json.loads(content)
             
@@ -126,12 +154,12 @@ You must respond in valid JSON format matching this exact schema.
             return response_model(**data)
         except json.JSONDecodeError as e:
             logger.error(f"❌ JSON decode error: {e}")
-            logger.error(f"Response content: {content}")
+            logger.error(f"Response content: {content[:1000] if content else 'None'}")
             raise
         except Exception as e:
             logger.error(f"❌ Error in structured output: {e}")
             if content:
-                logger.error(f"Response content: {content[:500]}")
+                logger.error(f"Response content: {content[:1000]}")
             raise
     
     def _fix_llm_output_format(self, data: dict, response_model: Type[T]) -> dict:
@@ -159,7 +187,8 @@ You must respond in valid JSON format matching this exact schema.
         response_model: Type[T],
         partner_id: Optional[str] = None,  # "partner_a" (boyfriend) or "partner_b" (girlfriend)
         boyfriend_profile: Optional[str] = None,
-        girlfriend_profile: Optional[str] = None
+        girlfriend_profile: Optional[str] = None,
+        use_rag_context: bool = False
     ) -> T:
         """Analyze conflict transcript with structured output, personalized from a specific partner's POV"""
         
@@ -209,18 +238,33 @@ ANALYZING FROM GIRLFRIEND'S PERSPECTIVE:
             if girlfriend_profile:
                 profile_context += f"\nGIRLFRIEND'S PROFILE:\n{girlfriend_profile}\n"
         
-        # Use FULL transcript - no truncation
-        logger.info(f"📝 Using full transcript: {len(transcript_text)} characters, POV: {partner_id or 'neutral'}")
+        # Determine if we're using RAG context or full transcript
+        if use_rag_context:
+            context_type = "RAG-retrieved relevant context from entire corpus (transcripts + profiles)"
+            context_instruction = """
+IMPORTANT: The following context includes:
+- Relevant transcript chunks from the current conflict AND past conflicts (if patterns exist)
+- Profile information about Adrian and Elara (personalities, backgrounds, values, communication styles)
+- Cross-references between transcript events and profile traits
+
+Use this ENTIRE corpus context to provide deep, empathetic, and contextualized analysis. Connect what was said to WHY it matters based on their profiles and past patterns.
+"""
+        else:
+            context_type = "full transcript"
+            context_instruction = ""
         
-        prompt = f"""Analyze this relationship conflict transcript with deep personalization from a specific partner's perspective.
+        logger.info(f"📝 Using {context_type}: {len(transcript_text)} characters, POV: {partner_id or 'neutral'}")
+        
+        prompt = f"""Analyze this relationship conflict with deep personalization from a specific partner's perspective.
 
 Conflict ID: {conflict_id}
 
 {gender_context}
 {pov_context}
 {profile_context}
+{context_instruction}
 
-TRANSCRIPT:
+{'RAG CONTEXT (Relevant chunks from entire corpus)' if use_rag_context else 'TRANSCRIPT'}:
 {transcript_text}
 
 ANALYSIS REQUIREMENTS (Personalized from {partner_id or "both partners"} perspective):
@@ -243,18 +287,22 @@ Be SPECIFIC to this couple and this conflict. Reference actual quotes and moment
             }
         ]
         
-        logger.info(f"🚀 Calling GPT-4o-mini for analysis (transcript: {len(transcript_text)} chars, POV: {partner_id or 'neutral'})")
+        llm_start_msg = f"🚀 Calling GPT-4o-mini for analysis (transcript: {len(transcript_text)} chars, POV: {partner_id or 'neutral'})"
+        logger.info(llm_start_msg)
+        print(llm_start_msg)  # Also print to stdout for visibility
         start_time = __import__('time').time()
         
         result = self.structured_output(
             messages=messages,
             response_model=response_model,
             temperature=0.7,
-            max_tokens=2000
+            max_tokens=1500  # Reduced from 2000 for faster generation (analysis typically needs ~800-1200 tokens)
         )
         
         elapsed = __import__('time').time() - start_time
-        logger.info(f"✅ LLM analysis complete in {elapsed:.2f}s")
+        llm_timing_msg = f"✅ LLM analysis complete in {elapsed:.2f}s"
+        logger.info(llm_timing_msg)
+        print(llm_timing_msg)  # Also print to stdout for visibility
         return result
     
     def generate_repair_plan(

@@ -152,7 +152,6 @@ const PostFightSession = () => {
   }, [state?.conflict_id, location.search, location.state, conflictId]);
   
   const [analysisBoyfriend, setAnalysisBoyfriend] = useState<ConflictAnalysis | null>(null);
-  const [analysisGirlfriend, setAnalysisGirlfriend] = useState<ConflictAnalysis | null>(null);
   const [repairPlanBoyfriend, setRepairPlanBoyfriend] = useState<RepairPlan | null>(null);
   const [repairPlanGirlfriend, setRepairPlanGirlfriend] = useState<RepairPlan | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
@@ -351,7 +350,7 @@ const PostFightSession = () => {
     }
 
     // If already generated, just show it
-    if (analysisBoyfriend && analysisGirlfriend) {
+    if (analysisBoyfriend) {
       setActiveView('analysis');
       return;
     }
@@ -367,7 +366,11 @@ const PostFightSession = () => {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-analysis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify({
+          relationship_id: "00000000-0000-0000-0000-000000000000",
+          partner_a_id: "partner_a",
+          partner_b_id: "partner_b"
+        })
       });
 
       if (!response.ok) {
@@ -383,11 +386,7 @@ const PostFightSession = () => {
           console.log('✅ Setting analysisBoyfriend');
           setAnalysisBoyfriend(data.analysis_boyfriend);
         }
-        if (data.analysis_girlfriend) {
-          console.log('✅ Setting analysisGirlfriend');
-          setAnalysisGirlfriend(data.analysis_girlfriend);
-        }
-        addMessage('heartsync', `I've analyzed your conflict from both perspectives. Use the POV switcher to see each partner's view.`);
+        addMessage('heartsync', `I've analyzed your conflict from your perspective.`);
         setActiveView('analysis');
       } else {
         throw new Error(data.detail || 'Generation failed');
@@ -399,7 +398,7 @@ const PostFightSession = () => {
     } finally {
       setLoadingAnalysis(false);
     }
-  }, [conflictId, apiUrl, addMessage, analysisBoyfriend, analysisGirlfriend, loadingAnalysis]);
+  }, [conflictId, apiUrl, addMessage, analysisBoyfriend, loadingAnalysis]);
 
   const handleGenerateRepairPlans = useCallback(async () => {
     if (!conflictId) {
@@ -424,7 +423,11 @@ const PostFightSession = () => {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-repair-plans`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify({
+          relationship_id: "00000000-0000-0000-0000-000000000000",
+          partner_a_id: "partner_a",
+          partner_b_id: "partner_b"
+        })
       });
 
       if (!response.ok) {
@@ -498,12 +501,6 @@ const PostFightSession = () => {
         } else {
           console.warn('⚠️ No analysis_boyfriend in response');
         }
-        if (data.analysis_girlfriend) {
-          console.log('✅ Setting analysisGirlfriend:', data.analysis_girlfriend);
-          setAnalysisGirlfriend(data.analysis_girlfriend);
-        } else {
-          console.warn('⚠️ No analysis_girlfriend in response');
-        }
         if (data.repair_plan_boyfriend) {
           console.log('✅ Setting repairPlanBoyfriend');
           setRepairPlanBoyfriend(data.repair_plan_boyfriend);
@@ -538,7 +535,6 @@ const PostFightSession = () => {
       stateConflictId: state?.conflict_id,
       messagesCount: messages.length,
       analysisBoyfriend: !!analysisBoyfriend,
-      analysisGirlfriend: !!analysisGirlfriend,
       repairPlanBoyfriend: !!repairPlanBoyfriend,
       repairPlanGirlfriend: !!repairPlanGirlfriend,
       povView,
@@ -547,7 +543,7 @@ const PostFightSession = () => {
       locationState: location.state,
       locationKey: location.key
     });
-  }, [conflictId, state, messages.length, analysisBoyfriend, analysisGirlfriend, repairPlanBoyfriend, repairPlanGirlfriend, povView, activeView, location.pathname, location.state, location.key]);
+  }, [conflictId, state, messages.length, analysisBoyfriend, repairPlanBoyfriend, repairPlanGirlfriend, povView, activeView, location.pathname, location.state, location.key]);
 
   // Always render something - add error boundary
   if (!conflictId && !state?.conflict_id) {
@@ -592,7 +588,7 @@ const PostFightSession = () => {
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={async () => {
-                  if (!analysisBoyfriend && !analysisGirlfriend) {
+                  if (!analysisBoyfriend) {
                     // Generate both analyses
                     await handleGenerateAnalysis();
                   }
@@ -708,42 +704,14 @@ const PostFightSession = () => {
                 </button>
               </div>
               
-              {/* POV Switcher for Analysis - Only shows AFTER generation */}
-              {(analysisBoyfriend || analysisGirlfriend) && (
-                <div className="mb-4">
-                  <div className="flex gap-2 pb-3 border-b-2 border-purple-200">
-                    <button
-                      onClick={() => setPovView('boyfriend')}
-                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
-                        povView === 'boyfriend'
-                          ? 'bg-blue-100 text-blue-800 border-2 border-blue-400 shadow-md'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
-                      }`}
-                    >
-                      👤 Boyfriend's Perspective
-                    </button>
-                    <button
-                      onClick={() => setPovView('girlfriend')}
-                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
-                        povView === 'girlfriend'
-                          ? 'bg-pink-100 text-pink-800 border-2 border-pink-400 shadow-md'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
-                      }`}
-                    >
-                      👤 Girlfriend's Perspective
-                    </button>
-                  </div>
-                </div>
-              )}
-              
               {loadingAnalysis ? (
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-purple-500 mr-3" />
-                  <span className="text-gray-600">Analyzing conflict from both perspectives...</span>
+                  <span className="text-gray-600">Analyzing conflict from your perspective...</span>
                 </div>
-              ) : (analysisBoyfriend || analysisGirlfriend) ? (
+              ) : analysisBoyfriend ? (
                 <>
-                  {povView === 'boyfriend' && analysisBoyfriend && (
+                  {analysisBoyfriend && (
                     <div className="space-y-4">
                       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
                         <p className="text-sm text-blue-800 font-medium">👤 Boyfriend's Perspective</p>
@@ -876,145 +844,11 @@ const PostFightSession = () => {
                       )}
                     </div>
                   )}
-                  
-                  {povView === 'girlfriend' && analysisGirlfriend && (
-                    <div className="space-y-4">
-                      <div className="bg-pink-50 border border-pink-200 rounded-lg p-3 mb-4">
-                        <p className="text-sm text-pink-800 font-medium">👤 Girlfriend's Perspective</p>
-                        <p className="text-xs text-pink-600 mt-1">Analysis personalized based on your profile and communication style</p>
-                      </div>
-                      
-                      {/* Summary */}
-                      <div className="bg-white rounded-xl p-4 border border-purple-100">
-                        <button
-                          onClick={() => toggleSection('summary')}
-                          className="w-full flex items-center justify-between mb-2"
-                        >
-                          <div className="flex items-center">
-                            <LightbulbIcon size={18} className="text-purple-500 mr-2" />
-                            <h4 className="font-semibold text-gray-800">Summary</h4>
-                          </div>
-                          {expandedSections.has('summary') ? 
-                            <ChevronUpIcon size={18} className="text-gray-400" /> : 
-                            <ChevronDownIcon size={18} className="text-gray-400" />
-                          }
-                        </button>
-                        {expandedSections.has('summary') && (
-                          <p className="text-gray-700 leading-relaxed">{analysisGirlfriend.fight_summary}</p>
-                        )}
-                      </div>
-
-                      {/* Root Causes */}
-                      {analysisGirlfriend.root_causes.length > 0 && (
-                        <div className="bg-white rounded-xl p-4 border border-purple-100">
-                          <button
-                            onClick={() => toggleSection('root_causes')}
-                            className="w-full flex items-center justify-between mb-2"
-                          >
-                            <div className="flex items-center">
-                              <AlertCircleIcon size={18} className="text-orange-500 mr-2" />
-                              <h4 className="font-semibold text-gray-800">Root Causes</h4>
-                              <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
-                                {analysisGirlfriend.root_causes.length}
-                              </span>
-                            </div>
-                            {expandedSections.has('root_causes') ? 
-                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
-                              <ChevronDownIcon size={18} className="text-gray-400" />
-                            }
-                          </button>
-                          {expandedSections.has('root_causes') && (
-                            <ul className="space-y-2">
-                              {analysisGirlfriend.root_causes.map((cause, idx) => (
-                                <li key={idx} className="flex items-start text-gray-700">
-                                  <span className="text-orange-500 mr-2 mt-1">•</span>
-                                  <span>{cause}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Unmet Needs */}
-                      {(analysisGirlfriend.unmet_needs_boyfriend.length > 0 || analysisGirlfriend.unmet_needs_girlfriend.length > 0) && (
-                        <div className="grid grid-cols-1 gap-4">
-                          {analysisGirlfriend.unmet_needs_boyfriend.length > 0 && (
-                            <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-                              <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                                <span className="bg-blue-200 px-2 py-0.5 rounded text-xs mr-2">Partner's Needs</span>
-                                Unmet Needs
-                              </h4>
-                              <ul className="space-y-1.5">
-                                {analysisGirlfriend.unmet_needs_boyfriend.map((need, idx) => (
-                                  <li key={idx} className="text-sm text-gray-700 flex items-start">
-                                    <span className="text-blue-500 mr-2 mt-1">•</span>
-                                    <span>{need}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                          
-                          {analysisGirlfriend.unmet_needs_girlfriend.length > 0 && (
-                            <div className="bg-pink-50 rounded-xl p-4 border border-pink-100">
-                              <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                                <span className="bg-pink-200 px-2 py-0.5 rounded text-xs mr-2">Your Needs</span>
-                                Unmet Needs
-                              </h4>
-                              <ul className="space-y-1.5">
-                                {analysisGirlfriend.unmet_needs_girlfriend.map((need, idx) => (
-                                  <li key={idx} className="text-sm text-gray-700 flex items-start">
-                                    <span className="text-pink-500 mr-2 mt-1">•</span>
-                                    <span>{need}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Escalation Points */}
-                      {analysisGirlfriend.escalation_points && analysisGirlfriend.escalation_points.length > 0 && (
-                        <div className="bg-white rounded-xl p-4 border border-red-100">
-                          <button
-                            onClick={() => toggleSection('escalation')}
-                            className="w-full flex items-center justify-between mb-2"
-                          >
-                            <div className="flex items-center">
-                              <AlertCircleIcon size={18} className="text-red-500 mr-2" />
-                              <h4 className="font-semibold text-gray-800">Escalation Points</h4>
-                              <span className="ml-2 text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
-                                {analysisGirlfriend.escalation_points.length}
-                              </span>
-                            </div>
-                            {expandedSections.has('escalation') ? 
-                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
-                              <ChevronDownIcon size={18} className="text-gray-400" />
-                            }
-                          </button>
-                          {expandedSections.has('escalation') && (
-                            <div className="space-y-3">
-                              {analysisGirlfriend.escalation_points.map((point, idx) => (
-                                <div key={idx} className="bg-red-50 rounded-lg p-3">
-                                  <p className="font-medium text-gray-800 text-sm">{point.reason}</p>
-                                  {point.description && (
-                                    <p className="text-xs text-gray-600 mt-1">{point.description}</p>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <SparklesIcon size={48} className="mx-auto mb-3 text-gray-300" />
-                  <p>Click "Generate Analysis & Repair Plans" to see insights</p>
+                  <p>Click "View Analysis" to generate and see insights</p>
                 </div>
               )}
             </div>
@@ -1231,7 +1065,7 @@ const PostFightSession = () => {
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <HeartIcon size={48} className="mx-auto mb-3 text-gray-300" />
-                  <p>Click "Generate Analysis & Repair Plans" to see personalized steps</p>
+                  <p>Click "View Repair Plan" to generate and see personalized steps</p>
                 </div>
               )}
             </div>
@@ -1257,7 +1091,7 @@ const PostFightSession = () => {
                     context={{
                       activeView,
                       povView,
-                      hasAnalysis: !!(analysisBoyfriend || analysisGirlfriend),
+                      hasAnalysis: !!analysisBoyfriend,
                       hasRepairPlans: !!(repairPlanBoyfriend || repairPlanGirlfriend)
                     }}
         />

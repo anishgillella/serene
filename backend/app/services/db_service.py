@@ -18,9 +18,22 @@ class DatabaseService:
         self.conn = None
     
     def get_connection(self):
-        """Get database connection"""
-        if self.conn is None or self.conn.closed:
-            self.conn = psycopg2.connect(settings.DATABASE_URL)
+        """Get database connection with timeout"""
+        # Always create a fresh connection to avoid stale connection issues
+        # Connection pooling can be added later if needed
+        if self.conn:
+            try:
+                if not self.conn.closed:
+                    self.conn.close()
+            except:
+                pass
+            self.conn = None
+        
+        # Add connection timeout (5 seconds) to prevent hanging
+        self.conn = psycopg2.connect(
+            settings.DATABASE_URL,
+            connect_timeout=5
+        )
         return self.conn
     
     def save_rant_message(self, conflict_id: str, partner_id: str, role: str, content: str) -> Optional[str]:
