@@ -1061,19 +1061,19 @@ async def store_transcript(
             if not isinstance(line, str):
                 continue
                 
-            boyfriend_match = re.match(r'^(?:Boyfriend|Speaker\s+1):\s*(.+)$', line, re.IGNORECASE)
-            girlfriend_match = re.match(r'^(?:Girlfriend|Speaker\s+2):\s*(.+)$', line, re.IGNORECASE)
+            boyfriend_match = re.match(r'^(?:Adrian Malhotra|Boyfriend|Speaker\s+1):\s*(.+)$', line, re.IGNORECASE)
+            girlfriend_match = re.match(r'^(?:Elara Voss|Girlfriend|Speaker\s+2):\s*(.+)$', line, re.IGNORECASE)
             
             if boyfriend_match:
                 speaker_segments.append(SpeakerSegment(
-                    speaker="Boyfriend",
+                    speaker="Adrian Malhotra",
                     text=boyfriend_match.group(1),
                     start_time=None,
                     end_time=None
                 ))
             elif girlfriend_match:
                 speaker_segments.append(SpeakerSegment(
-                    speaker="Girlfriend",
+                    speaker="Elara Voss",
                     text=girlfriend_match.group(1),
                     start_time=None,
                     end_time=None

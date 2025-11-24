@@ -171,8 +171,8 @@ const PostFightSession = () => {
     
     if (state?.transcript && state.transcript.length > 0) {
       state.transcript.forEach((line: string) => {
-        const boyfriendMatch = line.match(/^(?:Boyfriend|Speaker\s+1):\s*(.+)$/i);
-        const girlfriendMatch = line.match(/^(?:Girlfriend|Speaker\s+2):\s*(.+)$/i);
+        const boyfriendMatch = line.match(/^(?:Adrian Malhotra|Boyfriend|Speaker\s+1):\s*(.+)$/i);
+        const girlfriendMatch = line.match(/^(?:Elara Voss|Girlfriend|Speaker\s+2):\s*(.+)$/i);
         
         let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
         let messageText = '';
@@ -184,7 +184,7 @@ const PostFightSession = () => {
           currentSpeaker = 'speaker2';
           messageText = girlfriendMatch[1].trim();
         } else {
-          const cleanedText = line.replace(/^(?:You|Boyfriend|Girlfriend|Speaker\s+\d+):\s*/i, '').trim();
+          const cleanedText = line.replace(/^(?:You|Adrian Malhotra|Elara Voss|Boyfriend|Girlfriend|Speaker\s+\d+):\s*/i, '').trim();
           if (cleanedText) {
             currentSpeaker = 'speaker1';
             messageText = cleanedText;
@@ -256,8 +256,8 @@ const PostFightSession = () => {
               // Parse and add to messages
               const newMessages: Message[] = [];
               transcriptLines.forEach((line: string) => {
-                const boyfriendMatch = line.match(/^(?:Boyfriend|Speaker\s+1|partner_a|Speaker\s+0):\s*(.+)$/i);
-                const girlfriendMatch = line.match(/^(?:Girlfriend|Speaker\s+2|partner_b|Speaker\s+1):\s*(.+)$/i);
+                const boyfriendMatch = line.match(/^(?:Adrian Malhotra|Boyfriend|Speaker\s+1|partner_a|Speaker\s+0):\s*(.+)$/i);
+                const girlfriendMatch = line.match(/^(?:Elara Voss|Girlfriend|Speaker\s+2|partner_b|Speaker\s+1):\s*(.+)$/i);
                 
                 let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
                 let messageText = '';
@@ -674,7 +674,7 @@ const PostFightSession = () => {
                             : 'bg-pink-100 text-gray-800'
                         } ${msg.isPrivate ? 'opacity-70 border-2 border-rose-300' : ''}`}>
                           <div className="text-xs font-semibold mb-1 text-gray-600">
-                            {isBoyfriend ? 'Boyfriend' : 'Girlfriend'}
+                            {isBoyfriend ? 'Adrian Malhotra' : 'Elara Voss'}
                             {msg.isPrivate && <span className="ml-2 text-rose-500 text-[10px]">🔒 Private</span>}
                           </div>
                           <div className="text-sm leading-relaxed">{msg.message}</div>

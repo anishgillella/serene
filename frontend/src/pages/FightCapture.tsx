@@ -134,7 +134,7 @@ const FightCapture = () => {
             const data: TranscriptMessage = JSON.parse(event.data);
             
             if (data.type === 'transcript' && data.text) {
-              const speakerName = data.speaker || 'Boyfriend'; // Use speaker from diarization
+              const speakerName = data.speaker || 'Adrian Malhotra'; // Use speaker from diarization
               console.log('📝 Transcript received:', speakerName, ':', data.text, 'final:', data.is_final);
               
               if (data.is_final) {
@@ -232,8 +232,8 @@ const FightCapture = () => {
             // Update transcripts with accurate speaker labels
             if (result.utterances && result.utterances.length > 0) {
               const diarizedTranscripts: TranscriptItem[] = result.utterances.map((utt: any) => {
-                // Map Deepgram speaker IDs: 0 -> Boyfriend, 1 -> Girlfriend
-                const speakerName = utt.speaker === 0 ? 'Boyfriend' : 'Girlfriend';
+                // Map Deepgram speaker IDs: 0 -> Adrian Malhotra, 1 -> Elara Voss
+                const speakerName = utt.speaker === 0 ? 'Adrian Malhotra' : 'Elara Voss';
                 return { speaker: speakerName, text: utt.transcript };
               });
               
@@ -273,7 +273,7 @@ const FightCapture = () => {
             partner_a_id: "partner_a",
             partner_b_id: "partner_b",
             duration: estimatedDuration,
-            speaker_labels: { 0: "Boyfriend", 1: "Girlfriend" } // Default mapping
+            speaker_labels: { 0: "Adrian Malhotra", 1: "Elara Voss" } // Adrian (boyfriend) and Elara (girlfriend)
           })
         });
         
@@ -363,7 +363,7 @@ const FightCapture = () => {
             <p className="text-xs text-gray-500 mb-3 font-medium">Live transcript</p>
             <div className="space-y-2">
               {transcript.map((item, index) => {
-                const isBoyfriend = item.speaker === 'Boyfriend';
+                const isBoyfriend = item.speaker === 'Adrian Malhotra';
                 return (
                   <div key={index} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
                     <div className={`rounded-2xl py-2 px-4 max-w-[80%] ${
@@ -380,9 +380,9 @@ const FightCapture = () => {
                 );
               })}
               {interimTranscript && (
-                <div className={`flex w-full ${interimTranscript.speaker === 'Boyfriend' ? 'justify-start' : 'justify-end'}`}>
+                <div className={`flex w-full ${interimTranscript.speaker === 'Adrian Malhotra' ? 'justify-start' : 'justify-end'}`}>
                   <div className={`rounded-2xl py-2 px-4 max-w-[80%] opacity-70 ${
-                    interimTranscript.speaker === 'Boyfriend'
+                    interimTranscript.speaker === 'Adrian Malhotra'
                       ? 'bg-blue-100 text-gray-800'
                       : 'bg-pink-100 text-gray-800'
                   }`}>

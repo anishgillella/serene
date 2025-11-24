@@ -27,6 +27,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
   const [isAgentJoining, setIsAgentJoining] = useState(false);
   const roomRef = useRef<Room | null>(null);
   const localTracksRef = useRef<any[]>([]);
+  const agentJoinedRef = useRef<boolean>(false); // Track if agent already joined to prevent duplicates
 
   const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -111,20 +112,37 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         console.log('Disconnected from mediator room');
         setIsConnected(false);
         setIsAgentJoining(false);
+        agentJoinedRef.current = false; // Reset agent joined flag
         addTranscriptEntry('system', 'Disconnected from Luna');
         cleanup();
       });
 
+      room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+        console.log('Participant disconnected:', participant.identity);
+        const isAgent = participant.identity.startsWith('agent-') || participant.name === 'Luna';
+        if (isAgent) {
+          console.log('✅ Agent (Luna) disconnected');
+          addTranscriptEntry('system', 'Luna has left');
+        }
+      });
+
       room.on(RoomEvent.ParticipantConnected, (participant) => {
-        console.log('Participant connected:', participant.identity);
+        console.log('Participant connected:', participant.identity, 'name:', participant.name);
         // Check if it's the agent (usually starts with agent- or has name Luna)
         const isAgent = participant.identity.startsWith('agent-') || participant.name === 'Luna';
         const displayName = isAgent ? 'Luna' : participant.identity;
 
-        addTranscriptEntry('system', `${displayName} joined`);
-
+        // Only log agent joining once to prevent duplicate messages
         if (isAgent) {
-          setIsAgentJoining(false);
+          if (!agentJoinedRef.current) {
+            agentJoinedRef.current = true;
+            addTranscriptEntry('system', `${displayName} joined`);
+            setIsAgentJoining(false);
+          } else {
+            console.log('⚠️ Duplicate agent join detected, ignoring:', participant.identity);
+          }
+        } else {
+          addTranscriptEntry('system', `${displayName} joined`);
         }
 
         // Subscribe to all audio tracks from the agent
@@ -178,42 +196,35 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
           console.log('✅ Connected to room:', room.name);
           console.log('👥 Remote participants:', room.remoteParticipants.size);
           
-          // Wait a moment for auto-join, then check if agent joined
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          // Wait for agent to auto-join via AgentServer pattern
+          // Don't use explicit dispatch to avoid duplicate agents
+          console.log('⏳ Waiting for agent to auto-join (AgentServer pattern)...');
+          setIsAgentJoining(true); // Show "Summoning Luna..."
           
-          // Check if agent already joined (auto-join)
-          const agentJoined = Array.from(room.remoteParticipants.values()).some(
-            p => p.identity?.toLowerCase().includes('luna') || p.identity?.toLowerCase().includes('agent')
-          );
+          // Wait up to 5 seconds for agent to join
+          let agentJoined = false;
+          for (let i = 0; i < 10; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Check if agent joined
+            agentJoined = Array.from(room.remoteParticipants.values()).some(
+              p => p.identity?.toLowerCase().includes('luna') || 
+                   p.identity?.toLowerCase().includes('agent') ||
+                   p.name === 'Luna'
+            );
+            
+            if (agentJoined) {
+              console.log('✅ Agent joined via auto-join');
+              setIsAgentJoining(false);
+              break;
+            }
+          }
           
           if (!agentJoined) {
-            // For local dev, explicit dispatch may be needed if auto-join doesn't work
-            console.log('🚀 Agent not auto-joined, creating explicit dispatch...');
-            setIsAgentJoining(true); // Show "Summoning Luna..."
-
-            try {
-              const dispatchResponse = await fetch(`${API_BASE_URL}/api/dispatch-agent`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  room_name: `mediator-${conflictId}`
-                })
-              });
-              
-              if (dispatchResponse.ok) {
-                const dispatchData = await dispatchResponse.json();
-                console.log('✅ Dispatch created:', dispatchData.dispatch_id);
-              } else {
-                console.warn('⚠️ Dispatch creation failed');
-              }
-            } catch (dispatchError) {
-              console.error('⚠️ Dispatch error:', dispatchError);
-            }
-          } else {
-            console.log('✅ Agent already joined (auto-join worked)');
+            console.warn('⚠️ Agent did not auto-join after 5 seconds');
             setIsAgentJoining(false);
+            // Don't dispatch explicitly - AgentServer should handle it
+            // Explicit dispatch causes duplicate agents
           }
 
       } catch (connectError) {
@@ -265,13 +276,32 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
     if (!roomRef.current) return;
 
     try {
+      console.log('🔌 Disconnecting from room...');
+      
+      // Stop all local tracks first
+      if (roomRef.current.localParticipant) {
+        await roomRef.current.localParticipant.setMicrophoneEnabled(false);
+        roomRef.current.localParticipant.trackPublications.forEach((publication) => {
+          if (publication.track) {
+            publication.track.stop();
+          }
+        });
+      }
+      
+      // Disconnect from room (this will trigger agent to disconnect too)
       await roomRef.current.disconnect();
+      console.log('✅ Disconnected from room');
+      
       cleanup();
       setIsConnected(false);
       setIsAgentJoining(false);
       addTranscriptEntry('system', 'Call ended');
     } catch (error) {
       console.error('Error disconnecting:', error);
+      // Force cleanup even if disconnect fails
+      cleanup();
+      setIsConnected(false);
+      setIsAgentJoining(false);
     }
   };
 
@@ -306,8 +336,10 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
       setTranscript([]);
       setIsConnected(false);
       setIsAgentJoining(false);
+      agentJoinedRef.current = false; // Reset agent joined flag
     } else {
       console.log('🚪 Modal opened, ready to connect');
+      agentJoinedRef.current = false; // Reset when opening modal
       // Don't auto-start - let user click "Start Call" button
     }
 

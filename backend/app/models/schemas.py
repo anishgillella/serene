@@ -8,7 +8,7 @@ from datetime import datetime
 
 class SpeakerSegment(BaseModel):
     """A single speaker segment in a transcript"""
-    speaker: str  # "Boyfriend" or "Girlfriend"
+    speaker: str  # "Adrian Malhotra" (boyfriend) or "Elara Voss" (girlfriend)
     text: str
     start_time: Optional[float] = None
     end_time: Optional[float] = None
@@ -28,7 +28,7 @@ class ConflictTranscript(BaseModel):
     partner_b_id: str
     speaker_labels: dict = Field(
         default_factory=dict,
-        description="Mapping of speaker IDs to names, e.g., {0: 'Boyfriend', 1: 'Girlfriend'}"
+        description="Mapping of speaker IDs to names, e.g., {0: 'Adrian Malhotra', 1: 'Elara Voss'}"
     )
 
 
