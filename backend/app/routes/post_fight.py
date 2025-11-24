@@ -2,10 +2,7 @@
 Post-fight session API endpoints
 """
 import logging
-import asyncio
-import sys
 import json
-import os
 from fastapi import APIRouter, HTTPException, Body, BackgroundTasks
 from typing import Optional, List
 from datetime import datetime

@@ -92,9 +92,6 @@ async def get_mediator_token(request: dict = Body(...)):
         can_publish_data=True,  # Required for agent communication
     ))
     
-    # Note: AgentServer pattern auto-joins when participants connect
-    # No need for explicit agent_name or RoomAgentDispatch (like Voice Agent RAG)
-    # The @server.rtc_session() decorator handles automatic agent assignment
     
     return {
         "token": token.to_jwt(),
@@ -105,23 +102,15 @@ async def get_mediator_token(request: dict = Body(...)):
 @app.post("/api/dispatch-agent")
 async def dispatch_agent(request: dict = Body(...)):
     """
-    NOTE: This endpoint is kept for compatibility but may not be needed.
-    
-    With AgentServer pattern (like Voice Agent RAG), agents auto-join when participants connect.
-    The @server.rtc_session() decorator handles automatic agent assignment.
-    
-    Explicit dispatch is only needed if auto-dispatch fails.
+    Create explicit agent dispatch for local development.
+    With AgentServer pattern, agents auto-join, but explicit dispatch may be needed for local dev.
     """
     room_name = request.get("room_name")
     
     if not room_name:
         raise HTTPException(status_code=400, detail="room_name is required")
     
-    # With AgentServer pattern, agent auto-joins - no explicit dispatch needed
-    # But we can still create a dispatch as a fallback
     try:
-        from livekit import api
-        
         lkapi = api.LiveKitAPI(
             settings.LIVEKIT_URL,
             settings.LIVEKIT_API_KEY,
@@ -129,78 +118,24 @@ async def dispatch_agent(request: dict = Body(...)):
         )
         
         try:
-            # For local dev agents, explicit dispatch is needed
-            # Create dispatch - LiveKit Cloud will route to available agent server
             req = api.CreateAgentDispatchRequest(room=room_name)
-            
-            print(f"🚀 Creating explicit dispatch for local dev agent:")
-            print(f"   Room: {room_name}")
-            print(f"   This will route to available agent server (AW_cfqEGsYKyNzB)")
-            
             dispatch = await lkapi.agent_dispatch.create_dispatch(req)
-            
-            print(f"✅ Dispatch created (ID: {dispatch.id})")
-            print(f"   Check agent logs for 'MEDIATOR ENTRYPOINT CALLED'")
             
             return {
                 "success": True,
                 "dispatch_id": dispatch.id,
                 "room": room_name,
-                "message": f"Dispatch created. Agent should auto-join via AgentServer pattern.",
-                "note": "Check agent logs for 'MEDIATOR ENTRYPOINT CALLED'"
+                "message": "Dispatch created. Agent should join via AgentServer pattern."
             }
         finally:
             await lkapi.aclose()
             
     except Exception as e:
-        print(f"⚠️  Dispatch creation failed (agent may still auto-join): {e}")
-        # Don't fail - AgentServer should handle it automatically
         return {
             "success": False,
-            "message": f"Dispatch failed but agent may auto-join: {str(e)}",
-            "note": "AgentServer pattern should handle automatic assignment"
+            "message": f"Dispatch failed but agent may auto-join: {str(e)}"
         }
 
-@app.get("/api/dispatch-status/{room_name}")
-async def get_dispatch_status(room_name: str):
-    """
-    Check dispatch status for a room.
-    Useful for debugging why agents aren't joining.
-    """
-    try:
-        from livekit import api
-        
-        lkapi = api.LiveKitAPI(
-            settings.LIVEKIT_URL,
-            settings.LIVEKIT_API_KEY,
-            settings.LIVEKIT_API_SECRET
-        )
-        
-        try:
-            # List dispatches for this room
-            dispatches = await lkapi.agent_dispatch.list_dispatches(room=room_name)
-            
-            return {
-                "room": room_name,
-                "dispatches": [
-                    {
-                        "id": d.id,
-                        "agent_name": d.agent_name,
-                        "room": d.room,
-                        "state": str(d.state) if hasattr(d, 'state') else "unknown"
-                    }
-                    for d in dispatches
-                ],
-                "count": len(dispatches)
-            }
-        finally:
-            await lkapi.aclose()
-    except Exception as e:
-        return {
-            "room": room_name,
-            "error": str(e),
-            "dispatches": []
-        }
 
 @app.get("/api/conflicts/{conflict_id}")
 async def get_conflict(conflict_id: str):
@@ -242,9 +177,9 @@ async def get_conflict(conflict_id: str):
                             for seg in segments
                         ]
         except Exception as e:
-            print(f"Error retrieving transcript from Pinecone: {e}")
+            logger.error(f"Error retrieving transcript from Pinecone: {e}")
             import traceback
-            traceback.print_exc()
+            logger.error(traceback.format_exc())
         
         # Fallback to S3 if not found in Pinecone
         if not transcript_data and conflict.get("transcript_path") and s3_service:
@@ -264,9 +199,9 @@ async def get_conflict(conflict_id: str):
                     elif isinstance(stored_transcript, dict) and stored_transcript.get("segments"):
                         transcript_data = [f"{seg.get('speaker', 'Speaker')}: {seg.get('text', '')}" for seg in stored_transcript["segments"] if seg.get('text')]
             except Exception as e:
-                print(f"Error retrieving transcript from S3: {e}")
+                logger.error(f"Error retrieving transcript from S3: {e}")
                 import traceback
-                traceback.print_exc()
+                logger.error(traceback.format_exc())
         
         return {
             "conflict": conflict,
@@ -276,19 +211,6 @@ async def get_conflict(conflict_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/sessions/{session_id}")
-async def get_session(session_id: str):
-    """Get session info from LiveKit"""
-    try:
-        # For now, return info about the session
-        # In production, you'd query LiveKit Analytics API
-        return {
-            "session_id": session_id,
-            "room_name": "voice-test",
-            "message": "Session info retrieved. To get full analytics, check LiveKit Cloud dashboard"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/conflicts")
 async def list_conflicts(relationship_id: str = None):
