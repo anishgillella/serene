@@ -88,3 +88,4 @@ class TranscriptChunker:
         logger.info(f"Created {len(chunk_list)} chunks from transcript for conflict {conflict_id}")
         return chunk_list
 
+

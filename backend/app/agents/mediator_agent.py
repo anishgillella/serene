@@ -372,15 +372,160 @@ async def mediator_entrypoint(ctx: JobContext):
         # Wait a moment for connection to stabilize
         await asyncio.sleep(1.0)
         
+        # Stage 8: Fetch initial transcript context (if RAG available)
+        stage_start = time.time()
+        transcript_context = None
+        if rag_system and conflict_id:
+            logger.info(f"📚 Fetching initial transcript context for conflict {conflict_id}...")
+            try:
+                # Fetch transcript chunks directly from Pinecone (not via RAG lookup)
+                # This gives us all chunks for the conflict, not just query-relevant ones
+                from app.services.pinecone_service import pinecone_service
+                from app.services.embeddings_service import embeddings_service
+                
+                # Use a very broad query to get diverse chunks, or fetch all chunks
+                # For initial context, we want an overview, so use a general query
+                overview_query = "conversation discussion topics concerns"
+                query_embedding = embeddings_service.embed_query(overview_query)
+                
+                # Fetch more chunks for initial context (k=10 for overview)
+                logger.info(f"   🔍 Querying Pinecone for transcript chunks (conflict_id={conflict_id}, top_k=10)...")
+                results = pinecone_service.query_transcript_chunks(
+                    query_embedding=query_embedding,
+                    conflict_id=conflict_id,
+                    top_k=10,  # Get more chunks for initial context
+                )
+                
+                logger.info(f"   📊 Query results: {results}")
+                if results:
+                    logger.info(f"   📊 Results type: {type(results)}, has matches: {hasattr(results, 'matches')}")
+                
+                if results and hasattr(results, 'matches') and results.matches:
+                    chunks = results.matches
+                    logger.info(f"   ✅ Retrieved {len(chunks)} transcript chunks for initial context")
+                    
+                    # Format chunks into context string
+                    context_parts = []
+                    for idx, chunk in enumerate(chunks, 1):
+                        metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
+                        speaker = metadata.get("speaker", "Unknown")
+                        text = metadata.get("text", "")
+                        chunk_idx = metadata.get("chunk_index", "?")
+                        
+                        context_parts.append(
+                            f"[Chunk {idx}, {speaker}]:\n{text}\n"
+                        )
+                    
+                    transcript_context = "\n".join(context_parts)
+                    logger.info(f"   ✅ Formatted transcript context ({len(transcript_context)} chars)")
+                else:
+                    logger.warning(f"   ⚠️ No transcript chunks found in Pinecone for conflict {conflict_id}")
+                    logger.info(f"   🔄 Attempting fallback: Fetching full transcript from Pinecone/Supabase...")
+                    
+                    # Fallback: Try to fetch full transcript from Pinecone
+                    try:
+                        transcript_result = pinecone_service.get_by_conflict_id(
+                            conflict_id=conflict_id,
+                            namespace="transcripts"
+                        )
+                        
+                        if transcript_result and hasattr(transcript_result, 'metadata'):
+                            transcript_text = transcript_result.metadata.get("transcript_text", "")
+                            if transcript_text:
+                                logger.info(f"   ✅ Found full transcript ({len(transcript_text)} chars), chunking on-the-fly...")
+                                
+                                # Chunk the transcript on-the-fly
+                                from app.services.transcript_chunker import TranscriptChunker
+                                chunker = TranscriptChunker(chunk_size=1000, chunk_overlap=200)
+                                chunks = chunker.chunk_transcript(
+                                    transcript_text=transcript_text,
+                                    conflict_id=conflict_id,
+                                    relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000",
+                                )
+                                
+                                if chunks:
+                                    # Store chunks in Pinecone for future queries
+                                    try:
+                                        chunk_texts = [chunk.get("content", "") for chunk in chunks]
+                                        chunk_embeddings = embeddings_service.embed_batch(chunk_texts)
+                                        
+                                        pinecone_service.upsert_transcript_chunks(
+                                            chunks=chunks,
+                                            embeddings=chunk_embeddings,
+                                            namespace="transcript_chunks"
+                                        )
+                                        logger.info(f"   ✅ Stored {len(chunks)} chunks in Pinecone for future queries")
+                                    except Exception as store_error:
+                                        logger.warning(f"   ⚠️ Failed to store chunks in Pinecone: {store_error}")
+                                        # Continue anyway - we'll still use them for initial context
+                                    
+                                    # Take first 5 chunks for initial context (to avoid overwhelming the greeting)
+                                    context_parts = []
+                                    for idx, chunk in enumerate(chunks[:5], 1):
+                                        speaker = chunk.get("speaker", "Unknown")
+                                        text = chunk.get("content", "")
+                                        context_parts.append(
+                                            f"[Chunk {idx}, {speaker}]:\n{text}\n"
+                                        )
+                                    
+                                    transcript_context = "\n".join(context_parts)
+                                    logger.info(f"   ✅ Created transcript context from full transcript ({len(transcript_context)} chars)")
+                                else:
+                                    logger.warning(f"   ⚠️ Failed to chunk transcript")
+                            else:
+                                logger.warning(f"   ⚠️ Full transcript found but transcript_text is empty")
+                        else:
+                            logger.warning(f"   ⚠️ No full transcript found in Pinecone for conflict {conflict_id}")
+                    except Exception as fallback_error:
+                        logger.error(f"   ❌ Fallback transcript fetch failed: {fallback_error}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                    
+                    if not transcript_context:
+                        logger.error(f"   ❌ Could not retrieve transcript context for conflict {conflict_id}")
+                        logger.error(f"   💡 This conflict may not have a stored transcript yet")
+            except Exception as e:
+                logger.error(f"   ❌ Could not fetch initial transcript context: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                transcript_context = None
+        
+        stage_times['transcript_context'] = time.time() - stage_start
+        if transcript_context:
+            logger.info(f"   ⏱️  Transcript Context: {stage_times['transcript_context']:.2f}s")
+        
         # Generate initial greeting (like Voice Agent RAG)
         logger.info("🎤 Generating initial greeting...")
         try:
+            # Build greeting instructions with transcript context if available
+            greeting_instructions = (
+                "Greet the user warmly and introduce yourself as Luna, their friendly relationship mediator. "
+                "Let them know you're here to help them reflect on their conversation and answer any questions they might have. "
+                "Be warm, empathetic, and encouraging."
+            )
+            
+            # If we have transcript context, inject it into the greeting
+            if transcript_context and rag_system:
+                formatted_context = rag_system.format_context_for_llm(transcript_context)
+                greeting_instructions = (
+                    f"{greeting_instructions}\n\n"
+                    f"You have access to the conversation transcript. Here's what was discussed:\n\n"
+                    f"{formatted_context}\n\n"
+                    f"You can reference specific things that were said in the conversation. "
+                    f"If the user asks questions about what was said, use this transcript context to give accurate answers."
+                )
+                logger.info("   ✅ Greeting will include transcript context")
+            else:
+                logger.warning("   ⚠️ No transcript context available - agent will greet without conversation details")
+                # Still mention that you can help, but don't claim to have the transcript
+                greeting_instructions = (
+                    f"{greeting_instructions}\n\n"
+                    f"Note: I don't currently have access to the full conversation transcript. "
+                    f"If you'd like to discuss what was said, please share the details with me and I'll be happy to help you reflect on it."
+                )
+            
             await session.generate_reply(
-                instructions=(
-                    "Greet the user warmly and introduce yourself as Luna, their friendly relationship mediator. "
-                    "Let them know you're here to help them reflect on their conversation and answer any questions they might have. "
-                    "Be warm, empathetic, and encouraging."
-                ),
+                instructions=greeting_instructions,
             )
             logger.info("✅ Greeting generated successfully")
         except Exception as e:

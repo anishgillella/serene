@@ -30,3 +30,4 @@ echo "📊 Summary:"
 echo "  Agent processes: $(ps aux | grep -E '[p]ython.*start_agent' | grep -v grep | wc -l | tr -d ' ')"
 echo "  Backend processes: $(ps aux | grep -E '[p]ython.*uvicorn' | grep -v grep | wc -l | tr -d ' ')"
 echo "  Total Python processes: $(ps aux | grep -E '[p]ython' | grep -v grep | wc -l | tr -d ' ')"
+
