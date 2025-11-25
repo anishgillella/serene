@@ -105,11 +105,11 @@ async def websocket_transcribe(websocket: WebSocket):
             nonlocal speaker_counter
             if speaker_id not in speaker_map:
                 speaker_counter += 1
-                # Map first speaker to Boyfriend, second to Girlfriend
+                # Map first speaker to Adrian Malhotra, second to Elara Voss
                 if speaker_counter == 1:
-                    speaker_map[speaker_id] = "Boyfriend"
+                    speaker_map[speaker_id] = "Adrian Malhotra"
                 else:
-                    speaker_map[speaker_id] = "Girlfriend"
+                    speaker_map[speaker_id] = "Elara Voss"
             return speaker_map[speaker_id]
         
         # Start receiving transcripts in background

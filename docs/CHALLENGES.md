@@ -253,6 +253,205 @@ room.on(RoomEvent.ParticipantConnected, (participant) => {
 
 ---
 
+## Challenge 8: ElevenLabs TTS Connection Errors
+
+### Problem
+TTS was failing with "connection closed" errors. Agent couldn't speak.
+
+### Root Cause
+ElevenLabs plugin expects `ELEVEN_API_KEY` environment variable, but code was using `ELEVENLABS_API_KEY`.
+
+### Solution
+Set `ELEVEN_API_KEY` from `ELEVENLABS_API_KEY` at module level before TTS initialization.
+
+**Files Modified:**
+- `backend/app/agents/mediator_agent.py`
+
+---
+
+## Challenge 9: Multiple Agent Processes
+
+### Problem
+Two agents were responding simultaneously, causing confusion.
+
+### Root Cause
+Both AgentServer auto-join and explicit dispatch endpoint were triggering agent joins.
+
+### Solution
+Removed explicit dispatch call, relying solely on AgentServer auto-join pattern. Added deduplication logic to prevent duplicate joins.
+
+**Files Modified:**
+- `frontend/src/components/MediatorModal.tsx`
+
+---
+
+## Challenge 10: Agent Not Receiving Transcript Context
+
+### Problem
+Agent said "I don't have access to transcript details" for historical conflicts.
+
+### Root Cause
+Transcript chunks weren't stored in Pinecone for older conflicts. Only full transcripts existed.
+
+### Solution
+Added fallback: if chunks not found, fetch full transcript, chunk on-the-fly, store chunks in Pinecone, then use for context.
+
+**Files Modified:**
+- `backend/app/agents/mediator_agent.py`
+
+---
+
+## Challenge 11: Agent Still Responding After Disconnect
+
+### Problem
+Agent continued responding after user closed modal or ended call.
+
+### Root Cause
+Frontend wasn't properly disconnecting from LiveKit room, and agent session wasn't closing.
+
+### Solution
+Added explicit `room.disconnect()` and `session.aclose()` in cleanup. Ensured local tracks are stopped before disconnect.
+
+**Files Modified:**
+- `frontend/src/components/MediatorModal.tsx`
+- `backend/app/agents/mediator_agent.py`
+
+---
+
+## Challenge 12: View Analysis/Repair Plan Buttons Not Working
+
+### Problem
+Buttons showed no results when clicked.
+
+### Root Cause
+Field name mismatch (`action_steps` vs `steps`) and missing structured output configuration.
+
+### Solution
+Fixed field names, ensured Pydantic structured output with GPT-4o-mini via OpenRouter.
+
+**Files Modified:**
+- `backend/app/routes/post_fight.py`
+- `backend/app/services/llm_service.py`
+
+---
+
+## Challenge 13: Backend Hanging on Conflict History
+
+### Problem
+API endpoint hung indefinitely when loading conflict history.
+
+### Root Cause
+PostgreSQL connection blocking event loop with no timeout.
+
+### Solution
+Added `connect_timeout=5` to database connection, wrapped queries in `run_in_threadpool`, added `asyncio.wait_for` with 10s timeout.
+
+**Files Modified:**
+- `backend/app/services/db_service.py`
+- `backend/app/main.py`
+
+---
+
+## Challenge 14: Analysis Generation Too Slow
+
+### Problem
+Analysis generation took 15+ seconds, blocking UI.
+
+### Root Cause
+Sending full transcript to LLM, large RAG context, synchronous storage operations.
+
+### Solution
+Used RAG context instead of full transcript, reduced chunk counts (top-7), parallelized storage with BackgroundTasks, reduced `max_tokens` to 1500.
+
+**Files Modified:**
+- `backend/app/routes/post_fight.py`
+- `backend/app/services/transcript_rag.py`
+- `backend/app/services/llm_service.py`
+
+---
+
+## Challenge 15: RAG Context Too Small
+
+### Problem
+RAG context was only 62 characters instead of expected ~3000.
+
+### Root Cause
+After reranking, code was reading text from Pinecone metadata (truncated) instead of full candidate text.
+
+### Solution
+Use full text from `candidate['text']` dictionary instead of `chunk.metadata.get("text")`.
+
+**Files Modified:**
+- `backend/app/services/transcript_rag.py`
+
+---
+
+## Challenge 16: Speaker Labels Wrong
+
+### Problem
+Real-time transcription showed "Boyfriend/Girlfriend" instead of "Adrian Malhotra/Elara Voss".
+
+### Root Cause
+Speaker name mapping functions used generic labels.
+
+### Solution
+Updated `get_speaker_name` to map to "Adrian Malhotra" and "Elara Voss". Updated frontend ParticipantBadge components.
+
+**Files Modified:**
+- `backend/app/routes/realtime_transcription.py`
+- `frontend/src/pages/FightCapture.tsx`
+
+---
+
+## Challenge 17: Transcript Not Found Errors
+
+### Problem
+404 errors when generating analysis for conflicts stored in database but not Pinecone.
+
+### Root Cause
+Supabase RLS blocking access, no db_service fallback.
+
+### Solution
+Added db_service fallback (direct PostgreSQL connection bypasses RLS) before Supabase fallback.
+
+**Files Modified:**
+- `backend/app/routes/post_fight.py`
+
+---
+
+## Challenge 18: Analysis/Repair Plans Not Cached
+
+### Problem
+Clicking "View Analysis" regenerated analysis instead of retrieving cached version.
+
+### Root Cause
+No retrieval logic - endpoints always generated new analysis.
+
+### Solution
+Added `get_conflict_analysis()` and `get_repair_plans()` methods. Endpoints now check for existing results first, retrieve from S3 if found, generate only if missing.
+
+**Files Modified:**
+- `backend/app/services/db_service.py`
+- `backend/app/routes/post_fight.py`
+
+---
+
+## Challenge 19: Duplicate Analysis Storage
+
+### Problem
+Attempting to store analysis twice caused database errors.
+
+### Root Cause
+No upsert logic - inserts failed on duplicates.
+
+### Solution
+Added `ON CONFLICT DO UPDATE` logic to `create_conflict_analysis()` and `create_repair_plan()` methods.
+
+**Files Modified:**
+- `backend/app/services/db_service.py`
+
+---
+
 ## Summary
 
 The voice agent integration faced several interconnected challenges across multiple sessions:
@@ -271,6 +470,24 @@ The voice agent integration faced several interconnected challenges across multi
 ### Session 3: User Experience
 8. **UX Feedback:** Added "✨ Summoning Luna..." status indicator during the 11-second agent join delay
 9. **Friendly Logs:** Changed participant join messages from raw agent IDs to "Luna joined"
+
+### Session 4: TTS & Agent Reliability
+10. **TTS Errors:** Fixed ElevenLabs API key configuration
+11. **Multiple Agents:** Removed duplicate dispatch calls, added deduplication
+12. **Transcript Context:** Added fallback to chunk transcripts on-the-fly
+13. **Agent Disconnect:** Fixed cleanup to properly close sessions
+
+### Session 5: Analysis & Repair Plans
+14. **Button Functionality:** Fixed field names and structured output
+15. **Backend Hanging:** Added timeouts and thread pool execution
+16. **Slow Generation:** Optimized with RAG context and BackgroundTasks
+17. **Small Context:** Fixed text extraction from candidates
+
+### Session 6: Data & Storage
+18. **Speaker Labels:** Updated to use "Adrian Malhotra" and "Elara Voss"
+19. **Transcript Retrieval:** Added db_service fallback for RLS bypass
+20. **Caching:** Implemented retrieval before generation
+21. **Duplicates:** Added upsert logic for analysis/repair plans
 
 ### Key Learnings
 
@@ -293,14 +510,19 @@ The final solution ensures that Luna:
 
 **Backend:**
 - `backend/start_agent.py` - Added agent name configuration
-- `backend/app/agents/mediator_agent.py` - Refactored async initialization
+- `backend/app/agents/mediator_agent.py` - Refactored async initialization, TTS config, transcript fallback, session cleanup
 - `backend/app/services/pinecone_service.py` - Added error handling
-- `backend/app/services/db_service.py` - Added error handling
-- `backend/app/main.py` - Added `/api/dispatch-agent` endpoint
+- `backend/app/services/db_service.py` - Added error handling, retrieval methods, upsert logic
+- `backend/app/services/transcript_rag.py` - Fixed text extraction, optimized chunk counts
+- `backend/app/services/llm_service.py` - Structured output, reduced max_tokens
+- `backend/app/routes/post_fight.py` - Fixed field names, added caching, BackgroundTasks, db_service fallback
+- `backend/app/routes/realtime_transcription.py` - Updated speaker names
+- `backend/app/main.py` - Added `/api/dispatch-agent` endpoint, timeouts
 - `backend/livekit.toml` - Updated agent ID to `A_aPV984RTQvBw`
 
 **Frontend:**
-- `frontend/src/components/MediatorModal.tsx` - Added dispatch call and UX improvements
+- `frontend/src/components/MediatorModal.tsx` - Added dispatch call, UX improvements, proper disconnect
+- `frontend/src/pages/FightCapture.tsx` - Updated speaker labels
 
 **Documentation:**
 - `docs/CHALLENGES.md` - This document

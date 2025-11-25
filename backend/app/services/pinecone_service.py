@@ -162,9 +162,13 @@ class PineconeService:
                 "full_repair_plan_json": repair_plan_json[:35000] if len(repair_plan_json) <= 35000 else repair_plan_json[:35000]  # Store full JSON if fits
             }
             
+            # Use conflict_id + partner_requesting for unique ID (allows multiple repair plans per conflict)
+            partner = repair_plan_data.get("partner_requesting", "unknown")
+            vector_id = f"repair_plan_{conflict_id}_{partner}"
+            
             self.index.upsert(
                 vectors=[{
-                    "id": f"repair_plan_{conflict_id}",
+                    "id": vector_id,
                     "values": embedding,
                     "metadata": metadata
                 }],

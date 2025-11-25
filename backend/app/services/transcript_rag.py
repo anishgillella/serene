@@ -9,18 +9,26 @@ logger = logging.getLogger(__name__)
 
 
 class TranscriptRAGSystem:
-    """Retrieval-Augmented Generation system for conversation transcripts and profile PDFs."""
+    """Retrieval-Augmented Generation system for conversation transcripts and profile PDFs.
+    
+    IMPORTANT: This system prioritizes the CURRENT conflict's transcript as PRIMARY context.
+    When a user is viewing a specific conflict session, questions about "this conversation" 
+    or "summarize what happened" should use ONLY that conflict's transcript.
+    
+    Secondary context (profiles, past conflicts) is added for deeper understanding but
+    the current conflict is always the primary source.
+    """
     
     def __init__(
         self,
-        k: int = 10,  # Increased default to get more context from entire corpus
+        k: int = 7,  # Number of chunks from secondary sources
         include_profiles: bool = True,
     ):
         """
         Initialize transcript RAG system.
         
         Args:
-            k: Number of chunks to retrieve from entire corpus
+            k: Number of additional chunks from secondary sources (profiles, past conflicts)
             include_profiles: Whether to also query profile PDFs (Adrian/Elara profiles)
         """
         self.k = k
@@ -34,12 +42,19 @@ class TranscriptRAGSystem:
         relationship_id: Optional[str] = None,
     ) -> str:
         """
-        Perform RAG lookup across ENTIRE corpus (all transcripts + profiles).
-        Returns top relevant chunks from entire corpus for contextualized responses.
+        Perform RAG lookup with CURRENT CONFLICT as PRIMARY context.
+        
+        Strategy:
+        1. FIRST: Fetch ALL chunks from the current conflict (using filter) - PRIMARY CONTEXT
+        2. THEN: Optionally fetch relevant chunks from profiles and past conflicts - SECONDARY CONTEXT
+        3. Rerank secondary context to get most relevant supplementary info
+        
+        This ensures that when the user asks about "this conversation" or "summarize",
+        the current conflict's full transcript is always the primary source.
         
         Args:
             query: User query string
-            conflict_id: Current conflict ID (for prioritization, not filtering)
+            conflict_id: Current conflict ID (REQUIRED for primary context)
             relationship_id: Relationship ID (for profile filtering)
             
         Returns:
@@ -55,48 +70,58 @@ class TranscriptRAGSystem:
             embedding_time = time.time() - embedding_start
             logger.info(f"⏱️ Embedding generation: {embedding_time:.2f}s")
             
-            # Query ENTIRE corpus - get candidate chunks from ALL sources (transcripts + profiles)
-            # Then rerank ALL together to get most relevant ones (saves tokens, better context)
-            logger.info(f"Querying ENTIRE corpus (transcripts + profiles) for query: {query[:50]}...")
-            
-            # Step 1: Query BOTH namespaces (they're separate in Pinecone, so we query each)
-            # Strategy: Get top_k=10 TOTAL candidates (7 transcripts + 3 profiles) for faster reranking
-            # This is faster than querying top_k=10 from each (20 total) because reranking 10 is faster than 20
-            
-            transcript_candidates = []
-            profile_candidates = []
+            primary_chunks = []  # Chunks from CURRENT conflict (always included)
+            secondary_candidates = []  # Chunks from profiles and past conflicts (reranked)
             
             pinecone_start = time.time()
             
-            # Query transcript_chunks namespace - get top 5 most relevant
-            transcript_results = pinecone_service.index.query(
-                vector=query_embedding,
-                top_k=5,  # Get top 5 from transcripts (optimized for faster reranking)
-                namespace="transcript_chunks",
-                include_metadata=True,
-                # No filter - query entire corpus
-            )
+            # =====================================================================
+            # STEP 1: FETCH PRIMARY CONTEXT - ALL chunks from CURRENT conflict
+            # =====================================================================
+            if conflict_id:
+                logger.info(f"📌 Fetching PRIMARY context: ALL chunks from current conflict {conflict_id}...")
+                
+                # Query with filter to get ONLY current conflict's chunks
+                current_conflict_results = pinecone_service.index.query(
+                    vector=query_embedding,
+                    top_k=20,  # Get up to 20 chunks from current conflict
+                    namespace="transcript_chunks",
+                    filter={"conflict_id": {"$eq": conflict_id}},  # FILTER by conflict_id
+                    include_metadata=True,
+                )
+                
+                if current_conflict_results and hasattr(current_conflict_results, 'matches') and current_conflict_results.matches:
+                    for match in current_conflict_results.matches:
+                        metadata = match.metadata if hasattr(match, 'metadata') else {}
+                        text = metadata.get("text", "")
+                        if text:
+                            primary_chunks.append({
+                                'text': text,
+                                'match': match,
+                                'type': 'transcript',
+                                'is_current_conflict': True,
+                                'conflict_id': conflict_id,
+                                'speaker': metadata.get("speaker", "Unknown"),
+                                'chunk_index': metadata.get("chunk_index", 0),
+                            })
+                    
+                    # Sort by chunk_index to maintain conversation order
+                    primary_chunks.sort(key=lambda c: c.get('chunk_index', 0))
+                    logger.info(f"   ✅ Found {len(primary_chunks)} chunks from CURRENT conflict (primary context)")
+                else:
+                    logger.warning(f"   ⚠️ No chunks found for current conflict {conflict_id}")
             
-            if transcript_results and hasattr(transcript_results, 'matches') and transcript_results.matches:
-                for match in transcript_results.matches:
-                    metadata = match.metadata if hasattr(match, 'metadata') else {}
-                    text = metadata.get("text", "")
-                    if text:
-                        transcript_candidates.append({
-                            'text': text,
-                            'match': match,
-                            'type': 'transcript',
-                            'conflict_id': metadata.get("conflict_id", ""),
-                            'speaker': metadata.get("speaker", "Unknown"),
-                        })
-                logger.info(f"Found {len(transcript_candidates)} transcript candidate chunks")
+            # =====================================================================
+            # STEP 2: FETCH SECONDARY CONTEXT - Profiles and past conflicts
+            # =====================================================================
+            logger.info(f"📚 Fetching SECONDARY context: profiles and past conflicts...")
             
-            # Query profiles namespace - get top 3 most relevant (if profiles enabled)
+            # Query profiles (if enabled)
             if self.include_profiles and relationship_id:
                 try:
                     profile_results = pinecone_service.index.query(
                         vector=query_embedding,
-                        top_k=2,  # Get top 2 from profiles (optimized for faster reranking)
+                        top_k=3,  # Get top 3 profile chunks
                         namespace="profiles",
                         filter={"relationship_id": {"$eq": relationship_id}},
                         include_metadata=True
@@ -109,104 +134,149 @@ class TranscriptRAGSystem:
                             pdf_type = metadata.get("pdf_type", "")
                             if text:
                                 speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
-                                profile_candidates.append({
+                                secondary_candidates.append({
                                     'text': text,
                                     'match': match,
                                     'type': 'profile',
+                                    'is_current_conflict': False,
                                     'profile_type': pdf_type,
                                     'speaker': speaker,
                                 })
-                    
-                    logger.info(f"Found {len(profile_candidates)} profile candidate chunks")
+                        logger.info(f"   Found {len([c for c in secondary_candidates if c['type'] == 'profile'])} profile chunks")
                 except Exception as e:
-                    logger.warning(f"Error querying profiles for reranking (non-fatal): {e}")
+                    logger.warning(f"   Error querying profiles (non-fatal): {e}")
+            
+            # Query past conflicts (excluding current conflict)
+            if conflict_id:
+                try:
+                    # Query transcripts WITHOUT the current conflict
+                    past_conflict_results = pinecone_service.index.query(
+                        vector=query_embedding,
+                        top_k=5,  # Get top 5 from past conflicts
+                        namespace="transcript_chunks",
+                        filter={"conflict_id": {"$ne": conflict_id}},  # EXCLUDE current conflict
+                        include_metadata=True,
+                    )
+                    
+                    if past_conflict_results and hasattr(past_conflict_results, 'matches') and past_conflict_results.matches:
+                        for match in past_conflict_results.matches:
+                            metadata = match.metadata if hasattr(match, 'metadata') else {}
+                            text = metadata.get("text", "")
+                            if text:
+                                secondary_candidates.append({
+                                    'text': text,
+                                    'match': match,
+                                    'type': 'past_transcript',
+                                    'is_current_conflict': False,
+                                    'conflict_id': metadata.get("conflict_id", "unknown"),
+                                    'speaker': metadata.get("speaker", "Unknown"),
+                                    'chunk_index': metadata.get("chunk_index", 0),
+                                })
+                        logger.info(f"   Found {len([c for c in secondary_candidates if c['type'] == 'past_transcript'])} past conflict chunks")
+                except Exception as e:
+                    logger.warning(f"   Error querying past conflicts (non-fatal): {e}")
             
             pinecone_time = time.time() - pinecone_start
-            logger.info(f"⏱️ Pinecone queries (both namespaces): {pinecone_time:.2f}s")
+            logger.info(f"⏱️ Pinecone queries: {pinecone_time:.2f}s")
             
-            # Step 3: Combine ALL candidates (transcripts + profiles) into SINGLE corpus
-            # This ensures we get top k from the ENTIRE combined corpus, not separate top k's
-            all_candidates = transcript_candidates + profile_candidates
-            logger.info(f"Total candidates from COMBINED corpus: {len(all_candidates)} ({len(transcript_candidates)} transcripts + {len(profile_candidates)} profiles)")
-            
-            # Step 4: Rerank ALL candidates together to get top k from ENTIRE COMBINED CORPUS
-            # This ensures we get the k most relevant chunks from transcripts + profiles combined
-            chunks = []
+            # =====================================================================
+            # STEP 3: RERANK SECONDARY CONTEXT (if any)
+            # =====================================================================
+            reranked_secondary = []
             rerank_time = 0.0
-            if all_candidates:
+            
+            if secondary_candidates:
                 rerank_start = time.time()
-                logger.info(f"Reranking {len(all_candidates)} candidate chunks from COMBINED corpus (transcripts + profiles) to get top {self.k} most relevant...")
-                candidate_texts = [c['text'] for c in all_candidates]
+                logger.info(f"🔄 Reranking {len(secondary_candidates)} secondary candidates to get top {self.k}...")
+                
+                candidate_texts = [c['text'] for c in secondary_candidates]
                 reranked_results = reranker_service.rerank(
                     query=query,
                     documents=candidate_texts,
-                    top_k=self.k  # Get top_k most relevant from ENTIRE COMBINED CORPUS
+                    top_k=self.k
                 )
-                rerank_time = time.time() - rerank_start
-                logger.info(f"⏱️ Reranking {len(all_candidates)} candidates: {rerank_time:.2f}s")
                 
                 # Map reranked results back to original chunks
-                # Store both match object AND text for proper formatting
-                reranked_chunks = []
                 for doc_text, score in reranked_results:
-                    # Find the original candidate that matches this text
-                    for candidate in all_candidates:
+                    for candidate in secondary_candidates:
                         if candidate['text'] == doc_text:
-                            # Store candidate dict (has both match and text) instead of just match
-                            reranked_chunks.append(candidate)
+                            candidate['rerank_score'] = score
+                            reranked_secondary.append(candidate)
                             break
                 
-                chunks = reranked_chunks
-                logger.info(f"✅ Reranked to top {len(chunks)} most relevant chunks from ENTIRE COMBINED CORPUS (transcripts + profiles)")
+                rerank_time = time.time() - rerank_start
+                logger.info(f"⏱️ Reranking: {rerank_time:.2f}s")
+                logger.info(f"   ✅ Selected {len(reranked_secondary)} secondary chunks")
             
-            # Format reranked chunks into context (mix of transcripts and profiles)
-            if not chunks:
+            # =====================================================================
+            # STEP 4: FORMAT CONTEXT - Primary first, then secondary
+            # =====================================================================
+            if not primary_chunks and not reranked_secondary:
                 logger.warning(f"No relevant chunks found for query: {query[:50]}...")
                 return "No relevant information found in the conversation transcript or profiles."
             
             context_parts = []
-            for idx, chunk_data in enumerate(chunks, 1):
-                # chunk_data is now a candidate dict with 'text', 'match', 'type', etc.
-                # Use the text we already extracted (more reliable than reading from metadata again)
-                text = chunk_data.get('text', '')
-                chunk_type = chunk_data.get('type', 'unknown')
+            
+            # Add PRIMARY context header
+            if primary_chunks:
+                context_parts.append("=" * 60)
+                context_parts.append("📌 CURRENT CONVERSATION TRANSCRIPT (PRIMARY CONTEXT)")
+                context_parts.append("This is the conversation the user is currently viewing.")
+                context_parts.append("Use this as the PRIMARY source for questions about 'this conversation'.")
+                context_parts.append("=" * 60)
+                context_parts.append("")
                 
-                if not text:
-                    logger.warning(f"Chunk {idx} ({chunk_type}) has empty text - skipping")
-                    continue
-                
-                # Get metadata from match object for additional info
-                match_obj = chunk_data.get('match')
-                metadata = match_obj.metadata if (match_obj and hasattr(match_obj, 'metadata')) else {}
-                
-                if chunk_type == 'profile':
-                    # Profile chunk - Limit to 1000 chars for faster LLM processing
-                    # Full profile chunks can be very large, but we only need the most relevant parts
-                    profile_type = chunk_data.get('profile_type', '')
+                for idx, chunk_data in enumerate(primary_chunks, 1):
+                    text = chunk_data.get('text', '')
                     speaker = chunk_data.get('speaker', 'Unknown')
-                    max_profile_chars = 1000
-                    if len(text) > max_profile_chars:
-                        text = text[:max_profile_chars] + "... [truncated for relevance]"
-                    context_parts.append(
-                        f"[{speaker}'s Profile - Background & Personality]:\n{text}\n"
-                    )
-                    logger.debug(f"Added profile chunk {idx}: {len(text)} chars from {speaker} (truncated from {len(chunk_data.get('text', ''))} chars)")
-                else:
-                    # Transcript chunk
-                    speaker = chunk_data.get('speaker', metadata.get('speaker', 'Unknown'))
-                    chunk_idx = metadata.get('chunk_index', '?')
-                    conflict_id_chunk = chunk_data.get('conflict_id', metadata.get('conflict_id', 'unknown'))
-                    context_parts.append(
-                        f"[Chunk {idx} from conflict {conflict_id_chunk}, chunk {chunk_idx}, {speaker}]:\n{text}\n"
-                    )
-                    logger.debug(f"Added transcript chunk {idx}: {len(text)} chars from {speaker}")
+                    chunk_idx = chunk_data.get('chunk_index', '?')
+                    
+                    context_parts.append(f"[Current Conversation - {speaker} (part {chunk_idx})]:")
+                    context_parts.append(text)
+                    context_parts.append("")
+            
+            # Add SECONDARY context header
+            if reranked_secondary:
+                context_parts.append("")
+                context_parts.append("=" * 60)
+                context_parts.append("📚 ADDITIONAL CONTEXT (SECONDARY - for deeper understanding)")
+                context_parts.append("Profiles and past conversations for context, NOT the primary source.")
+                context_parts.append("=" * 60)
+                context_parts.append("")
+                
+                for idx, chunk_data in enumerate(reranked_secondary, 1):
+                    text = chunk_data.get('text', '')
+                    chunk_type = chunk_data.get('type', 'unknown')
+                    
+                    if chunk_type == 'profile':
+                        speaker = chunk_data.get('speaker', 'Unknown')
+                        # Limit profile text
+                        max_profile_chars = 800
+                        if len(text) > max_profile_chars:
+                            text = text[:max_profile_chars] + "... [truncated]"
+                        context_parts.append(f"[{speaker}'s Profile - Background & Personality]:")
+                        context_parts.append(text)
+                        context_parts.append("")
+                    else:
+                        # Past transcript
+                        speaker = chunk_data.get('speaker', 'Unknown')
+                        past_conflict_id = chunk_data.get('conflict_id', 'unknown')
+                        context_parts.append(f"[Past Conversation - {speaker} (conflict: {past_conflict_id[:8]}...)]:")
+                        context_parts.append(text)
+                        context_parts.append("")
             
             context = "\n".join(context_parts)
             total_time = time.time() - start_time
-            rag_timing_msg = f"⏱️ Total RAG lookup time: {total_time:.2f}s (embedding: {embedding_time:.2f}s, pinecone: {pinecone_time:.2f}s, rerank: {rerank_time:.2f}s)"
-            logger.info(f"✅ Retrieved {len(chunks)} most relevant chunks from entire corpus (transcripts + profiles) for query: {query[:50]}...")
+            
+            rag_timing_msg = (
+                f"⏱️ RAG lookup: {total_time:.2f}s | "
+                f"Primary: {len(primary_chunks)} chunks | "
+                f"Secondary: {len(reranked_secondary)} chunks | "
+                f"(embed: {embedding_time:.2f}s, pinecone: {pinecone_time:.2f}s, rerank: {rerank_time:.2f}s)"
+            )
             logger.info(rag_timing_msg)
-            print(rag_timing_msg)  # Also print to stdout for visibility
+            print(rag_timing_msg)
+            
             return context
             
         except Exception as e:
@@ -214,6 +284,66 @@ class TranscriptRAGSystem:
             import traceback
             logger.error(traceback.format_exc())
             return "Error retrieving information from the conversation transcript."
+    
+    def get_current_conflict_transcript(self, conflict_id: str) -> str:
+        """
+        Fetch the FULL transcript for a specific conflict.
+        Used when the user explicitly asks about "this conversation" or wants a summary.
+        
+        Args:
+            conflict_id: The conflict ID to fetch
+            
+        Returns:
+            Full transcript text or error message
+        """
+        try:
+            logger.info(f"📌 Fetching FULL transcript for conflict {conflict_id}...")
+            
+            # First try to get all chunks from Pinecone
+            from app.services.embeddings_service import embeddings_service
+            
+            # Use a generic embedding to query all chunks
+            generic_query = "conversation discussion"
+            query_embedding = embeddings_service.embed_query(generic_query)
+            
+            results = pinecone_service.index.query(
+                vector=query_embedding,
+                top_k=50,  # Get up to 50 chunks
+                namespace="transcript_chunks",
+                filter={"conflict_id": {"$eq": conflict_id}},
+                include_metadata=True,
+            )
+            
+            if results and hasattr(results, 'matches') and results.matches:
+                # Sort by chunk_index to maintain order
+                chunks = []
+                for match in results.matches:
+                    metadata = match.metadata if hasattr(match, 'metadata') else {}
+                    text = metadata.get("text", "")
+                    if text:
+                        chunks.append({
+                            'text': text,
+                            'chunk_index': metadata.get("chunk_index", 0),
+                            'speaker': metadata.get("speaker", "Unknown"),
+                        })
+                
+                chunks.sort(key=lambda c: c.get('chunk_index', 0))
+                
+                # Format as continuous transcript
+                transcript_parts = []
+                for chunk in chunks:
+                    transcript_parts.append(chunk['text'])
+                
+                full_transcript = "\n\n".join(transcript_parts)
+                logger.info(f"   ✅ Retrieved full transcript ({len(full_transcript)} chars, {len(chunks)} chunks)")
+                return full_transcript
+            else:
+                logger.warning(f"   ⚠️ No chunks found for conflict {conflict_id}")
+                return "No transcript found for this conversation."
+                
+        except Exception as e:
+            logger.error(f"Error fetching full transcript: {e}")
+            return "Error retrieving transcript."
     
     def format_context_for_llm(self, context: str) -> str:
         """
@@ -225,31 +355,21 @@ class TranscriptRAGSystem:
         Returns:
             Formatted context string
         """
-        return f"""Additional information relevant to the user's question from the ENTIRE conversation corpus and partner profiles:
+        return f"""CONTEXT FOR YOUR RESPONSE:
 
 {context}
 
-CRITICAL: Use ALL available context to provide empathetic, contextualized responses:
+IMPORTANT INSTRUCTIONS:
+1. **CURRENT CONVERSATION is PRIMARY**: When the user asks about "this conversation", "what happened", 
+   "summarize", or refers to the current conflict - use ONLY the CURRENT CONVERSATION TRANSCRIPT section.
+   
+2. **Secondary context is supplementary**: Use profiles and past conversations to provide deeper 
+   understanding, but they are NOT the primary source for questions about "this" conversation.
 
-1. **Transcript Context**: What was said in conversations (from current and past conflicts)
-   - Reference specific speakers: Adrian or Elara
-   - Relate current situation to past conversations when relevant
+3. **Be specific**: Reference specific speakers (Adrian or Elara) and their actual statements.
 
-2. **Profile Context**: Adrian's and Elara's backgrounds, personalities, preferences, values
-   - Use profile information to understand WHY someone feels a certain way
-   - Example: If Adrian is passionate about sports (from profile) and hurt about a missed game (from transcript), 
-     connect these: "I understand you're coming from a sports background and passionate about football, 
-     so it hurt when Elara didn't attend the game even though she said 'sure'."
+4. **Connect insights**: Use profile information to explain WHY someone feels a certain way.
+   Example: "Given Adrian's passion for sports, it makes sense that missing the game hurt him deeply."
 
-3. **Empathetic Understanding**: 
-   - Show deep understanding by connecting transcript events to profile traits
-   - Validate feelings by explaining WHY they make sense given the person's background
-   - Be specific: "Given your passion for sports and how much football means to you..."
-
-4. **Cross-Reference**: 
-   - Connect current conflict to patterns from past conversations
-   - Use profile information to explain emotional reactions
-   - Show you understand the FULL context, not just the immediate situation
-
-Reference specific speakers and their statements when relevant. Always connect transcript events to profile traits to show deep understanding."""
-
+5. **Stay focused**: If asked to summarize THIS conversation, summarize ONLY the current conversation,
+   not past ones."""

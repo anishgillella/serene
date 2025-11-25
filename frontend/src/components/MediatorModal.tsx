@@ -339,6 +339,11 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
       agentJoinedRef.current = false; // Reset agent joined flag
     } else {
       console.log('🚪 Modal opened, ready to connect');
+      // If conflictId changed while connected, disconnect old room first
+      if (isConnected && roomRef.current) {
+        console.log('⚠️ Conflict ID changed while connected, disconnecting old room...');
+        endCall();
+      }
       agentJoinedRef.current = false; // Reset when opening modal
       // Don't auto-start - let user click "Start Call" button
     }
@@ -361,7 +366,13 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
             <p className="text-sm text-gray-500 mt-1">Your friendly relationship mediator</p>
           </div>
           <button
-            onClick={onClose}
+            onClick={async () => {
+              // Disconnect call if connected before closing
+              if (isConnected && roomRef.current) {
+                await endCall();
+              }
+              onClose();
+            }}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
           >
             <XIcon size={24} className="text-gray-600" />

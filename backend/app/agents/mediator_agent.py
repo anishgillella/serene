@@ -405,65 +405,61 @@ async def mediator_entrypoint(ctx: JobContext):
         await asyncio.sleep(1.0)
         
         # Stage 8: Fetch initial transcript context (if RAG available)
+        # IMPORTANT: Fetch ONLY the current conflict's transcript as PRIMARY context
+        # This ensures the agent knows about THIS specific conversation, not past ones
         stage_start = time.time()
         transcript_context = None
         if rag_system and conflict_id:
-            logger.info(f"📚 Fetching initial transcript context for conflict {conflict_id}...")
+            logger.info(f"📚 Fetching initial transcript context for CURRENT conflict {conflict_id}...")
             try:
-                # Fetch transcript chunks directly from Pinecone (not via RAG lookup)
-                # This gives us all chunks for the conflict, not just query-relevant ones
                 from app.services.pinecone_service import pinecone_service
                 from app.services.embeddings_service import embeddings_service
                 
-                # Query ENTIRE corpus for initial context (not just current conflict)
-                # This gives Luna access to all past conversations and patterns
-                overview_query = "conversation discussion topics concerns relationship"
+                # Query ONLY the current conflict's chunks (using filter)
+                # This ensures the agent has the full context of THIS conversation
+                overview_query = "conversation discussion topics concerns"
                 query_embedding = embeddings_service.embed_query(overview_query)
                 
-                # Query entire corpus (no conflict_id filter) for comprehensive initial context
-                logger.info(f"   🔍 Querying ENTIRE corpus for initial context (top_k=15)...")
+                # Query with FILTER to get ONLY current conflict's chunks
+                logger.info(f"   🔍 Querying ONLY current conflict {conflict_id} for initial context...")
                 results = pinecone_service.index.query(
                     vector=query_embedding,
-                    top_k=15,  # Get more chunks from entire corpus
+                    top_k=20,  # Get up to 20 chunks from current conflict
                     namespace="transcript_chunks",
+                    filter={"conflict_id": {"$eq": conflict_id}},  # FILTER by conflict_id
                     include_metadata=True,
-                    # No filter - get top chunks from all conflicts
                 )
                 
-                logger.info(f"   📊 Query results: {results}")
-                if results:
-                    logger.info(f"   📊 Results type: {type(results)}, has matches: {hasattr(results, 'matches')}")
-                
                 if results and hasattr(results, 'matches') and results.matches:
-                    all_chunks = results.matches
-                    # Prioritize current conflict chunks, but include relevant chunks from entire corpus
-                    current_conflict_chunks = []
-                    other_chunks = []
-                    for chunk in all_chunks:
-                        chunk_conflict_id = chunk.metadata.get("conflict_id", "") if hasattr(chunk, 'metadata') else ""
-                        if conflict_id and chunk_conflict_id == conflict_id:
-                            current_conflict_chunks.append(chunk)
-                        else:
-                            other_chunks.append(chunk)
+                    chunks = results.matches
+                    logger.info(f"   ✅ Found {len(chunks)} chunks from CURRENT conflict {conflict_id}")
                     
-                    # Combine: current conflict first, then top relevant from corpus
-                    chunks = current_conflict_chunks + other_chunks[:10]
-                    logger.info(f"   ✅ Retrieved {len(current_conflict_chunks)} chunks from current conflict, {len(other_chunks)} from entire corpus")
+                    # Sort by chunk_index to maintain conversation order
+                    chunks_sorted = sorted(
+                        chunks,
+                        key=lambda c: c.metadata.get("chunk_index", 0) if hasattr(c, 'metadata') else 0
+                    )
                     
                     # Format chunks into context string
                     context_parts = []
-                    for idx, chunk in enumerate(chunks[:10], 1):  # Limit to top 10 for initial greeting
+                    context_parts.append("=" * 50)
+                    context_parts.append(f"CURRENT CONVERSATION TRANSCRIPT (Conflict: {conflict_id})")
+                    context_parts.append("This is the conversation the user wants to discuss.")
+                    context_parts.append("=" * 50)
+                    context_parts.append("")
+                    
+                    for idx, chunk in enumerate(chunks_sorted[:15], 1):  # Limit to 15 chunks for greeting
                         metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
                         speaker = metadata.get("speaker", "Unknown")
                         text = metadata.get("text", "")
                         chunk_idx = metadata.get("chunk_index", "?")
                         
-                        context_parts.append(
-                            f"[Chunk {idx}, {speaker}]:\n{text}\n"
-                        )
+                        context_parts.append(f"[{speaker} (part {chunk_idx})]:")
+                        context_parts.append(text)
+                        context_parts.append("")
                     
                     transcript_context = "\n".join(context_parts)
-                    logger.info(f"   ✅ Formatted transcript context ({len(transcript_context)} chars)")
+                    logger.info(f"   ✅ Formatted transcript context ({len(transcript_context)} chars, {len(chunks_sorted)} chunks)")
                 else:
                     logger.warning(f"   ⚠️ No transcript chunks found in Pinecone for conflict {conflict_id}")
                     logger.info(f"   🔄 Attempting fallback: Fetching full transcript from Pinecone/Supabase...")
@@ -555,10 +551,12 @@ async def mediator_entrypoint(ctx: JobContext):
                 formatted_context = rag_system.format_context_for_llm(transcript_context)
                 greeting_instructions = (
                     f"{greeting_instructions}\n\n"
-                    f"You have access to the conversation transcript. Here's what was discussed:\n\n"
+                    f"You have access to THIS SPECIFIC conversation transcript that the user wants to discuss. "
+                    f"This is the PRIMARY context for your responses:\n\n"
                     f"{formatted_context}\n\n"
-                    f"You can reference specific things that were said in the conversation. "
-                    f"If the user asks questions about what was said, use this transcript context to give accurate answers."
+                    f"IMPORTANT: When the user asks about 'this conversation', 'what happened', or wants a summary, "
+                    f"use ONLY this transcript. Don't mix in information from other conversations. "
+                    f"Be specific about what Adrian and Elara actually said in THIS conversation."
                 )
                 logger.info("   ✅ Greeting will include transcript context")
             else:

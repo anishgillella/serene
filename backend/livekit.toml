@@ -1,7 +1,6 @@
 [project]
-  subdomain = "rag-q8jnl16x"  # Your LiveKit Cloud project subdomain
+  subdomain = "voice-agent-qnma0l98"
 
 [agent]
-  id = "CA_yuejkXotk5qC"  # Agent ID from LiveKit Cloud
-  entrypoint = "app.agents.mediator_agent:mediator_entrypoint"  # Entrypoint function decorated with @server.rtc_session()
-
+  id = "CA_serene_mediator"
+  entrypoint = "app.agents.mediator_agent:mediator_entrypoint"

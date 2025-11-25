@@ -354,8 +354,8 @@ const FightCapture = () => {
         </div>
 
         <div className="space-y-1 mb-8">
-          <ParticipantBadge name="Boyfriend" isActive={isRecording} />
-          <ParticipantBadge name="Girlfriend" isActive={false} />
+          <ParticipantBadge name="Adrian Malhotra" isActive={isRecording} />
+          <ParticipantBadge name="Elara Voss" isActive={false} />
         </div>
 
         {(transcript.length > 0 || interimTranscript) && (

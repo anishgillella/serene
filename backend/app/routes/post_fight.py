@@ -3,6 +3,7 @@ Post-fight session API endpoints
 """
 import logging
 import json
+import os
 import asyncio
 from fastapi import APIRouter, HTTPException, Body, BackgroundTasks
 from typing import Optional, List
@@ -624,9 +625,40 @@ async def generate_analysis_only(
         
         import time
         endpoint_start = time.time()
-        import time
-        endpoint_start = time.time()
-        logger.info(f"🚀 Generating analysis for {conflict_id}")
+        logger.info(f"🚀 Checking for existing analysis for {conflict_id}")
+        
+        # Check if analysis already exists
+        existing_analysis = None
+        if db_service:
+            try:
+                existing_analysis = db_service.get_conflict_analysis(
+                    conflict_id=conflict_id,
+                    relationship_id=relationship_id
+                )
+                if existing_analysis and existing_analysis.get("analysis_path"):
+                    # Retrieve from S3
+                    analysis_path = existing_analysis["analysis_path"]
+                    s3_key = analysis_path
+                    if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
+                        s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+                    elif s3_key.startswith("https://"):
+                        # Extract key from S3 URL
+                        s3_key = s3_key.split(f"{settings.S3_BUCKET_NAME}/", 1)[-1] if f"{settings.S3_BUCKET_NAME}/" in s3_key else s3_key
+                    
+                    file_response = s3_service.download_file(s3_key)
+                    if file_response:
+                        analysis_data = json.loads(file_response.decode('utf-8'))
+                        logger.info(f"✅ Retrieved existing analysis for conflict {conflict_id} from S3")
+                        return {
+                            "success": True,
+                            "analysis_boyfriend": analysis_data,
+                            "cached": True
+                        }
+            except Exception as e:
+                logger.warning(f"⚠️ Error checking for existing analysis: {e}")
+                # Continue to generate new analysis
+        
+        logger.info(f"📝 No existing analysis found, generating new analysis for {conflict_id}")
         
         # Get transcript (same logic as generate-all)
         transcript_text = ""
@@ -643,58 +675,103 @@ async def generate_analysis_only(
             duration = transcript_result.metadata.get("duration", 0.0)
             speaker_labels = transcript_result.metadata.get("speaker_labels", {})
         else:
-            # Fallback to S3
+            # Fallback: Try db_service first (bypasses Supabase RLS), then Supabase
             try:
-                supabase_url = getattr(settings, 'SUPABASE_URL', None) or os.getenv("SUPABASE_URL")
-                supabase_key = getattr(settings, 'SUPABASE_KEY', None) or os.getenv("SUPABASE_KEY")
-                
-                if supabase_url and supabase_key:
-                    supabase: Client = create_client(supabase_url, supabase_key)
-                    conflict_response = supabase.table("conflicts").select("*").eq("id", conflict_id).execute()
-                    
-                    if conflict_response.data and len(conflict_response.data) > 0:
-                        conflict = conflict_response.data[0]
+                # Try db_service first (direct PostgreSQL, bypasses RLS)
+                if db_service:
+                    conflict = db_service.get_conflict_by_id(conflict_id)
+                    if conflict and conflict.get("transcript_path"):
                         transcript_path = conflict.get("transcript_path")
+                        s3_key = transcript_path
+                        if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
+                            s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
                         
-                        if transcript_path:
-                            s3_key = transcript_path
-                            if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
-                                s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+                        file_response = s3_service.download_file(s3_key)
+                        if file_response:
+                            transcript_data = json.loads(file_response.decode('utf-8'))
                             
-                            file_response = s3_service.download_file(s3_key)
-                            if file_response:
-                                transcript_data = json.loads(file_response.decode('utf-8'))
-                                
-                                if isinstance(transcript_data, list):
+                            if isinstance(transcript_data, list):
+                                transcript_lines = []
+                                for segment in transcript_data:
+                                    if isinstance(segment, dict):
+                                        speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
+                                        text = segment.get("text", segment.get("transcript", segment.get("message", "")))
+                                        if text:
+                                            transcript_lines.append(f"{speaker}: {text}")
+                                transcript_text = "\n".join(transcript_lines)
+                            elif isinstance(transcript_data, dict):
+                                if "transcript_text" in transcript_data:
+                                    transcript_text = transcript_data["transcript_text"]
+                                elif "segments" in transcript_data:
                                     transcript_lines = []
-                                    for segment in transcript_data:
-                                        if isinstance(segment, dict):
-                                            speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
-                                            text = segment.get("text", segment.get("transcript", segment.get("message", "")))
-                                            if text:
-                                                transcript_lines.append(f"{speaker}: {text}")
+                                    for segment in transcript_data["segments"]:
+                                        speaker = segment.get("speaker", "Speaker")
+                                        text = segment.get("text", "")
+                                        if text:
+                                            transcript_lines.append(f"{speaker}: {text}")
                                     transcript_text = "\n".join(transcript_lines)
-                                elif isinstance(transcript_data, dict):
-                                    if "transcript_text" in transcript_data:
-                                        transcript_text = transcript_data["transcript_text"]
-                                    elif "segments" in transcript_data:
-                                        transcript_lines = []
-                                        for segment in transcript_data["segments"]:
-                                            speaker = segment.get("speaker", "Speaker")
-                                            text = segment.get("text", "")
-                                            if text:
-                                                transcript_lines.append(f"{speaker}: {text}")
-                                        transcript_text = "\n".join(transcript_lines)
+                            
+                            duration = conflict.get("metadata", {}).get("duration", 0.0) if conflict.get("metadata") else 0.0
+                            speaker_labels = conflict.get("metadata", {}).get("speaker_labels", {}) if conflict.get("metadata") else {}
+                            logger.info(f"✅ Retrieved transcript from S3 via db_service for conflict {conflict_id}")
+                else:
+                    logger.warning("⚠️ db_service not available, trying Supabase fallback")
+            except Exception as db_error:
+                logger.warning(f"⚠️ db_service fallback failed: {db_error}")
+            
+            # Fallback to Supabase if db_service didn't work or wasn't available
+            if not transcript_text:
+                try:
+                    supabase_url = getattr(settings, 'SUPABASE_URL', None) or os.getenv("SUPABASE_URL")
+                    supabase_key = getattr(settings, 'SUPABASE_KEY', None) or os.getenv("SUPABASE_KEY")
+                    
+                    if supabase_url and supabase_key:
+                        supabase: Client = create_client(supabase_url, supabase_key)
+                        conflict_response = supabase.table("conflicts").select("*").eq("id", conflict_id).execute()
+                        
+                        if conflict_response.data and len(conflict_response.data) > 0:
+                            conflict = conflict_response.data[0]
+                            transcript_path = conflict.get("transcript_path")
+                            
+                            if transcript_path:
+                                s3_key = transcript_path
+                                if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
+                                    s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
                                 
-                                duration = conflict.get("duration", 0.0)
-                                speaker_labels = conflict.get("speaker_labels", {})
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to fetch transcript from S3: {e}")
+                                file_response = s3_service.download_file(s3_key)
+                                if file_response:
+                                    transcript_data = json.loads(file_response.decode('utf-8'))
+                                    
+                                    if isinstance(transcript_data, list):
+                                        transcript_lines = []
+                                        for segment in transcript_data:
+                                            if isinstance(segment, dict):
+                                                speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
+                                                text = segment.get("text", segment.get("transcript", segment.get("message", "")))
+                                                if text:
+                                                    transcript_lines.append(f"{speaker}: {text}")
+                                        transcript_text = "\n".join(transcript_lines)
+                                    elif isinstance(transcript_data, dict):
+                                        if "transcript_text" in transcript_data:
+                                            transcript_text = transcript_data["transcript_text"]
+                                        elif "segments" in transcript_data:
+                                            transcript_lines = []
+                                            for segment in transcript_data["segments"]:
+                                                speaker = segment.get("speaker", "Speaker")
+                                                text = segment.get("text", "")
+                                                if text:
+                                                    transcript_lines.append(f"{speaker}: {text}")
+                                            transcript_text = "\n".join(transcript_lines)
+                                    
+                                    duration = conflict.get("duration", 0.0)
+                                    speaker_labels = conflict.get("speaker_labels", {})
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to fetch transcript from Supabase/S3: {e}")
         
         if not transcript_text:
             raise HTTPException(
                 status_code=404,
-                detail=f"Transcript not found for conflict {conflict_id}"
+                detail=f"Transcript not found for conflict {conflict_id}. Please ensure the fight was properly captured and stored."
             )
         
         # Use RAG system to get relevant context from ENTIRE corpus (transcripts + profiles)
@@ -825,6 +902,7 @@ async def generate_analysis_only(
                 
                 if s3_url_bf:
                     analysis_dict_bf = analysis_boyfriend.model_dump()
+                    analysis_dict_bf["conflict_id"] = conflict_id  # Ensure conflict_id is in metadata
                     analysis_dict_bf["analyzed_at"] = datetime.now()
                     analysis_dict_bf["partner_pov"] = "boyfriend"
                     
@@ -833,7 +911,7 @@ async def generate_analysis_only(
                         loop.run_in_executor(
                             None,
                             lambda: pinecone_service.upsert_analysis(
-                                conflict_id=f"{conflict_id}_boyfriend",
+                                conflict_id=conflict_id,  # Use original conflict_id (not _boyfriend suffix)
                                 embedding=analysis_embedding_bf,
                                 analysis_data=analysis_dict_bf,
                                 namespace="analysis"
@@ -879,7 +957,56 @@ async def generate_repair_plans_only(
         
         import time
         repair_start = time.time()
-        logger.info(f"🚀 Generating repair plans for {conflict_id}")
+        logger.info(f"🚀 Checking for existing repair plans for {conflict_id}")
+        
+        # Check if repair plans already exist
+        existing_plans = []
+        if db_service:
+            try:
+                existing_plans = db_service.get_repair_plans(
+                    conflict_id=conflict_id,
+                    relationship_id=relationship_id
+                )
+                if existing_plans and len(existing_plans) >= 2:
+                    # Check if we have both partner_a and partner_b plans
+                    partner_a_plan = next((p for p in existing_plans if p.get("partner_requesting") == "partner_a"), None)
+                    partner_b_plan = next((p for p in existing_plans if p.get("partner_requesting") == "partner_b"), None)
+                    
+                    if partner_a_plan and partner_b_plan:
+                        # Retrieve both from S3
+                        plans_retrieved = {}
+                        
+                        for plan in [partner_a_plan, partner_b_plan]:
+                            plan_path = plan.get("plan_path")
+                            if plan_path:
+                                s3_key = plan_path
+                                if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
+                                    s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+                                elif s3_key.startswith("https://"):
+                                    s3_key = s3_key.split(f"{settings.S3_BUCKET_NAME}/", 1)[-1] if f"{settings.S3_BUCKET_NAME}/" in s3_key else s3_key
+                                
+                                file_response = s3_service.download_file(s3_key)
+                                if file_response:
+                                    plan_data = json.loads(file_response.decode('utf-8'))
+                                    partner = plan.get("partner_requesting")
+                                    if partner == "partner_a":
+                                        plans_retrieved["boyfriend"] = plan_data
+                                    elif partner == "partner_b":
+                                        plans_retrieved["girlfriend"] = plan_data
+                        
+                        if len(plans_retrieved) == 2:
+                            logger.info(f"✅ Retrieved existing repair plans for conflict {conflict_id} from S3")
+                            return {
+                                "success": True,
+                                "repair_plan_boyfriend": plans_retrieved.get("boyfriend"),
+                                "repair_plan_girlfriend": plans_retrieved.get("girlfriend"),
+                                "cached": True
+                            }
+            except Exception as e:
+                logger.warning(f"⚠️ Error checking for existing repair plans: {e}")
+                # Continue to generate new plans
+        
+        logger.info(f"📝 No existing repair plans found, generating new plans for {conflict_id}")
         
         # Get transcript (same logic)
         transcript_text = ""
@@ -1037,19 +1164,25 @@ async def generate_repair_plans_only(
             # Store in Pinecone
             repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
             repair_plan_embedding_bf = embeddings_service.embed_text(repair_plan_text_bf)
+            repair_plan_dict_bf = repair_plan_boyfriend.model_dump()
+            repair_plan_dict_bf["conflict_id"] = conflict_id  # Ensure original conflict_id is in data
+            repair_plan_dict_bf["partner_requesting"] = "partner_a"  # Explicitly set partner
             pinecone_service.upsert_repair_plan(
-                conflict_id=f"{conflict_id}_boyfriend",
+                conflict_id=conflict_id,  # Use original conflict_id (not _boyfriend suffix)
                 embedding=repair_plan_embedding_bf,
-                repair_plan_data=repair_plan_boyfriend.model_dump(),
+                repair_plan_data=repair_plan_dict_bf,
                 namespace="repair_plans"
             )
             
             repair_plan_text_gf = f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.steps)}"
             repair_plan_embedding_gf = embeddings_service.embed_text(repair_plan_text_gf)
+            repair_plan_dict_gf = repair_plan_girlfriend.model_dump()
+            repair_plan_dict_gf["conflict_id"] = conflict_id  # Ensure original conflict_id is in data
+            repair_plan_dict_gf["partner_requesting"] = "partner_b"  # Explicitly set partner
             pinecone_service.upsert_repair_plan(
-                conflict_id=f"{conflict_id}_girlfriend",
+                conflict_id=conflict_id,  # Use original conflict_id (not _girlfriend suffix)
                 embedding=repair_plan_embedding_gf,
-                repair_plan_data=repair_plan_girlfriend.model_dump(),
+                repair_plan_data=repair_plan_dict_gf,
                 namespace="repair_plans"
             )
         except Exception as e:
@@ -1272,24 +1405,13 @@ async def store_transcript(
             logger.error(traceback.format_exc())
             # Continue even if S3 fails - Pinecone storage is primary
         
-        # 3. Trigger background generation of analysis and repair plan
-        background_tasks.add_task(
-            generate_analysis_and_repair_plan_background,
-            conflict_id=conflict_id,
-            transcript_text=transcript_text,
-            relationship_id=relationship_id,
-            partner_a_id=partner_a_id,
-            partner_b_id=partner_b_id,
-            speaker_labels=speaker_labels,
-            duration=duration,
-            timestamp=datetime.now()
-        )
-        logger.info(f"🚀 Started background generation for conflict {conflict_id}")
+        # Transcript storage complete - analysis and repair plans will be generated on-demand
+        # when user clicks "View Analysis" or "View Repair Plan" buttons
         
         return {
             "success": True,
             "conflict_id": conflict_id,
-            "message": "Transcript stored successfully. Analysis and repair plan are being generated in the background."
+            "message": "Transcript stored successfully. Use 'View Analysis' or 'View Repair Plan' buttons to generate insights."
         }
         
     except Exception as e:

@@ -713,11 +713,6 @@ const PostFightSession = () => {
                 <>
                   {analysisBoyfriend && (
                     <div className="space-y-4">
-                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                        <p className="text-sm text-blue-800 font-medium">👤 Boyfriend's Perspective</p>
-                        <p className="text-xs text-blue-600 mt-1">Analysis personalized based on your profile and communication style</p>
-                      </div>
-                      
                       {/* Summary */}
                       <div className="bg-white rounded-xl p-4 border border-purple-100">
                         <button
@@ -871,33 +866,6 @@ const PostFightSession = () => {
                 </button>
               </div>
               
-              {/* POV Switcher for Repair Plans - Only shows AFTER generation */}
-              {(repairPlanBoyfriend || repairPlanGirlfriend) && (
-                <div className="mb-4">
-                  <div className="flex gap-2 pb-3 border-b-2 border-rose-200">
-                    <button
-                      onClick={() => setPovView('boyfriend')}
-                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
-                        povView === 'boyfriend'
-                          ? 'bg-blue-100 text-blue-800 border-2 border-blue-400 shadow-md'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
-                      }`}
-                    >
-                      👤 Boyfriend's Perspective
-                    </button>
-                    <button
-                      onClick={() => setPovView('girlfriend')}
-                      className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-semibold transition-all shadow-sm ${
-                        povView === 'girlfriend'
-                          ? 'bg-pink-100 text-pink-800 border-2 border-pink-400 shadow-md'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-2 border-transparent'
-                      }`}
-                    >
-                      👤 Girlfriend's Perspective
-                    </button>
-                  </div>
-                </div>
-              )}
               
               {loadingRepairPlan ? (
                 <div className="flex items-center justify-center py-12">
@@ -908,11 +876,6 @@ const PostFightSession = () => {
                 <>
                   {povView === 'boyfriend' && repairPlanBoyfriend && (
                     <div className="space-y-4">
-                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                        <p className="text-sm text-blue-800 font-medium">👤 Boyfriend's Personalized Repair Plan</p>
-                        <p className="text-xs text-blue-600 mt-1">Tailored based on your profile and this conflict</p>
-                      </div>
-                      
                       {/* Steps */}
                       <div className="bg-white rounded-xl p-4 border border-rose-100">
                         <h4 className="font-semibold text-gray-800 mb-3 flex items-center">

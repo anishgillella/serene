@@ -405,14 +405,19 @@ class DatabaseService:
         relationship_id: str,
         analysis_path: str
     ) -> str:
-        """Create a conflict analysis record"""
+        """Create or update a conflict analysis record (upsert)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Use ON CONFLICT to update if exists, insert if not
             cursor.execute("""
                 INSERT INTO conflict_analysis (conflict_id, relationship_id, analysis_path, analyzed_at)
                 VALUES (%s, %s, %s, %s)
+                ON CONFLICT (conflict_id, relationship_id) 
+                DO UPDATE SET 
+                    analysis_path = EXCLUDED.analysis_path,
+                    analyzed_at = EXCLUDED.analyzed_at
                 RETURNING id;
             """, (conflict_id, relationship_id, analysis_path, datetime.now()))
             
@@ -421,6 +426,25 @@ class DatabaseService:
             cursor.close()
             return str(analysis_id)
         except Exception as e:
+            # If ON CONFLICT not supported, try regular insert
+            if "ON CONFLICT" in str(e) or "syntax error" in str(e).lower():
+                try:
+                    conn = self.get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO conflict_analysis (conflict_id, relationship_id, analysis_path, analyzed_at)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id;
+                    """, (conflict_id, relationship_id, analysis_path, datetime.now()))
+                    analysis_id = cursor.fetchone()[0]
+                    conn.commit()
+                    cursor.close()
+                    return str(analysis_id)
+                except Exception:
+                    # If insert fails (duplicate), that's okay - analysis already exists
+                    if self.conn:
+                        self.conn.rollback()
+                    return None
             if self.conn:
                 self.conn.rollback()
             raise e
@@ -432,14 +456,19 @@ class DatabaseService:
         partner_requesting: str,
         plan_path: str
     ) -> str:
-        """Create a repair plan record"""
+        """Create or update a repair plan record (upsert)"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Use ON CONFLICT to update if exists, insert if not
             cursor.execute("""
                 INSERT INTO repair_plans (conflict_id, relationship_id, partner_requesting, plan_path, generated_at)
                 VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (conflict_id, relationship_id, partner_requesting) 
+                DO UPDATE SET 
+                    plan_path = EXCLUDED.plan_path,
+                    generated_at = EXCLUDED.generated_at
                 RETURNING id;
             """, (conflict_id, relationship_id, partner_requesting, plan_path, datetime.now()))
             
@@ -448,8 +477,108 @@ class DatabaseService:
             cursor.close()
             return str(plan_id)
         except Exception as e:
+            # If ON CONFLICT not supported, try regular insert
+            if "ON CONFLICT" in str(e) or "syntax error" in str(e).lower():
+                try:
+                    conn = self.get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        INSERT INTO repair_plans (conflict_id, relationship_id, partner_requesting, plan_path, generated_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (conflict_id, relationship_id, partner_requesting, plan_path, datetime.now()))
+                    plan_id = cursor.fetchone()[0]
+                    conn.commit()
+                    cursor.close()
+                    return str(plan_id)
+                except Exception:
+                    # If insert fails (duplicate), that's okay - plan already exists
+                    if self.conn:
+                        self.conn.rollback()
+                    return None
             if self.conn:
                 self.conn.rollback()
+            raise e
+    
+    def get_conflict_analysis(
+        self,
+        conflict_id: str,
+        relationship_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get existing conflict analysis by conflict_id"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            if relationship_id:
+                cursor.execute("""
+                    SELECT conflict_id, relationship_id, analysis_path, analyzed_at
+                    FROM conflict_analysis
+                    WHERE conflict_id = %s AND relationship_id = %s
+                    ORDER BY analyzed_at DESC
+                    LIMIT 1;
+                """, (conflict_id, relationship_id))
+            else:
+                cursor.execute("""
+                    SELECT conflict_id, relationship_id, analysis_path, analyzed_at
+                    FROM conflict_analysis
+                    WHERE conflict_id = %s
+                    ORDER BY analyzed_at DESC
+                    LIMIT 1;
+                """, (conflict_id,))
+            
+            row = cursor.fetchone()
+            cursor.close()
+            
+            if row:
+                return {
+                    "conflict_id": str(row["conflict_id"]),
+                    "relationship_id": str(row["relationship_id"]) if row["relationship_id"] else None,
+                    "analysis_path": row["analysis_path"],
+                    "analyzed_at": row["analyzed_at"].isoformat() if row["analyzed_at"] else None
+                }
+            return None
+        except Exception as e:
+            raise e
+    
+    def get_repair_plans(
+        self,
+        conflict_id: str,
+        relationship_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Get existing repair plans by conflict_id"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            if relationship_id:
+                cursor.execute("""
+                    SELECT conflict_id, relationship_id, partner_requesting, plan_path, generated_at
+                    FROM repair_plans
+                    WHERE conflict_id = %s AND relationship_id = %s
+                    ORDER BY generated_at DESC;
+                """, (conflict_id, relationship_id))
+            else:
+                cursor.execute("""
+                    SELECT conflict_id, relationship_id, partner_requesting, plan_path, generated_at
+                    FROM repair_plans
+                    WHERE conflict_id = %s
+                    ORDER BY generated_at DESC;
+                """, (conflict_id,))
+            
+            plans = []
+            for row in cursor.fetchall():
+                plans.append({
+                    "conflict_id": str(row["conflict_id"]),
+                    "relationship_id": str(row["relationship_id"]) if row["relationship_id"] else None,
+                    "partner_requesting": row["partner_requesting"],
+                    "plan_path": row["plan_path"],
+                    "generated_at": row["generated_at"].isoformat() if row["generated_at"] else None
+                })
+            
+            cursor.close()
+            return plans
+        except Exception as e:
             raise e
     
     def ensure_default_relationship(self) -> str:
