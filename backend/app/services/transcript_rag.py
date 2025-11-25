@@ -7,6 +7,13 @@ from app.services.reranker_service import reranker_service
 
 logger = logging.getLogger(__name__)
 
+# Import calendar service for calendar context
+try:
+    from app.services.calendar_service import calendar_service
+except ImportError:
+    calendar_service = None
+    logger.warning("Calendar service not available - calendar insights will be disabled")
+
 
 class TranscriptRAGSystem:
     """Retrieval-Augmented Generation system for conversation transcripts and profile PDFs.
@@ -23,6 +30,7 @@ class TranscriptRAGSystem:
         self,
         k: int = 7,  # Number of chunks from secondary sources
         include_profiles: bool = True,
+        include_calendar: bool = True,  # NEW: Include calendar insights
     ):
         """
         Initialize transcript RAG system.
@@ -30,10 +38,12 @@ class TranscriptRAGSystem:
         Args:
             k: Number of additional chunks from secondary sources (profiles, past conflicts)
             include_profiles: Whether to also query profile PDFs (Adrian/Elara profiles)
+            include_calendar: Whether to include calendar insights (cycle phase, upcoming events)
         """
         self.k = k
         self.include_profiles = include_profiles
-        logger.info(f"Initialized TranscriptRAGSystem with k={k}, include_profiles={include_profiles}")
+        self.include_calendar = include_calendar
+        logger.info(f"Initialized TranscriptRAGSystem with k={k}, include_profiles={include_profiles}, include_calendar={include_calendar}")
     
     def rag_lookup(
         self,
@@ -209,13 +219,42 @@ class TranscriptRAGSystem:
                 logger.info(f"   ✅ Selected {len(reranked_secondary)} secondary chunks")
             
             # =====================================================================
-            # STEP 4: FORMAT CONTEXT - Primary first, then secondary
+            # STEP 4: GET CALENDAR INSIGHTS (if enabled)
             # =====================================================================
-            if not primary_chunks and not reranked_secondary:
+            calendar_context = ""
+            if self.include_calendar and calendar_service:
+                try:
+                    logger.info("📅 Fetching calendar insights...")
+                    calendar_context = calendar_service.get_calendar_insights_for_llm(
+                        relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
+                    )
+                    if calendar_context and calendar_context != "No calendar insights available.":
+                        logger.info(f"   ✅ Calendar insights retrieved ({len(calendar_context)} chars)")
+                    else:
+                        calendar_context = ""
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Error fetching calendar insights (non-fatal): {e}")
+                    calendar_context = ""
+            
+            # =====================================================================
+            # STEP 5: FORMAT CONTEXT - Calendar first, then Primary, then Secondary
+            # =====================================================================
+            if not primary_chunks and not reranked_secondary and not calendar_context:
                 logger.warning(f"No relevant chunks found for query: {query[:50]}...")
                 return "No relevant information found in the conversation transcript or profiles."
             
             context_parts = []
+            
+            # Add CALENDAR INSIGHTS header (first, as it affects interpretation)
+            if calendar_context:
+                context_parts.append("=" * 60)
+                context_parts.append("📅 RELATIONSHIP CALENDAR INSIGHTS")
+                context_parts.append("Current cycle phase, upcoming events, and patterns.")
+                context_parts.append("Use this to understand emotional context and timing.")
+                context_parts.append("=" * 60)
+                context_parts.append("")
+                context_parts.append(calendar_context)
+                context_parts.append("")
             
             # Add PRIMARY context header
             if primary_chunks:
@@ -372,4 +411,17 @@ IMPORTANT INSTRUCTIONS:
    Example: "Given Adrian's passion for sports, it makes sense that missing the game hurt him deeply."
 
 5. **Stay focused**: If asked to summarize THIS conversation, summarize ONLY the current conversation,
-   not past ones."""
+   not past ones.
+
+6. **CALENDAR AWARENESS (IMPORTANT)**: If calendar insights are provided:
+   - Consider Elara's current cycle phase when discussing emotional dynamics
+   - If she's in PMS/menstruation phase, acknowledge that hormonal shifts may amplify emotions
+   - Don't dismiss her feelings, but help Adrian understand the biological context
+   - When suggesting timing for conversations, consider upcoming events and cycle predictions
+   - If conflicts correlate with certain cycle phases, mention this pattern sensitively
+   - Use phrases like "This might be a more sensitive time" rather than "She's just hormonal"
+   
+7. **TIMING RECOMMENDATIONS**: When suggesting when to have conversations:
+   - Avoid high-risk cycle phases if possible
+   - Consider upcoming anniversaries/events that could be positive opportunities
+   - Be mindful of predicted period dates when planning repair conversations"""

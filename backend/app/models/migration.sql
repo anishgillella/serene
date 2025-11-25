@@ -94,10 +94,14 @@ CREATE INDEX IF NOT EXISTS idx_profiles_uploaded_at ON profiles(uploaded_at DESC
 -- Create cycle_events table for tracking menstrual/cycle events
 CREATE TABLE IF NOT EXISTS cycle_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    relationship_id UUID REFERENCES relationships(id) ON DELETE CASCADE,
     partner_id TEXT NOT NULL, -- "partner_a" or "partner_b"
-    event_type TEXT NOT NULL, -- "period_start", "period_end", "ovulation", etc.
-    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    event_type TEXT NOT NULL, -- "period_start", "period_end", "ovulation", "fertile_start", "fertile_end", "pms_start"
+    event_date DATE NOT NULL, -- The actual date of the event
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(), -- When it was logged
     notes TEXT,
+    cycle_day INTEGER, -- Day of cycle (1 = first day of period)
+    cycle_length INTEGER, -- Length of this cycle (set when period_start is logged)
     metadata JSONB DEFAULT '{}'::jsonb
 );
 
@@ -105,6 +109,50 @@ CREATE TABLE IF NOT EXISTS cycle_events (
 CREATE INDEX IF NOT EXISTS idx_cycle_events_partner ON cycle_events(partner_id);
 CREATE INDEX IF NOT EXISTS idx_cycle_events_timestamp ON cycle_events(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_cycle_events_type ON cycle_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_cycle_events_date ON cycle_events(event_date DESC);
+CREATE INDEX IF NOT EXISTS idx_cycle_events_relationship ON cycle_events(relationship_id);
+
+-- Create memorable_dates table for anniversaries, birthdays, milestones
+CREATE TABLE IF NOT EXISTS memorable_dates (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    relationship_id UUID REFERENCES relationships(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL, -- "anniversary", "birthday", "first_date", "engagement", "wedding", "milestone", "custom"
+    title TEXT NOT NULL, -- "First Anniversary", "Elara's Birthday", "First Date"
+    description TEXT, -- Optional description/notes
+    event_date DATE NOT NULL, -- The date of the event
+    is_recurring BOOLEAN DEFAULT true, -- Annual recurrence
+    reminder_days INTEGER DEFAULT 7, -- Days before to remind
+    color_tag TEXT DEFAULT '#f59e0b', -- UI color (gold default for anniversaries)
+    partner_id TEXT, -- Optional: which partner it relates to (for birthdays)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Create indexes for memorable_dates
+CREATE INDEX IF NOT EXISTS idx_memorable_dates_relationship ON memorable_dates(relationship_id);
+CREATE INDEX IF NOT EXISTS idx_memorable_dates_date ON memorable_dates(event_date);
+CREATE INDEX IF NOT EXISTS idx_memorable_dates_type ON memorable_dates(event_type);
+CREATE INDEX IF NOT EXISTS idx_memorable_dates_recurring ON memorable_dates(is_recurring);
+
+-- Create cycle_predictions table for storing predicted cycle dates
+CREATE TABLE IF NOT EXISTS cycle_predictions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    relationship_id UUID REFERENCES relationships(id) ON DELETE CASCADE,
+    partner_id TEXT NOT NULL,
+    prediction_type TEXT NOT NULL, -- "period_start", "period_end", "ovulation", "fertile_window", "pms"
+    predicted_date DATE NOT NULL,
+    confidence DECIMAL(3,2) DEFAULT 0.50, -- 0.00 to 1.00
+    based_on_cycles INTEGER DEFAULT 0, -- Number of cycles used for prediction
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    metadata JSONB DEFAULT '{}'::jsonb
+);
+
+-- Create indexes for cycle_predictions
+CREATE INDEX IF NOT EXISTS idx_cycle_predictions_relationship ON cycle_predictions(relationship_id);
+CREATE INDEX IF NOT EXISTS idx_cycle_predictions_partner ON cycle_predictions(partner_id);
+CREATE INDEX IF NOT EXISTS idx_cycle_predictions_date ON cycle_predictions(predicted_date);
+CREATE INDEX IF NOT EXISTS idx_cycle_predictions_type ON cycle_predictions(prediction_type);
 
 -- Create intimacy_events table for tracking intimacy moments
 CREATE TABLE IF NOT EXISTS intimacy_events (
@@ -167,5 +215,11 @@ CREATE POLICY "Allow public access to mediator_messages" ON mediator_messages FO
 CREATE POLICY "Allow public access to profiles" ON profiles FOR ALL USING (true);
 CREATE POLICY "Allow public access to cycle_events" ON cycle_events FOR ALL USING (true);
 CREATE POLICY "Allow public access to intimacy_events" ON intimacy_events FOR ALL USING (true);
+CREATE POLICY "Allow public access to memorable_dates" ON memorable_dates FOR ALL USING (true);
+CREATE POLICY "Allow public access to cycle_predictions" ON cycle_predictions FOR ALL USING (true);
+
+-- Enable RLS on new tables
+ALTER TABLE memorable_dates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE cycle_predictions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow public access to conflict_analysis" ON conflict_analysis FOR ALL USING (true);
 CREATE POLICY "Allow public access to repair_plans" ON repair_plans FOR ALL USING (true);

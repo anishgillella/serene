@@ -137,7 +137,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
           if (!agentJoinedRef.current) {
             agentJoinedRef.current = true;
             addTranscriptEntry('system', `${displayName} joined`);
-            setIsAgentJoining(false);
+          setIsAgentJoining(false);
           } else {
             console.log('⚠️ Duplicate agent join detected, ignoring:', participant.identity);
           }
@@ -189,13 +189,13 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         }
       });
 
-        // Connect to room
-        console.log('🔌 Connecting to room:', { url, roomName: `mediator-${conflictId}`, tokenLength: token.length });
-        try {
-          await room.connect(url, token);
-          console.log('✅ Connected to room:', room.name);
-          console.log('👥 Remote participants:', room.remoteParticipants.size);
-          
+      // Connect to room
+      console.log('🔌 Connecting to room:', { url, roomName: `mediator-${conflictId}`, tokenLength: token.length });
+      try {
+        await room.connect(url, token);
+        console.log('✅ Connected to room:', room.name);
+        console.log('👥 Remote participants:', room.remoteParticipants.size);
+
           // Wait for agent to auto-join via AgentServer pattern
           // Don't use explicit dispatch to avoid duplicate agents
           console.log('⏳ Waiting for agent to auto-join (AgentServer pattern)...');
@@ -225,7 +225,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
             setIsAgentJoining(false);
             // Don't dispatch explicitly - AgentServer should handle it
             // Explicit dispatch causes duplicate agents
-          }
+        }
 
       } catch (connectError) {
         console.error('❌ Connection error:', connectError);

@@ -31,6 +31,8 @@ from .routes import post_fight
 app.include_router(post_fight.router)
 from .routes import pdf_upload
 app.include_router(pdf_upload.router)
+from .routes import calendar
+app.include_router(calendar.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
@@ -224,6 +226,7 @@ async def list_conflicts(relationship_id: str = None):
     """List all conflicts, optionally filtered by relationship"""
     import asyncio
     import logging
+    import concurrent.futures
     logger = logging.getLogger(__name__)
     
     async def fetch_conflicts():
@@ -233,7 +236,6 @@ async def list_conflicts(relationship_id: str = None):
             try:
                 from app.services.db_service import db_service
                 # Run database query in thread pool to avoid blocking
-                import concurrent.futures
                 loop = asyncio.get_event_loop()
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     conflicts_data = await loop.run_in_executor(

@@ -6,6 +6,7 @@ import PostFightSession from './pages/PostFightSession';
 import Analytics from './pages/Analytics';
 import Upload from './pages/Upload';
 import History from './pages/History';
+import Calendar from './pages/Calendar';
 import Layout from './components/Layout';
 export function App() {
   return <Router>
@@ -19,6 +20,7 @@ export function App() {
               <Route path="/analytics" element={<Analytics />} />
               <Route path="/upload" element={<Upload />} />
               <Route path="/history" element={<History />} />
+              <Route path="/calendar" element={<Calendar />} />
             </Routes>
           </Layout>
         } />

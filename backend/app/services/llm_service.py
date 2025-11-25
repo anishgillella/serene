@@ -313,9 +313,10 @@ Be SPECIFIC to this couple and this conflict. Reference actual quotes and moment
         analysis_summary: str,
         response_model: Type[T],
         boyfriend_profile: Optional[str] = None,
-        girlfriend_profile: Optional[str] = None
+        girlfriend_profile: Optional[str] = None,
+        calendar_context: Optional[str] = None  # NEW: Calendar insights
     ) -> T:
-        """Generate personalized repair plan with gender-aware insights"""
+        """Generate personalized repair plan with gender-aware insights and calendar awareness"""
         
         # Determine which partner is requesting
         is_boyfriend_requesting = partner_requesting.lower() in ["boyfriend", "partner_a", "partner a"]
@@ -335,8 +336,25 @@ GENDER-AWARE REPAIR GUIDANCE:
         if girlfriend_profile:
             profile_context += f"\nGIRLFRIEND'S PROFILE:\n{girlfriend_profile}\n"
         
+        # NEW: Add calendar context for timing awareness
+        calendar_section = ""
+        if calendar_context:
+            calendar_section = f"""
+CALENDAR & CYCLE AWARENESS (CRITICAL FOR TIMING):
+{calendar_context}
+
+TIMING GUIDANCE BASED ON CALENDAR:
+- If Elara is in PMS/menstruation phase: Consider waiting a few days for the repair conversation, or be extra gentle and patient
+- If upcoming anniversary/birthday: Could be a good opportunity to combine repair with celebration
+- If high-risk cycle phase: Keep the conversation brief, focus on acknowledgment rather than problem-solving
+- If low-risk phase (follicular/ovulation): Good time for deeper conversation and planning
+- Consider predicted cycle dates when suggesting specific timing
+"""
+        
         # Use FULL transcript - no truncation
         logger.info(f"📝 Using full transcript for repair plan: {len(transcript_text)} characters")
+        if calendar_context:
+            logger.info(f"📅 Including calendar context: {len(calendar_context)} characters")
         
         prompt = f"""Generate a HIGHLY PERSONALIZED repair plan for this SPECIFIC conflict and couple.
 
@@ -345,6 +363,7 @@ Partner requesting help: {partner_requesting}
 
 {gender_context}
 {profile_context}
+{calendar_section}
 
 CONFLICT SUMMARY:
 {analysis_summary}
@@ -355,10 +374,15 @@ TRANSCRIPT (for context):
 REQUIREMENTS:
 1. **Steps**: SPECIFIC actions for THIS couple. Reference actual issues from the transcript. Not generic advice - what should THIS person do?
 2. **Apology Script**: PERSONALIZED to this conflict. Reference specific things said. If Boyfriend: direct, respectful, solution-focused. If Girlfriend: emotionally validating, shows care through details.
-3. **Timing**: SPECIFIC to their situation. Consider their schedules, moods, when they're most receptive.
+3. **Timing**: SPECIFIC to their situation. Consider their schedules, moods, when they're most receptive. 
+   - **CRITICAL**: If calendar insights are provided, factor in cycle phase and upcoming events
+   - Suggest specific dates if possible (e.g., "Wait until after Jan 25 when her cycle phase is more favorable")
+   - If she's in a high-risk phase, acknowledge this and adjust approach accordingly
 4. **Risk Factors**: SPECIFIC things to avoid based on THIS conflict. What triggered escalation? What words/phrases should be avoided?
+   - Include cycle-aware risks if applicable (e.g., "Avoid having this conversation during PMS phase")
 
-Be SPECIFIC to this couple. Reference actual quotes and moments. Make it personal, not generic."""
+Be SPECIFIC to this couple. Reference actual quotes and moments. Make it personal, not generic.
+If calendar data shows a high-risk period, explicitly mention this in timing recommendations."""
 
         messages = [
             {

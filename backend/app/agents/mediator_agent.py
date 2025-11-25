@@ -536,6 +536,32 @@ async def mediator_entrypoint(ctx: JobContext):
         if transcript_context:
             logger.info(f"   ⏱️  Transcript Context: {stage_times['transcript_context']:.2f}s")
         
+        # Stage 9: Fetch calendar insights for context-aware responses
+        stage_start = time.time()
+        calendar_context = None
+        try:
+            from app.services.calendar_service import calendar_service
+            if calendar_service:
+                logger.info(f"📅 Fetching calendar insights...")
+                calendar_context = calendar_service.get_calendar_insights_for_llm(
+                    relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
+                )
+                if calendar_context and calendar_context != "No calendar insights available.":
+                    logger.info(f"   ✅ Calendar insights retrieved ({len(calendar_context)} chars)")
+                else:
+                    calendar_context = None
+                    logger.info(f"   ℹ️  No calendar insights available")
+        except ImportError:
+            logger.warning(f"   ⚠️ Calendar service not available")
+            calendar_context = None
+        except Exception as e:
+            logger.warning(f"   ⚠️ Error fetching calendar insights: {e}")
+            calendar_context = None
+        
+        stage_times['calendar_context'] = time.time() - stage_start
+        if calendar_context:
+            logger.info(f"   ⏱️  Calendar Context: {stage_times['calendar_context']:.2f}s")
+        
         # Generate initial greeting (like Voice Agent RAG)
         logger.info("🎤 Generating initial greeting...")
         try:
@@ -559,6 +585,22 @@ async def mediator_entrypoint(ctx: JobContext):
                     f"Be specific about what Adrian and Elara actually said in THIS conversation."
                 )
                 logger.info("   ✅ Greeting will include transcript context")
+            
+            # Add calendar context if available (cycle phase, upcoming events)
+            if calendar_context:
+                greeting_instructions = (
+                    f"{greeting_instructions}\n\n"
+                    f"CALENDAR & CYCLE AWARENESS (use this for timing and emotional context):\n"
+                    f"{calendar_context}\n\n"
+                    f"IMPORTANT GUIDANCE:\n"
+                    f"- If Elara is in a high-risk cycle phase (PMS/menstruation), acknowledge that emotions may be heightened\n"
+                    f"- When suggesting timing for repair conversations, consider cycle predictions\n"
+                    f"- If conflicts correlate with cycle phases, mention this pattern sensitively\n"
+                    f"- Don't dismiss her feelings, but help Adrian understand the biological context\n"
+                    f"- Use phrases like 'This might be a more sensitive time' rather than 'She's just hormonal'\n"
+                    f"- Consider upcoming anniversaries or events that could be positive opportunities"
+                )
+                logger.info("   ✅ Greeting will include calendar context")
             else:
                 logger.warning("   ⚠️ No transcript context available - agent will greet without conversation details")
                 # Still mention that you can help, but don't claim to have the transcript

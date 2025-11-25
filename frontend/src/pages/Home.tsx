@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { HeartIcon, MicIcon, BarChartIcon, FileTextIcon, Clock } from 'lucide-react';
+import { HeartIcon, MicIcon, BarChartIcon, FileTextIcon, Clock, Calendar } from 'lucide-react';
 const Home = () => {
   const navigate = useNavigate();
   return <div className="flex flex-col items-center justify-center min-h-[80vh] text-center">
@@ -19,6 +19,10 @@ const Home = () => {
         <button onClick={() => navigate('/history')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
           <Clock size={18} className="mr-2 text-rose-500" />
           <span className="font-medium">View History</span>
+        </button>
+        <button onClick={() => navigate('/calendar')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
+          <Calendar size={18} className="mr-2 text-rose-500" />
+          <span className="font-medium">Relationship Calendar</span>
         </button>
         <button onClick={() => navigate('/analytics')} className="w-full py-3 px-4 bg-white/70 hover:bg-white/90 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy">
           <BarChartIcon size={18} className="mr-2 text-rose-500" />

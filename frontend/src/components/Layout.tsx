@@ -25,11 +25,15 @@ const Layout: React.FC<LayoutProps> = ({
         return 'Analytics';
       case '/upload':
         return 'PDF & Data';
+      case '/calendar':
+        return 'Calendar';
+      case '/history':
+        return 'History';
       default:
         return 'Idle';
     }
   };
-  const isFullWidthPage = location.pathname === '/post-fight' || location.pathname === '/analytics' || location.pathname === '/upload';
+  const isFullWidthPage = location.pathname === '/post-fight' || location.pathname === '/analytics' || location.pathname === '/upload' || location.pathname === '/calendar';
   
   return <div className="min-h-screen w-full flex flex-col items-center p-4 md:p-6">
       {/* Home icon button - top left */}

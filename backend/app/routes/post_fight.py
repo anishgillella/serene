@@ -841,16 +841,16 @@ async def generate_analysis_only(
         # Generate ONLY boyfriend (Adrian's) analysis using RAG context
         timestamp_now = datetime.now()
         analysis_boyfriend = await analyze_conflict_transcript(
-            conflict_id=conflict_id,
+                conflict_id=conflict_id,
             transcript_text=rag_context,  # Use RAG context instead of full transcript
-            relationship_id=relationship_id,
-            partner_a_id=partner_a_id,
-            partner_b_id=partner_b_id,
-            speaker_labels=speaker_labels,
-            duration=duration,
-            timestamp=timestamp_now,
+                relationship_id=relationship_id,
+                partner_a_id=partner_a_id,
+                partner_b_id=partner_b_id,
+                speaker_labels=speaker_labels,
+                duration=duration,
+                timestamp=timestamp_now,
             partner_id="partner_a",  # Only generate boyfriend (Adrian's) perspective
-            boyfriend_profile=boyfriend_profile,
+                boyfriend_profile=boyfriend_profile,
             girlfriend_profile=girlfriend_profile,
             use_rag_context=True  # Flag to indicate we're using RAG context
         )
