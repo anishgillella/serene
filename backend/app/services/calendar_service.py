@@ -53,17 +53,19 @@ class CalendarService:
         event_type: str,
         event_date: date,
         notes: Optional[str] = None,
+        symptoms: Optional[List[str]] = None,
         cycle_day: Optional[int] = None,
         relationship_id: str = DEFAULT_RELATIONSHIP_ID
     ) -> Optional[str]:
         """
-        Create a cycle event and update predictions if it's a period_start.
+        Create a cycle event (user-logged data only).
         
         Args:
             partner_id: "partner_a" or "partner_b"
-            event_type: "period_start", "period_end", "ovulation", etc.
+            event_type: "period_start", "period_end", "symptom_log", "mood_log"
             event_date: The date of the event
             notes: Optional notes
+            symptoms: Optional list of symptoms (e.g., ["cramps", "headache"])
             cycle_day: Day of cycle (auto-calculated if period_start)
             relationship_id: Relationship ID
         
@@ -74,39 +76,21 @@ class CalendarService:
             conn = self.db.get_connection()
             cursor = conn.cursor()
             
-            # If this is a period_start, calculate cycle length from previous period
-            cycle_length = None
+            # If this is a period_start, set cycle_day to 1
             if event_type == "period_start":
                 cycle_day = 1  # First day of period is always day 1
-                
-                # Find previous period_start to calculate cycle length
-                cursor.execute("""
-                    SELECT event_date FROM cycle_events
-                    WHERE partner_id = %s AND event_type = 'period_start' AND event_date < %s
-                    ORDER BY event_date DESC LIMIT 1;
-                """, (partner_id, event_date))
-                
-                prev_period = cursor.fetchone()
-                if prev_period:
-                    prev_date = prev_period[0]
-                    cycle_length = (event_date - prev_date).days
-                    logger.info(f"📅 Calculated cycle length: {cycle_length} days (from {prev_date} to {event_date})")
             
             # Insert the event
             cursor.execute("""
                 INSERT INTO cycle_events 
-                (relationship_id, partner_id, event_type, event_date, timestamp, notes, cycle_day, cycle_length)
+                (relationship_id, partner_id, event_type, event_date, timestamp, notes, cycle_day, symptoms)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id;
-            """, (relationship_id, partner_id, event_type, event_date, datetime.now(), notes, cycle_day, cycle_length))
+            """, (relationship_id, partner_id, event_type, event_date, datetime.now(), notes, cycle_day, symptoms))
             
             event_id = cursor.fetchone()[0]
             conn.commit()
             cursor.close()
-            
-            # If period_start, update predictions
-            if event_type == "period_start":
-                self.update_cycle_predictions(partner_id, relationship_id)
             
             logger.info(f"✅ Created cycle event: {event_type} on {event_date} for {partner_id}")
             return str(event_id)
@@ -178,168 +162,90 @@ class CalendarService:
         return titles.get(event_type, event_type.replace("_", " ").title())
     
     # =========================================================================
-    # CYCLE PREDICTIONS
+    # CYCLE PREDICTIONS (Simple, Dynamic, 2 Months)
     # =========================================================================
-    
-    def update_cycle_predictions(
-        self,
-        partner_id: str,
-        relationship_id: str = DEFAULT_RELATIONSHIP_ID
-    ) -> bool:
-        """
-        Update cycle predictions based on historical data.
-        Uses average cycle length from past cycles.
-        
-        Args:
-            partner_id: Partner to update predictions for
-            relationship_id: Relationship ID
-        
-        Returns:
-            True if predictions updated successfully
-        """
-        try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Get all period_start events to calculate average cycle length
-            cursor.execute("""
-                SELECT event_date, cycle_length FROM cycle_events
-                WHERE partner_id = %s AND event_type = 'period_start'
-                ORDER BY event_date DESC
-                LIMIT 12;  -- Use last 12 cycles max
-            """, (partner_id,))
-            
-            period_data = cursor.fetchall()
-            
-            if not period_data:
-                logger.warning(f"⚠️ No period data for {partner_id}, cannot predict")
-                cursor.close()
-                return False
-            
-            # Calculate average cycle length
-            cycle_lengths = [row[1] for row in period_data if row[1] is not None]
-            
-            if len(cycle_lengths) >= 2:
-                avg_cycle_length = round(mean(cycle_lengths))
-                confidence = min(0.95, 0.50 + (len(cycle_lengths) * 0.05))  # More data = higher confidence
-                
-                # Calculate standard deviation for confidence adjustment
-                if len(cycle_lengths) >= 3:
-                    std_dev = stdev(cycle_lengths)
-                    # High variance = lower confidence
-                    if std_dev > 5:
-                        confidence *= 0.7
-                    elif std_dev > 3:
-                        confidence *= 0.85
-            else:
-                avg_cycle_length = DEFAULT_CYCLE_LENGTH
-                confidence = 0.50
-            
-            logger.info(f"📊 Cycle stats for {partner_id}: avg={avg_cycle_length} days, confidence={confidence:.2f}, based on {len(cycle_lengths)} cycles")
-            
-            # Get most recent period start
-            last_period_date = period_data[0][0]
-            
-            # Clear old predictions
-            cursor.execute("""
-                DELETE FROM cycle_predictions
-                WHERE partner_id = %s AND relationship_id = %s;
-            """, (partner_id, relationship_id))
-            
-            # Generate predictions for next 3 cycles
-            predictions = []
-            current_cycle_start = last_period_date
-            
-            for cycle_num in range(3):
-                # Next period start
-                next_period_start = current_cycle_start + timedelta(days=avg_cycle_length)
-                predictions.append(("period_start", next_period_start, confidence))
-                
-                # Period end (assume 5 days)
-                period_end = next_period_start + timedelta(days=DEFAULT_PERIOD_LENGTH)
-                predictions.append(("period_end", period_end, confidence * 0.9))
-                
-                # Ovulation (typically day 14)
-                ovulation_date = next_period_start + timedelta(days=DEFAULT_OVULATION_DAY - 1)
-                predictions.append(("ovulation", ovulation_date, confidence * 0.8))
-                
-                # Fertile window (days 10-16)
-                fertile_start = next_period_start + timedelta(days=DEFAULT_FERTILE_WINDOW_START - 1)
-                fertile_end = next_period_start + timedelta(days=DEFAULT_FERTILE_WINDOW_END - 1)
-                predictions.append(("fertile_start", fertile_start, confidence * 0.75))
-                predictions.append(("fertile_end", fertile_end, confidence * 0.75))
-                
-                # PMS phase (days 21-28)
-                pms_start = next_period_start + timedelta(days=DEFAULT_PMS_START_DAY - 1)
-                predictions.append(("pms_start", pms_start, confidence * 0.7))
-                
-                current_cycle_start = next_period_start
-            
-            # Insert predictions
-            for pred_type, pred_date, pred_confidence in predictions:
-                cursor.execute("""
-                    INSERT INTO cycle_predictions 
-                    (relationship_id, partner_id, prediction_type, predicted_date, confidence, based_on_cycles)
-                    VALUES (%s, %s, %s, %s, %s, %s);
-                """, (relationship_id, partner_id, pred_type, pred_date, pred_confidence, len(cycle_lengths)))
-            
-            conn.commit()
-            cursor.close()
-            
-            logger.info(f"✅ Updated {len(predictions)} cycle predictions for {partner_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ Error updating cycle predictions: {e}")
-            if self.db.conn:
-                self.db.conn.rollback()
-            return False
     
     def get_cycle_predictions(
         self,
         partner_id: str,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
         relationship_id: str = DEFAULT_RELATIONSHIP_ID
     ) -> List[Dict[str, Any]]:
-        """Get cycle predictions for a partner within a date range."""
+        """
+        Generate simple cycle predictions for next 2 months based on historical data.
+        Predictions are calculated dynamically (not stored in database).
+        
+        Args:
+            partner_id: Partner to generate predictions for
+            relationship_id: Relationship ID
+        
+        Returns:
+            List of predicted cycle events for next 60 days
+        """
         try:
             conn = self.db.get_connection()
             cursor = conn.cursor()
             
-            if not start_date:
-                start_date = date.today()
-            if not end_date:
-                end_date = date.today() + timedelta(days=90)
-            
+            # Get last 3 period_start events to calculate average cycle length
             cursor.execute("""
-                SELECT id, prediction_type, predicted_date, confidence, based_on_cycles
-                FROM cycle_predictions
-                WHERE partner_id = %s AND relationship_id = %s
-                AND predicted_date BETWEEN %s AND %s
-                ORDER BY predicted_date ASC;
-            """, (partner_id, relationship_id, start_date, end_date))
+                SELECT event_date FROM cycle_events
+                WHERE partner_id = %s AND relationship_id = %s 
+                AND event_type = 'period_start'
+                ORDER BY event_date DESC
+                LIMIT 3;
+            """, (partner_id, relationship_id))
             
-            predictions = []
-            for row in cursor.fetchall():
-                predictions.append({
-                    "id": str(row[0]),
-                    "type": "prediction",
-                    "prediction_type": row[1],
-                    "predicted_date": row[2].isoformat() if row[2] else None,
-                    "title": f"📌 Predicted: {self._get_cycle_event_title(row[1])}",
-                    "confidence": float(row[3]) if row[3] else 0.5,
-                    "based_on_cycles": row[4],
-                    "color": EVENT_COLORS.get(row[1], "#ec4899"),
-                    "is_prediction": True
-                })
-            
+            period_dates = [row[0] for row in cursor.fetchall()]
             cursor.close()
+            
+            if len(period_dates) < 2:
+                logger.info(f"Not enough period data for {partner_id} to predict")
+                return []
+            
+            # Calculate average cycle length
+            cycle_lengths = []
+            for i in range(len(period_dates) - 1):
+                cycle_length = (period_dates[i] - period_dates[i + 1]).days
+                cycle_lengths.append(cycle_length)
+            
+            avg_cycle_length = round(mean(cycle_lengths)) if cycle_lengths else DEFAULT_CYCLE_LENGTH
+            last_period = period_dates[0]
+            
+            logger.info(f"📊 Avg cycle length for {partner_id}: {avg_cycle_length} days")
+            
+            # Generate predictions for next 2 months only
+            predictions = []
+            current_date = last_period
+            end_date = date.today() + timedelta(days=60)  # 2 months
+            
+            while current_date <= end_date:
+                # Next period start
+                next_period = current_date + timedelta(days=avg_cycle_length)
+                
+                if next_period > end_date:
+                    break
+                
+                predictions.append({
+                    "id": f"pred_{partner_id}_{next_period.isoformat()}",
+                    "type": "prediction",
+                    "event_type": "period_start",
+                    "predicted_date": next_period.isoformat(),
+                    "title": "📅 Predicted Period",
+                    "color": "#fda4af",  # Light pink
+                    "is_prediction": True,
+                    "cycle_length": avg_cycle_length
+                })
+                
+                current_date = next_period
+            
             return predictions
             
         except Exception as e:
-            logger.error(f"❌ Error getting cycle predictions: {e}")
+            logger.error(f"❌ Error generating predictions: {e}")
             return []
+    
+    # =========================================================================
+    # CYCLE PHASE ANALYSIS (based on logged data only)
+    # =========================================================================
     
     def get_current_cycle_phase(
         self,
@@ -360,17 +266,17 @@ class CalendarService:
             conn = self.db.get_connection()
             cursor = conn.cursor()
             
-            # Get most recent period start
+            # Get most recent period starts to calculate cycle length
             cursor.execute("""
-                SELECT event_date, cycle_length FROM cycle_events
+                SELECT event_date FROM cycle_events
                 WHERE partner_id = %s AND event_type = 'period_start' AND event_date <= %s
-                ORDER BY event_date DESC LIMIT 1;
+                ORDER BY event_date DESC LIMIT 3;
             """, (partner_id, target_date))
             
-            result = cursor.fetchone()
+            period_dates = [row[0] for row in cursor.fetchall()]
             cursor.close()
             
-            if not result:
+            if not period_dates:
                 return {
                     "phase_name": "Unknown",
                     "day_of_cycle": None,
@@ -380,8 +286,13 @@ class CalendarService:
                     "confidence": 0.0
                 }
             
-            last_period_date, cycle_length = result
-            cycle_length = cycle_length or DEFAULT_CYCLE_LENGTH
+            last_period_date = period_dates[0]
+            
+            # Calculate average cycle length from historical data
+            cycle_length = DEFAULT_CYCLE_LENGTH
+            if len(period_dates) >= 2:
+                cycle_lengths = [(period_dates[i] - period_dates[i+1]).days for i in range(len(period_dates)-1)]
+                cycle_length = round(sum(cycle_lengths) / len(cycle_lengths))
             
             # Calculate day of cycle
             day_of_cycle = (target_date - last_period_date).days + 1
@@ -589,9 +500,10 @@ class CalendarService:
     def get_upcoming_events(
         self,
         days_ahead: int = 14,
-        relationship_id: str = DEFAULT_RELATIONSHIP_ID
+        relationship_id: str = DEFAULT_RELATIONSHIP_ID,
+        partner_id: str = "partner_b"
     ) -> List[Dict[str, Any]]:
-        """Get upcoming events (anniversaries, birthdays, predicted cycle events)."""
+        """Get upcoming events (anniversaries, birthdays, predicted periods)."""
         today = date.today()
         end_date = today + timedelta(days=days_ahead)
         
@@ -601,8 +513,10 @@ class CalendarService:
         memorable = self.get_memorable_dates(today, end_date, relationship_id=relationship_id)
         events.extend(memorable)
         
-        # Get cycle predictions (for partner_b / Elara)
-        predictions = self.get_cycle_predictions("partner_b", today, end_date, relationship_id)
+        # Get cycle predictions (simple, next 2 months)
+        predictions = self.get_cycle_predictions(partner_id, relationship_id)
+        # Filter to days_ahead
+        predictions = [p for p in predictions if p.get("predicted_date", "") <= end_date.isoformat()]
         events.extend(predictions)
         
         # Sort by date
@@ -753,9 +667,9 @@ class CalendarService:
         self,
         year: int,
         month: int,
-        include_predictions: bool = True,
         filters: List[str] = None,
-        relationship_id: str = DEFAULT_RELATIONSHIP_ID
+        relationship_id: str = DEFAULT_RELATIONSHIP_ID,
+        partner_id: str = "partner_b"
     ) -> Dict[str, Any]:
         """
         Get all calendar events for a month (chronologically ordered).
@@ -763,9 +677,9 @@ class CalendarService:
         Args:
             year: Year
             month: Month (1-12)
-            include_predictions: Whether to include cycle predictions
             filters: List of event types to include (None = all)
             relationship_id: Relationship ID
+            partner_id: Partner ID for cycle predictions
         
         Returns:
             Dict with events grouped by date + summary stats
@@ -785,7 +699,7 @@ class CalendarService:
         
         # Fetch each event type
         if "cycle" in filters:
-            cycle_events = self.get_cycle_events("partner_b", start_date, end_date, relationship_id)
+            cycle_events = self.get_cycle_events(partner_id, start_date, end_date, relationship_id)
             all_events.extend(cycle_events)
         
         if "intimacy" in filters:
@@ -800,8 +714,11 @@ class CalendarService:
             memorable_dates = self.get_memorable_dates(start_date, end_date, True, relationship_id)
             all_events.extend(memorable_dates)
         
-        if "prediction" in filters and include_predictions:
-            predictions = self.get_cycle_predictions("partner_b", start_date, end_date, relationship_id)
+        if "prediction" in filters:
+            # Get predictions and filter to this month
+            predictions = self.get_cycle_predictions(partner_id, relationship_id)
+            predictions = [p for p in predictions 
+                          if start_date.isoformat() <= p.get("predicted_date", "") <= end_date.isoformat()]
             all_events.extend(predictions)
         
         # Sort by date
@@ -816,14 +733,14 @@ class CalendarService:
                     events_by_date[event_date] = []
                 events_by_date[event_date].append(event)
         
-        # Calculate summary stats
+        # Summary stats
         stats = {
             "total_events": len(all_events),
             "cycle_events": len([e for e in all_events if e.get("type") == "cycle"]),
+            "predictions": len([e for e in all_events if e.get("is_prediction")]),
+            "conflicts": len([e for e in all_events if e.get("type") == "conflict"]),
             "intimacy_events": len([e for e in all_events if e.get("type") == "intimacy"]),
-            "conflict_events": len([e for e in all_events if e.get("type") == "conflict"]),
             "memorable_events": len([e for e in all_events if e.get("type") == "memorable"]),
-            "predictions": len([e for e in all_events if e.get("type") == "prediction"]),
         }
         
         return {
@@ -934,17 +851,126 @@ class CalendarService:
     ) -> str:
         """
         Generate a formatted calendar insights string for injection into LLM context.
+        Uses tiered retrieval: relationship history + milestones + recent events + cycle phase.
         
         Returns:
-            Formatted string with cycle phase, upcoming events, and patterns
+            Formatted string with comprehensive but token-efficient relationship context
         """
         insights = []
         
-        # Current cycle phase
+        # =========================================================================
+        # TIER 1: Relationship History (Always Include) ~50 tokens
+        # =========================================================================
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            # Get relationship start date
+            cursor.execute("""
+                SELECT created_at FROM relationships
+                WHERE id = %s;
+            """, (relationship_id,))
+            
+            rel_result = cursor.fetchone()
+            if rel_result:
+                start_date = rel_result[0]
+                duration_days = (datetime.now().date() - start_date.date()).days
+                duration_months = duration_days // 30
+                insights.append("📖 RELATIONSHIP HISTORY")
+                insights.append(f"   Together since: {start_date.strftime('%B %d, %Y')} ({duration_months} months)")
+            
+            cursor.close()
+        except Exception as e:
+            logger.error(f"Error fetching relationship history: {e}")
+        
+        # =========================================================================
+        # TIER 2: Milestone Events (Top 5) ~100 tokens
+        # =========================================================================
+        try:
+            milestones = self.get_memorable_dates(
+                start_date=None,
+                end_date=None,
+                include_recurring=True,
+                relationship_id=relationship_id
+            )
+            
+            # Filter for milestone types and sort by importance
+            priority_types = ['anniversary', 'first_date', 'milestone', 'birthday']
+            milestone_events = [m for m in milestones if m.get('event_type') in priority_types]
+            milestone_events.sort(key=lambda x: priority_types.index(x.get('event_type', 'custom')))
+            
+            if milestone_events:
+                insights.append("   Key moments:")
+                for event in milestone_events[:5]:  # Limit to 5
+                    title = event.get('title', 'Event')
+                    event_date = event.get('event_date', '')
+                    event_type = event.get('event_type', 'event')
+                    
+                    # Format date nicely
+                    if event_date:
+                        try:
+                            date_obj = datetime.strptime(event_date, '%Y-%m-%d').date()
+                            days_ago = (datetime.now().date() - date_obj).days
+                            
+                            if days_ago < 0:
+                                time_ref = "upcoming"
+                            elif days_ago == 0:
+                                time_ref = "today"
+                            elif days_ago < 30:
+                                time_ref = f"{days_ago} days ago"
+                            elif days_ago < 365:
+                                time_ref = f"{days_ago // 30} months ago"
+                            else:
+                                time_ref = f"{days_ago // 365} years ago"
+                            
+                            insights.append(f"      • {title} ({time_ref})")
+                        except:
+                            insights.append(f"      • {title}")
+                insights.append("")
+        except Exception as e:
+            logger.error(f"Error fetching milestones: {e}")
+        
+        # =========================================================================
+        # TIER 3: Recent Events (Last 30 days) ~50 tokens
+        # =========================================================================
+        try:
+            recent_start = datetime.now().date() - timedelta(days=30)
+            
+            # Recent memorable dates
+            recent_memorable = self.get_memorable_dates(
+                start_date=recent_start,
+                end_date=datetime.now().date(),
+                include_recurring=False,
+                relationship_id=relationship_id
+            )
+            
+            # Recent intimacy events
+            recent_intimacy = self.get_intimacy_events(
+                start_date=recent_start,
+                end_date=datetime.now().date(),
+                relationship_id=relationship_id
+            )
+            
+            recent_items = []
+            if recent_memorable:
+                recent_items.append(f"{len(recent_memorable)} special moments")
+            if recent_intimacy:
+                recent_items.append(f"{len(recent_intimacy)} intimacy events")
+            
+            if recent_items:
+                insights.append("📅 RECENT ACTIVITY (Last 30 Days)")
+                insights.append(f"   {', '.join(recent_items)}")
+                insights.append("")
+        except Exception as e:
+            logger.error(f"Error fetching recent events: {e}")
+        
+        # =========================================================================
+        # Current Cycle Phase (Existing)
+        # =========================================================================
         phase = self.get_current_cycle_phase("partner_b", relationship_id=relationship_id)
         if phase.get("phase_name") != "Unknown":
             phase_emoji = phase.get("emoji", "📅")
-            insights.append(f"📅 CURRENT CYCLE PHASE (Elara)")
+            insights.append(f"🩸 CURRENT CYCLE PHASE (Elara)")
             insights.append(f"   {phase_emoji} Phase: {phase.get('phase_name')}")
             insights.append(f"   Day of cycle: {phase.get('day_of_cycle', 'N/A')}")
             insights.append(f"   Days until period: {phase.get('days_until_period', 'N/A')}")
@@ -952,7 +978,9 @@ class CalendarService:
             insights.append(f"   Note: {phase.get('description', '')}")
             insights.append("")
         
-        # Upcoming events (next 14 days)
+        # =========================================================================
+        # Upcoming Events (Existing)
+        # =========================================================================
         upcoming = self.get_upcoming_events(14, relationship_id)
         if upcoming:
             insights.append("📌 UPCOMING EVENTS (Next 14 Days)")
@@ -966,14 +994,18 @@ class CalendarService:
                     insights.append(f"   • {event_date}: {title}")
             insights.append("")
         
-        # Conflict-cycle correlation
+        # =========================================================================
+        # Conflict Pattern Insights (Existing)
+        # =========================================================================
         correlation = self.get_conflict_cycle_correlation(relationship_id)
         if correlation.get("has_data"):
             insights.append("📊 CONFLICT PATTERN INSIGHT")
             insights.append(f"   {correlation.get('insight', 'No patterns detected')}")
             insights.append("")
         
-        # Risk assessment for today
+        # =========================================================================
+        # Risk Assessment (Existing)
+        # =========================================================================
         if phase.get("risk_level") == "high":
             insights.append("⚠️ TODAY'S RISK ASSESSMENT: HIGH")
             insights.append("   Elara may be in a sensitive phase. Recommend:")
@@ -985,6 +1017,196 @@ class CalendarService:
             insights.append("   Be mindful of emotional sensitivity.")
         
         return "\n".join(insights) if insights else "No calendar insights available."
+    
+    def get_conflict_memory_context(
+        self,
+        current_topic: str,
+        relationship_id: str = DEFAULT_RELATIONSHIP_ID
+    ) -> str:
+        """
+        Get formatted context about similar past conflicts.
+        Used to inject into Luna's knowledge during mediation.
+        
+        Args:
+            current_topic: What the user is currently discussing
+            relationship_id: Relationship filter
+            
+        Returns:
+            Formatted string for LLM context
+        """
+        from app.services.pinecone_service import pinecone_service
+        
+        try:
+            similar = pinecone_service.search_similar_conflicts(
+                query_text=current_topic,
+                relationship_id=relationship_id,
+                top_k=2  # Just top 2 most relevant
+            )
+            
+            if not similar:
+                return ""
+            
+            context_lines = ["📚 SIMILAR PAST CONFLICTS"]
+            for idx, conflict in enumerate(similar, 1):
+                date_str = conflict["date"][:10] if conflict["date"] != "Unknown" else "Recently"
+                context_lines.append(
+                    f"   {idx}. {date_str}: {conflict['summary']}"
+                )
+                if conflict.get("root_causes"):
+                    causes_str = conflict["root_causes"]
+                    # Parse if it's a string representation of a list
+                    if isinstance(causes_str, str) and causes_str.startswith("["):
+                        import ast
+                        try:
+                            causes_list = ast.literal_eval(causes_str)
+                            if causes_list:
+                                context_lines.append(f"      Root cause: {causes_list[0]}")
+                        except:
+                            pass
+                    elif isinstance(causes_str, list) and causes_str:
+                        context_lines.append(f"      Root cause: {causes_str[0]}")
+            
+            return "\n".join(context_lines)
+            
+        except Exception as e:
+            logger.error(f"Error retrieving conflict memory: {e}")
+            return ""
+
+
+    def get_analytics_dashboard_data(
+        self,
+        relationship_id: str = DEFAULT_RELATIONSHIP_ID,
+        partner_id: str = "partner_b"
+    ) -> Dict[str, Any]:
+        """
+        Get aggregated data for the analytics dashboard.
+        Includes health score, trends, cycle correlation, and insights.
+        """
+        try:
+            today = date.today()
+            last_30_days = today - timedelta(days=30)
+            
+            # 1. Fetch Raw Data (Last 30 Days)
+            conflicts = self.get_conflict_events(last_30_days, today, relationship_id)
+            intimacy = self.get_intimacy_events(last_30_days, today, relationship_id)
+            cycle_phase = self.get_current_cycle_phase(partner_id, today, relationship_id)
+            
+            # 2. Calculate Relationship Health Score (0-100)
+            # Base score: 70
+            # +5 per intimacy event (max +30)
+            # -10 per unresolved conflict
+            # -5 per resolved conflict
+            # +10 if no conflicts in last 14 days
+            
+            health_score = 70
+            
+            # Intimacy boost
+            intimacy_count = len(intimacy)
+            health_score += min(intimacy_count * 5, 30)
+            
+            # Conflict penalty
+            conflict_count = len(conflicts)
+            unresolved_count = len([c for c in conflicts if c.get("status") != "resolved"])
+            resolved_count = conflict_count - unresolved_count
+            
+            health_score -= (unresolved_count * 10)
+            health_score -= (resolved_count * 5)
+            
+            # Conflict-free bonus
+            recent_conflicts = [c for c in conflicts if c.get("started_at") and date.fromisoformat(c["started_at"][:10]) > (today - timedelta(days=14))]
+            if not recent_conflicts:
+                health_score += 10
+            
+            # Clamp score 0-100
+            health_score = max(0, min(100, health_score))
+            
+            # Determine trend (vs previous 30 days - simplified for now)
+            # For MVP, we'll just use a heuristic based on current score
+            trend = "stable"
+            if health_score > 80: trend = "improving"
+            elif health_score < 50: trend = "declining"
+            
+            # 3. Weekly Trends (Last 4 Weeks)
+            weeks = []
+            for i in range(4):
+                week_start = today - timedelta(days=(3 - i) * 7 + 6)
+                week_end = week_start + timedelta(days=6)
+                week_label = f"Week {i+1}"
+                
+                # Count events in this week
+                w_conflicts = 0
+                w_intimacy = 0
+                
+                for c in conflicts:
+                    c_date = date.fromisoformat(c["event_date"])
+                    if week_start <= c_date <= week_end:
+                        w_conflicts += 1
+                        
+                for i_evt in intimacy:
+                    i_date = date.fromisoformat(i_evt["event_date"])
+                    if week_start <= i_date <= week_end:
+                        w_intimacy += 1
+                
+                weeks.append({
+                    "name": week_label,
+                    "conflicts": w_conflicts,
+                    "intimacy": w_intimacy,
+                    "date_start": week_start.isoformat(),
+                    "date_end": week_end.isoformat()
+                })
+            
+            # 4. Cycle Correlation (Heatmap Data)
+            # Map conflicts to cycle days (1-28)
+            # We need more history for this to be meaningful, say 90 days
+            history_conflicts = self.get_conflict_events(today - timedelta(days=90), today, relationship_id)
+            cycle_heatmap = [0] * 30 # Days 1-30
+            
+            for c in history_conflicts:
+                c_date = date.fromisoformat(c["event_date"])
+                # Get cycle day for that date
+                # This is expensive if we call get_current_cycle_phase for every conflict
+                # For MVP, we'll approximate using the current cycle logic if available
+                # Or just skip if too complex. Let's try to get it.
+                phase_info = self.get_current_cycle_phase(partner_id, c_date, relationship_id)
+                day = phase_info.get("day_of_cycle")
+                if day and 1 <= day <= 30:
+                    cycle_heatmap[day-1] += 1
+            
+            # 5. Tension Forecast
+            # Simple heuristic: High risk if in PMS (Luteal PMS) or if recent conflict trend is high
+            tension_level = "Low"
+            forecast_msg = "Conditions are favorable for connection."
+            
+            if cycle_phase.get("phase_name") == "Luteal (PMS)":
+                tension_level = "High"
+                forecast_msg = " PMS phase detected. Tension may be elevated."
+            elif conflict_count > 3:
+                tension_level = "Medium"
+                forecast_msg = "Recent conflict frequency suggests underlying tension."
+            
+            return {
+                "health_score": {
+                    "value": health_score,
+                    "trend": trend,
+                    "status": "Excellent" if health_score > 80 else "Good" if health_score > 60 else "Needs Attention"
+                },
+                "trends": weeks,
+                "cycle_correlation": cycle_heatmap,
+                "tension_forecast": {
+                    "level": tension_level,
+                    "message": forecast_msg,
+                    "next_high_risk_date": (today + timedelta(days=cycle_phase.get("days_until_period", 0) - 7)).isoformat() if cycle_phase.get("days_until_period") else None
+                },
+                "stats": {
+                    "conflicts_30d": conflict_count,
+                    "intimacy_30d": intimacy_count,
+                    "unresolved": unresolved_count
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating analytics data: {e}")
+            return {}
 
 
 # Global instance
@@ -993,4 +1215,3 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CalendarService: {e}")
     calendar_service = None
-

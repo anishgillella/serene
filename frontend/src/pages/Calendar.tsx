@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  ChevronLeft, 
-  ChevronRight, 
-  Plus, 
-  Heart, 
-  AlertTriangle, 
+import {
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Heart,
+  AlertTriangle,
   Calendar as CalendarIcon,
   Droplet,
   Star,
-  Gift,
-  Activity
+  Gift
 } from 'lucide-react';
 
 // Types
@@ -27,6 +26,7 @@ interface CalendarEvent {
   confidence?: number;
   risk_level?: string;
   phase_name?: string;
+  status?: string;
 }
 
 interface CyclePhase {
@@ -97,9 +97,9 @@ const RiskBadge: React.FC<{ level: string }> = ({ level }) => {
     low: 'bg-green-100 text-green-700 border-green-200',
     unknown: 'bg-gray-100 text-gray-700 border-gray-200',
   };
-  
+
   return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border ${colors[level as keyof typeof colors] || colors.unknown}`}>
+    <span className={`text - xs px - 2 py - 0.5 rounded - full border ${colors[level as keyof typeof colors] || colors.unknown} `}>
       {level.toUpperCase()}
     </span>
   );
@@ -122,6 +122,7 @@ const Calendar: React.FC = () => {
   });
   const [showAddModal, setShowAddModal] = useState(false);
   const [addEventType, setAddEventType] = useState<'cycle' | 'intimacy' | 'memorable'>('cycle');
+  const [initialAddDate, setInitialAddDate] = useState<string | undefined>(undefined);
   const navigate = useNavigate();
 
   // Fetch calendar data
@@ -133,17 +134,17 @@ const Calendar: React.FC = () => {
           .filter(([, v]) => v)
           .map(([k]) => k)
           .join(',');
-        
+
         const [calendarRes, phaseRes] = await Promise.all([
-          fetch(`${API_BASE}/api/calendar/events?year=${currentYear}&month=${currentMonth}&filters=${activeFilters}`),
-          fetch(`${API_BASE}/api/calendar/cycle-phase?partner_id=partner_b`)
+          fetch(`${API_BASE} /api/calendar / events ? year = ${currentYear}& month=${currentMonth}& filters=${activeFilters} `),
+          fetch(`${API_BASE} /api/calendar / cycle - phase ? partner_id = partner_b`)
         ]);
-        
+
         if (calendarRes.ok) {
           const data = await calendarRes.json();
           setCalendarData(data);
         }
-        
+
         if (phaseRes.ok) {
           const phase = await phaseRes.json();
           setCyclePhase(phase);
@@ -154,7 +155,7 @@ const Calendar: React.FC = () => {
         setLoading(false);
       }
     };
-    
+
     fetchCalendarData();
   }, [currentYear, currentMonth, filters]);
 
@@ -164,25 +165,25 @@ const Calendar: React.FC = () => {
     const lastDay = new Date(currentYear, currentMonth, 0);
     const startingDayOfWeek = firstDay.getDay();
     const daysInMonth = lastDay.getDate();
-    
+
     const days: (number | null)[] = [];
-    
+
     // Add empty cells for days before the first of the month
     for (let i = 0; i < startingDayOfWeek; i++) {
       days.push(null);
     }
-    
+
     // Add days of the month
     for (let day = 1; day <= daysInMonth; day++) {
       days.push(day);
     }
-    
+
     return days;
   };
 
   const getEventsForDay = (day: number): CalendarEvent[] => {
     if (!calendarData) return [];
-    const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dateStr = `${currentYear} -${String(currentMonth).padStart(2, '0')} -${String(day).padStart(2, '0')} `;
     return calendarData.events_by_date[dateStr] || [];
   };
 
@@ -197,7 +198,7 @@ const Calendar: React.FC = () => {
   const navigateMonth = (delta: number) => {
     let newMonth = currentMonth + delta;
     let newYear = currentYear;
-    
+
     if (newMonth > 12) {
       newMonth = 1;
       newYear++;
@@ -205,7 +206,7 @@ const Calendar: React.FC = () => {
       newMonth = 12;
       newYear--;
     }
-    
+
     setCurrentMonth(newMonth);
     setCurrentYear(newYear);
   };
@@ -214,7 +215,7 @@ const Calendar: React.FC = () => {
     try {
       let endpoint = '';
       let body = {};
-      
+
       switch (addEventType) {
         case 'cycle':
           endpoint = '/api/calendar/cycle-events';
@@ -222,7 +223,8 @@ const Calendar: React.FC = () => {
             partner_id: 'partner_b',
             event_type: eventData.cycleType,
             event_date: eventData.date,
-            notes: eventData.notes
+            notes: eventData.notes,
+            symptoms: eventData.symptoms || []
           };
           break;
         case 'intimacy':
@@ -243,13 +245,13 @@ const Calendar: React.FC = () => {
           };
           break;
       }
-      
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+
+      const res = await fetch(`${API_BASE}${endpoint} `, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
-      
+
       if (res.ok) {
         // Refresh calendar data
         setFilters({ ...filters });
@@ -330,11 +332,10 @@ const Calendar: React.FC = () => {
           <button
             key={key}
             onClick={() => setFilters({ ...filters, [key]: !filters[key as keyof typeof filters] })}
-            className={`px-3 py-1 text-xs rounded-full border transition-all ${
-              filters[key as keyof typeof filters]
-                ? color
-                : 'bg-gray-50 border-gray-200 opacity-50'
-            }`}
+            className={`px - 3 py - 1 text - xs rounded - full border transition - all ${filters[key as keyof typeof filters]
+              ? color
+              : 'bg-gray-50 border-gray-200 opacity-50'
+              } `}
           >
             {label}
           </button>
@@ -361,9 +362,9 @@ const Calendar: React.FC = () => {
           <div className="grid grid-cols-7 gap-1">
             {days.map((day, index) => {
               if (day === null) {
-                return <div key={`empty-${index}`} className="h-20" />;
+                return <div key={`empty - ${index} `} className="h-20" />;
               }
-              
+
               const events = getEventsForDay(day);
               const hasEvents = events.length > 0;
               const hasPeriod = events.some(e => e.event_type === 'period_start' || e.event_type === 'period_end');
@@ -371,36 +372,34 @@ const Calendar: React.FC = () => {
               const hasIntimacy = events.some(e => e.type === 'intimacy');
               const hasMemorable = events.some(e => e.type === 'memorable');
               const hasPrediction = events.some(e => e.is_prediction);
-              
+
               return (
                 <div
                   key={day}
-                  onClick={() => setSelectedDate(`${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`)}
-                  className={`h-20 p-1 rounded-lg border cursor-pointer transition-all hover:shadow-md ${
-                    isToday(day)
-                      ? hasConflict
-                        ? 'border-red-400 bg-red-50'
-                        : 'border-rose-400 bg-rose-50'
-                      : hasEvents
+                  onClick={() => setSelectedDate(`${currentYear} -${String(currentMonth).padStart(2, '0')} -${String(day).padStart(2, '0')} `)}
+                  className={`h - 20 p - 1 rounded - lg border cursor - pointer transition - all hover: shadow - md ${isToday(day)
+                    ? hasConflict
+                      ? 'border-red-400 bg-red-50'
+                      : 'border-rose-400 bg-rose-50'
+                    : hasEvents
                       ? hasConflict
                         ? 'border-red-200 bg-red-50/30'
                         : 'border-gray-200 bg-white'
                       : 'border-gray-100 bg-gray-50/50'
-                  }`}
+                    } `}
                 >
-                  <div className={`text-sm font-medium ${
-                    isToday(day)
-                      ? hasConflict
-                        ? 'text-red-600'
-                        : 'text-rose-600'
-                      : hasConflict
+                  <div className={`text - sm font - medium ${isToday(day)
+                    ? hasConflict
+                      ? 'text-red-600'
+                      : 'text-rose-600'
+                    : hasConflict
                       ? 'text-red-600'
                       : 'text-gray-700'
-                  }`}>
+                    } `}>
                     {day}
                     {hasConflict && <span className="text-xs ml-0.5">!</span>}
                   </div>
-                  
+
                   {/* Event indicators - conflicts first */}
                   <div className="flex flex-wrap gap-0.5 mt-1">
                     {hasConflict && (
@@ -419,13 +418,13 @@ const Calendar: React.FC = () => {
                       <div className="w-2 h-2 rounded-full bg-purple-400 opacity-60" title="Prediction" />
                     )}
                   </div>
-                  
+
                   {/* Show conflict first if present, otherwise first event */}
                   {events.length > 0 && (
                     <div className="text-[10px] text-gray-500 truncate mt-1 line-clamp-1">
                       {events.find(e => e.type === 'conflict')?.title.replace(/[📌⚠️]/g, '').trim().substring(0, 12) ||
-                       events[0].title.replace(/[📌🩸💕⚠️🎂🔮]/g, '').trim().substring(0, 12)}
-                      {events.length > 1 && ` +${events.length - 1}`}
+                        events[0].title.replace(/[📌🩸💕⚠️🎂🔮]/g, '').trim().substring(0, 12)}
+                      {events.length > 1 && ` + ${events.length - 1} `}
                     </div>
                   )}
                 </div>
@@ -462,9 +461,9 @@ const Calendar: React.FC = () => {
       )}
 
       {/* Selected Date Events Panel */}
-      {selectedDate && calendarData?.events_by_date[selectedDate] && (
+      {selectedDate && (
         <div className="fixed inset-0 bg-black/30 flex items-end justify-center z-50" onClick={() => setSelectedDate(null)}>
-          <div 
+          <div
             className="bg-white rounded-t-2xl w-full max-w-lg max-h-[60vh] overflow-y-auto p-4"
             onClick={(e) => e.stopPropagation()}
           >
@@ -479,23 +478,28 @@ const Calendar: React.FC = () => {
                 ✕
               </button>
             </div>
-            
+
             <div className="space-y-3">
-              {calendarData.events_by_date[selectedDate].map((event, idx) => (
+              {(!calendarData?.events_by_date[selectedDate] || calendarData.events_by_date[selectedDate].length === 0) && (
+                <div className="text-center py-8 text-gray-500">
+                  <p>No events for this day</p>
+                </div>
+              )}
+
+              {calendarData?.events_by_date[selectedDate]?.map((event, idx) => (
                 <div
                   key={idx}
-                  className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
-                    event.type === 'conflict' ? 'cursor-pointer hover:shadow-md' : ''
-                  }`}
+                  className={`flex items-start gap-3 p-3 rounded-lg transition-all ${event.type === 'conflict' ? 'cursor-pointer hover:shadow-md' : ''
+                    }`}
                   style={{ backgroundColor: `${event.color}15` }}
                   onClick={() => {
                     if (event.type === 'conflict' && event.id) {
                       setSelectedDate(null);
-                      navigate('/post-fight', { 
-                        state: { 
+                      navigate('/post-fight', {
+                        state: {
                           conflict_id: event.id,
-                          conflict_date: event.event_date 
-                        } 
+                          conflict_date: event.event_date
+                        }
                       });
                     }
                   }}
@@ -528,13 +532,28 @@ const Calendar: React.FC = () => {
                 </div>
               ))}
             </div>
+
+            <button
+              onClick={() => {
+                setInitialAddDate(selectedDate);
+                setSelectedDate(null);
+                setShowAddModal(true);
+              }}
+              className="w-full mt-4 py-3 bg-rose-500 text-white rounded-xl font-medium hover:bg-rose-600 transition-colors flex items-center justify-center gap-2"
+            >
+              <Plus size={20} />
+              Add Event for {new Date(selectedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </button>
           </div>
         </div>
       )}
 
       {/* Add Event FAB */}
       <button
-        onClick={() => setShowAddModal(true)}
+        onClick={() => {
+          setInitialAddDate(undefined);
+          setShowAddModal(true);
+        }}
         className="fixed bottom-20 right-4 w-14 h-14 bg-rose-500 hover:bg-rose-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-105"
       >
         <Plus size={24} />
@@ -547,6 +566,7 @@ const Calendar: React.FC = () => {
           onAdd={handleAddEvent}
           eventType={addEventType}
           setEventType={setAddEventType}
+          initialDate={initialAddDate}
         />
       )}
     </div>
@@ -559,17 +579,34 @@ interface AddEventModalProps {
   onAdd: (data: any) => void;
   eventType: 'cycle' | 'intimacy' | 'memorable';
   setEventType: (type: 'cycle' | 'intimacy' | 'memorable') => void;
+  initialDate?: string;
 }
 
-const AddEventModal: React.FC<AddEventModalProps> = ({ onClose, onAdd, eventType, setEventType }) => {
+const AddEventModal: React.FC<AddEventModalProps> = ({ onClose, onAdd, eventType, setEventType, initialDate }) => {
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: initialDate || new Date().toISOString().split('T')[0],
     cycleType: 'period_start',
     memorableType: 'anniversary',
     title: '',
     notes: '',
     isRecurring: true,
+    symptoms: [] as string[],
   });
+
+  const commonSymptoms = [
+    'cramps', 'headache', 'mood_swings', 'fatigue',
+    'bloating', 'acne', 'breast_tenderness', 'nausea',
+    'back_pain', 'irritability', 'anxiety', 'food_cravings'
+  ];
+
+  const toggleSymptom = (symptom: string) => {
+    setFormData({
+      ...formData,
+      symptoms: formData.symptoms.includes(symptom)
+        ? formData.symptoms.filter(s => s !== symptom)
+        : [...formData.symptoms, symptom]
+    });
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -578,12 +615,12 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ onClose, onAdd, eventType
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div 
-        className="bg-white rounded-2xl w-full max-w-md p-6"
+      <div
+        className="bg-white rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="text-lg font-semibold text-gray-800 mb-4">Add Event</h3>
-        
+
         {/* Event Type Tabs */}
         <div className="flex gap-2 mb-4">
           {[
@@ -594,11 +631,10 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ onClose, onAdd, eventType
             <button
               key={key}
               onClick={() => setEventType(key as 'cycle' | 'intimacy' | 'memorable')}
-              className={`flex-1 py-2 text-sm rounded-lg transition-all ${
-                eventType === key
-                  ? 'bg-rose-100 text-rose-700 border border-rose-300'
-                  : 'bg-gray-50 text-gray-600 border border-gray-200'
-              }`}
+              className={`flex - 1 py - 2 text - sm rounded - lg transition - all ${eventType === key
+                ? 'bg-rose-100 text-rose-700 border border-rose-300'
+                : 'bg-gray-50 text-gray-600 border border-gray-200'
+                } `}
             >
               {label}
             </button>
@@ -620,19 +656,49 @@ const AddEventModal: React.FC<AddEventModalProps> = ({ onClose, onAdd, eventType
 
           {/* Cycle Type */}
           {eventType === 'cycle' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
-              <select
-                value={formData.cycleType}
-                onChange={(e) => setFormData({ ...formData, cycleType: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-transparent"
-              >
-                <option value="period_start">Period Started</option>
-                <option value="period_end">Period Ended</option>
-                <option value="ovulation">Ovulation</option>
-                <option value="pms_start">PMS Started</option>
-              </select>
-            </div>
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Event Type</label>
+                <select
+                  value={formData.cycleType}
+                  onChange={(e) => setFormData({ ...formData, cycleType: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-transparent"
+                >
+                  <option value="period_start">Period Started</option>
+                  <option value="period_end">Period Ended</option>
+                  <option value="symptom_log">Symptom Log</option>
+                  <option value="mood_log">Mood Log</option>
+                </select>
+              </div>
+
+              {/* Symptoms Selector */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Symptoms (select all that apply)</label>
+                <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 border border-gray-200 rounded-lg">
+                  {commonSymptoms.map((symptom) => (
+                    <label
+                      key={symptom}
+                      className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 p-1 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formData.symptoms.includes(symptom)}
+                        onChange={() => toggleSymptom(symptom)}
+                        className="rounded text-rose-500 focus:ring-rose-500"
+                      />
+                      <span className="text-sm text-gray-700 capitalize">
+                        {symptom.replace('_', ' ')}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {formData.symptoms.length > 0 && (
+                  <div className="mt-2 text-xs text-gray-500">
+                    Selected: {formData.symptoms.join(', ')}
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {/* Memorable Type */}

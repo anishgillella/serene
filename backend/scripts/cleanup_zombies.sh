@@ -32,3 +32,4 @@ echo "  Backend processes: $(ps aux | grep -E '[p]ython.*uvicorn' | grep -v grep
 echo "  Total Python processes: $(ps aux | grep -E '[p]ython' | grep -v grep | wc -l | tr -d ' ')"
 
 
+

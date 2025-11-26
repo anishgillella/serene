@@ -12,6 +12,7 @@ from app.services.pinecone_service import pinecone_service
 from app.services.embeddings_service import embeddings_service
 from app.services.reranker_service import reranker_service
 from app.services.s3_service import s3_service
+from app.services.neo4j_service import neo4j_service
 from app.services.transcript_chunker import TranscriptChunker
 from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
@@ -523,6 +524,25 @@ async def generate_all_analysis_and_repair(
                         analysis_path=s3_url_gf
                     )
                 logger.info(f"✅ Stored both analyses metadata in database")
+            
+            # Store in Neo4j Graph
+            try:
+                # Merge topics from both perspectives
+                all_root_causes = list(set(analysis_boyfriend.root_causes + analysis_girlfriend.root_causes))
+                
+                # Use a combined summary or just the first one
+                combined_summary = f"BF POV: {analysis_boyfriend.fight_summary[:100]}... GF POV: {analysis_girlfriend.fight_summary[:100]}..."
+                
+                neo4j_service.create_conflict_node({
+                    "conflict_id": conflict_id,
+                    "summary": combined_summary,
+                    "date": datetime.now().isoformat(),
+                    "root_causes": all_root_causes,
+                    "intensity": 5  # Default, could extract from analysis if added
+                })
+                logger.info(f"✅ Created Conflict node in Neo4j graph")
+            except Exception as e:
+                logger.error(f"❌ Error updating Neo4j graph: {e}")
         except Exception as e:
             logger.error(f"❌ Error storing analyses: {e}")
             import traceback
@@ -608,6 +628,18 @@ async def generate_all_analysis_and_repair(
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/conflicts/{conflict_id}/related")
+async def get_related_conflicts(conflict_id: str):
+    """
+    Get related conflicts from the Neo4j graph (Sagas and Shared Topics).
+    """
+    try:
+        related = neo4j_service.find_related_conflicts(conflict_id)
+        return {"related_conflicts": related}
+    except Exception as e:
+        logger.error(f"❌ Error fetching related conflicts: {e}")
+        return {"related_conflicts": []}
 
 @router.post("/conflicts/{conflict_id}/generate-analysis")
 async def generate_analysis_only(

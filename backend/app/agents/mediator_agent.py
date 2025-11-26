@@ -38,11 +38,72 @@ except ImportError:
 
 logger = logging.getLogger("mediator-agent")
 
+# Import db_service for logging
+try:
+    from app.services.db_service import db_service
+except ImportError:
+    logger.warning("Could not import db_service, logging will be disabled")
+    db_service = None
 
-class SimpleMediator(Agent):
+class LoggingLLMStream(llm.LLMStream):
+    """Wrapper for LLMStream that logs generated text to the database"""
+    def __init__(self, wrapped_stream: llm.LLMStream, session_id: str):
+        super().__init__(chat_ctx=wrapped_stream.chat_ctx, tools=wrapped_stream.tools)
+        self._wrapped_stream = wrapped_stream
+        self.session_id = session_id
+        self._accumulated_text = ""
+        self._logged = False
+
+    async def __anext__(self) -> llm.ChatChunk:
+        try:
+            chunk = await self._wrapped_stream.__anext__()
+            if chunk.choices:
+                for choice in chunk.choices:
+                    if choice.delta.content:
+                        self._accumulated_text += choice.delta.content
+            return chunk
+        except StopAsyncIteration:
+            # Stream finished, log the message
+            if not self._logged and self._accumulated_text.strip() and db_service:
+                self._logged = True
+                asyncio.create_task(self._log_message())
+            raise
+
+    async def aclose(self) -> None:
+        # If closed (e.g. interrupted), log what we have so far
+        if not self._logged and self._accumulated_text.strip() and db_service:
+            self._logged = True
+            asyncio.create_task(self._log_message())
+        
+        await self._wrapped_stream.aclose()
+        
+    async def _log_message(self):
+        try:
+            await asyncio.to_thread(
+                db_service.save_mediator_message,
+                session_id=self.session_id,
+                role="assistant",
+                content=self._accumulated_text
+            )
+        except Exception as e:
+            logger.error(f"Error logging assistant message: {e}")
+
+class LoggingLLM(openai.LLM):
+    """Wrapper for OpenAI LLM that logs responses"""
+    def __init__(self, session_id: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session_id = session_id
+
+    def chat(self, chat_ctx: llm.ChatContext, fnc_ctx: llm.FunctionContext | None = None) -> "llm.LLMStream":
+        stream = super().chat(chat_ctx, fnc_ctx)
+        return LoggingLLMStream(stream, self.session_id)
+
+
+
+class SimpleMediator(voice.Agent):
     """Luna - A simple, friendly relationship mediator"""
     
-    def __init__(self):
+    def __init__(self, session_id: str = None):
         instructions = """
 You are Luna, a friendly and helpful AI mediator for couples.
 
@@ -71,6 +132,37 @@ Your role:
 Remember: You're here to help Adrian, validate his feelings, and subtly guide him towards resolution while being empathetic to his situation.
 """
         super().__init__(instructions=instructions)
+        self.session_id = session_id
+
+    async def on_user_turn_completed(
+        self,
+        turn_ctx: llm.ChatContext,
+        new_message: llm.ChatMessage,
+    ) -> None:
+        """Log user message when turn completes"""
+        if self.session_id and db_service:
+            try:
+                content = ""
+                if hasattr(new_message, 'text_content'):
+                    try:
+                        content = new_message.text_content()
+                    except TypeError:
+                        content = new_message.text_content
+                elif hasattr(new_message, 'content'):
+                    content = str(new_message.content)
+                
+                if content:
+                    await asyncio.to_thread(
+                        db_service.save_mediator_message,
+                        session_id=self.session_id,
+                        role="user",
+                        content=content
+                    )
+            except Exception as e:
+                logger.error(f"Error logging user message: {e}")
+        
+        await super().on_user_turn_completed(turn_ctx, new_message)
+
 
 
 class RAGMediator(voice.Agent):
@@ -81,6 +173,7 @@ class RAGMediator(voice.Agent):
         rag_system,
         conflict_id: str = None,
         relationship_id: str = None,
+        session_id: str = None,
         instructions: str = "",
     ):
         """
@@ -90,11 +183,13 @@ class RAGMediator(voice.Agent):
             rag_system: TranscriptRAGSystem instance for retrieving context
             conflict_id: Current conflict ID
             relationship_id: Relationship ID
+            session_id: Database session ID for logging
             instructions: Instructions for the agent (optional)
         """
         self.rag_system = rag_system
         self.conflict_id = conflict_id
         self.relationship_id = relationship_id
+        self.session_id = session_id
         
         # Default instructions if not provided
         if not instructions:
@@ -179,6 +274,18 @@ Remember: You're here to help Adrian, validate his feelings by connecting them t
                 logger.warning("Empty user query, skipping RAG lookup")
                 return
             
+            # Log user message
+            if self.session_id and db_service:
+                try:
+                    await asyncio.to_thread(
+                        db_service.save_mediator_message,
+                        session_id=self.session_id,
+                        role="user",
+                        content=user_query
+                    )
+                except Exception as e:
+                    logger.error(f"Error logging user message: {e}")
+
             logger.info(f"User query: {user_query}")
             
             # Perform RAG lookup
@@ -246,6 +353,20 @@ async def mediator_entrypoint(ctx: JobContext):
     conflict_id = room_name.replace("mediator-", "").split("?")[0]
     logger.info(f"   ✅ Extracted Conflict ID: {conflict_id}")
     
+    # Create DB session
+    session_id = None
+    if db_service:
+        try:
+            # We don't have partner_id easily available here, so we'll leave it NULL for now
+            # or try to extract from room metadata if available
+            session_id = await asyncio.to_thread(
+                db_service.create_mediator_session,
+                conflict_id=conflict_id
+            )
+            logger.info(f"   ✅ Created DB session: {session_id}")
+        except Exception as e:
+            logger.error(f"   ❌ Failed to create DB session: {e}")
+    
     stage_times = {}
     overall_start = time.time()
     
@@ -285,10 +406,20 @@ async def mediator_entrypoint(ctx: JobContext):
         
         os.environ["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1"
         
-        llm_instance = openai.LLM(
-            api_key=openrouter_key,
-            model="openai/gpt-4o-mini",
-        )
+        os.environ["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1"
+        
+        if session_id:
+            llm_instance = LoggingLLM(
+                session_id=session_id,
+                api_key=openrouter_key,
+                model="openai/gpt-4o-mini",
+            )
+            logger.info(f"   ✅ LoggingLLM initialized with session_id={session_id}")
+        else:
+            llm_instance = openai.LLM(
+                api_key=openrouter_key,
+                model="openai/gpt-4o-mini",
+            )
         
         stage_times['llm_setup'] = time.time() - stage_start
         logger.info(f"   ✅ LLM ready")
@@ -370,10 +501,11 @@ async def mediator_entrypoint(ctx: JobContext):
                 rag_system=rag_system,
                 conflict_id=conflict_id,
                 relationship_id=relationship_id,
+                session_id=session_id,
             )
             logger.info(f"   ✅ RAGMediator created with conflict_id={conflict_id}")
         else:
-            agent = SimpleMediator()
+            agent = SimpleMediator(session_id=session_id)
             logger.info(f"   ✅ SimpleMediator created (RAG unavailable)")
         
         stage_times['agent_create'] = time.time() - stage_start
@@ -409,7 +541,61 @@ async def mediator_entrypoint(ctx: JobContext):
         # This ensures the agent knows about THIS specific conversation, not past ones
         stage_start = time.time()
         transcript_context = None
-        if rag_system and conflict_id:
+        
+        # NEW: Try to use Analysis Summary first (Token Optimization)
+        if conflict_id:
+            try:
+                from app.services.db_service import db_service
+                from app.services.s3_service import s3_service
+                from app.services.neo4j_service import neo4j_service
+                
+                logger.info(f"🔍 Checking for existing analysis summary for conflict {conflict_id}...")
+                analysis_meta = db_service.get_conflict_analysis(conflict_id)
+                
+                if analysis_meta and analysis_meta.get("analysis_path"):
+                    path = analysis_meta["analysis_path"]
+                    # Handle S3 URL vs path
+                    if path.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
+                        path = path.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+                    elif path.startswith("https://"):
+                         path = path.split(f"{settings.S3_BUCKET_NAME}/", 1)[-1] if f"{settings.S3_BUCKET_NAME}/" in path else path
+                         
+                    file_content = s3_service.download_file(path)
+                    if file_content:
+                        analysis_data = json.loads(file_content.decode('utf-8'))
+                        summary = analysis_data.get('fight_summary', '')
+                        root_causes = analysis_data.get('root_causes', [])
+                        
+                        if summary:
+                            transcript_context = (
+                                f"📝 CONFLICT SUMMARY (Generated from Analysis):\n"
+                                f"{summary}\n\n"
+                                f"ROOT CAUSES:\n"
+                                f"{root_causes}\n\n"
+                                f"NOTE: This is a summary. Full transcript is available on request."
+                            )
+                            logger.info(f"   ✅ Using existing analysis summary instead of full transcript (Tokens saved!)")
+                            
+                            # NEW: Add Graph History (Neo4j)
+                            try:
+                                related_conflicts = neo4j_service.find_related_conflicts(conflict_id)
+                                if related_conflicts:
+                                    graph_context = "\n\n🕸️ RELATED CONFLICT HISTORY (from Graph Database):\n"
+                                    for rc in related_conflicts:
+                                        reason = rc.get('reason', 'Related')
+                                        summary = rc.get('summary', 'No summary')[:100]
+                                        date = rc.get('id', 'Unknown Date') # Using ID as proxy for date if needed, or fetch date
+                                        graph_context += f"- {reason}: Conflict {date} ({summary}...)\n"
+                                    
+                                    transcript_context += graph_context
+                                    logger.info(f"   ✅ Added {len(related_conflicts)} related conflicts from Neo4j to context")
+                            except Exception as graph_error:
+                                logger.warning(f"   ⚠️ Failed to fetch graph history: {graph_error}")
+
+            except Exception as e:
+                logger.warning(f"   ⚠️ Failed to fetch analysis summary: {e}")
+
+        if not transcript_context and rag_system and conflict_id:
             logger.info(f"📚 Fetching initial transcript context for CURRENT conflict {conflict_id}...")
             try:
                 from app.services.pinecone_service import pinecone_service
@@ -601,7 +787,36 @@ async def mediator_entrypoint(ctx: JobContext):
                     f"- Consider upcoming anniversaries or events that could be positive opportunities"
                 )
                 logger.info("   ✅ Greeting will include calendar context")
-            else:
+            
+            # Add conflict memory if transcript context is available
+            if transcript_context and calendar_service:
+                try:
+                    # Extract key topic from transcript for semantic search
+                    # Use first 300 chars as query to find similar past conflicts
+                    topic_query = transcript_context[:300]
+                    
+                    conflict_memory = calendar_service.get_conflict_memory_context(
+                        current_topic=topic_query,
+                        relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
+                    )
+                    
+                    if conflict_memory:
+                        greeting_instructions = (
+                            f"{greeting_instructions}\n\n"
+                            f"{conflict_memory}\n\n"
+                            f"CONFLICT MEMORY GUIDANCE:\n"
+                            f"- If the current topic matches a past conflict, reference it naturally\n"
+                            f"- Example: 'I notice you've discussed this before on [date]...'\n"
+                            f"- Use past patterns to identify recurring issues\n"
+                            f"- Reference what worked before: 'Last time you tried X - did that help?'\n"
+                            f"- Don't overwhelm - only mention if directly relevant\n"
+                            f"- Help Adrian see patterns: 'This seems to resurface when...'"
+                        )
+                        logger.info("   ✅ Greeting will include conflict memory context")
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Error retrieving conflict memory: {e}")
+            
+            if not transcript_context:
                 logger.warning("   ⚠️ No transcript context available - agent will greet without conversation details")
                 # Still mention that you can help, but don't claim to have the transcript
                 greeting_instructions = (
@@ -643,6 +858,18 @@ async def mediator_entrypoint(ctx: JobContext):
             logger.info(f"   {stage:20s}: {duration:6.2f}s")
         logger.info(f"   {'Total Setup':20s}: {sum(stage_times.values()):6.2f}s")
         logger.info(f"   {'Overall':20s}: {total_time:6.2f}s")
+        
+        # End DB session
+        if session_id and db_service:
+            try:
+                await asyncio.to_thread(
+                    db_service.end_mediator_session,
+                    session_id=session_id
+                )
+                logger.info(f"   ✅ Ended DB session: {session_id}")
+            except Exception as e:
+                logger.error(f"   ❌ Failed to end DB session: {e}")
+                
         logger.info(f"✅ Session closed")
 
 

@@ -13,52 +13,58 @@ A voice-based AI mediator that helps couples navigate conflicts through empathet
 - Provides empathetic, contextualized responses through voice
 
 **Key Features:**
-- ✅ Real-time voice conversations with dual speaker identification
-- ✅ RAG system that fetches current conflict as PRIMARY context, profiles/past conflicts as secondary
-- ✅ Conflict analysis and repair plan generation
-- ✅ Post-fight session reflection with Luna
-- ✅ PDF upload for partner profiles
+- ✅ **Real-time Voice Mediation**: Dual speaker identification with < 500ms latency.
+- ✅ **Cycle-Aware Context**: Calendar integration that informs Luna about cycle phases and emotional context.
+- ✅ **Relationship Intelligence**: Graph database (Neo4j) tracks recurring themes and conflict sagas.
+- ✅ **Conflict Analytics**: Dashboard showing conflict frequency, intensity trends, and resolution rates.
+- ✅ **Smart RAG**: 3-stage retrieval (Summary → Graph → Transcript) for optimal context.
+- ✅ **Post-Fight Reflection**: Guided repair plans and retrospective analysis.
 
 ---
 
 ## System Architecture
 
 ```
-User (Browser) → React Frontend → LiveKit Cloud → Python Agent → RAG + LLM → TTS Response
+User (Browser) → React Frontend → LiveKit Cloud → Python Agent → RAG + Graph + LLM → TTS Response
 ```
 
 **Components:**
-- **Frontend**: React 18 + Vite (real-time transcription display, analysis/repair views)
+- **Frontend**: React 18 + Vite (real-time transcription, analysis, graph visualization)
 - **Backend**: FastAPI (token generation, transcript storage, analysis endpoints)
 - **Agent**: LiveKit voice agent with Deepgram STT → OpenRouter LLM → ElevenLabs TTS
 - **RAG**: Pinecone vector DB + Voyage-3 embeddings + Voyage-Rerank-2
-- **Storage**: PostgreSQL (metadata) + S3 (documents) + Pinecone (vectors)
+- **Graph Brain**: Neo4j (tracks relationships between conflicts and recurring topics)
+- **Storage**: PostgreSQL (metadata) + S3 (documents) + Pinecone (vectors) + Neo4j (graph)
 
 ---
 
 ## RAG Strategy (Critical Design)
 
-**Two-Stage Context Retrieval:**
+**Three-Stage Context Retrieval:**
 
-1. **PRIMARY CONTEXT** (Always Included)
-   - ALL chunks from current conflict (via Pinecone filter)
-   - Maintained in conversation order
-   - NOT reranked (preserves full context)
-   - Result: User asking "summarize this" gets ONLY current conversation
+1. **SUMMARY CONTEXT** (Optimization - Phase 1)
+   - Checks if `conflict_analysis` exists for the current session.
+   - If yes, loads the 300-token summary instead of the 5000-token transcript.
+   - **Benefit**: 94% token reduction + faster startup.
 
-2. **SECONDARY CONTEXT** (Supplementary)
-   - Profiles: Top-3 relevant profile chunks
-   - Past conflicts: Top-5 relevant chunks from other conversations
-   - Reranked to top-7 most relevant
-   - Result: Luna can reference related patterns but won't confuse conversations
+2. **GRAPH CONTEXT** (Relationship Intelligence - Phase 2)
+   - Queries Neo4j for "Related Conflicts".
+   - Finds "Sagas" (direct continuations) and "Recurring Themes" (shared topics).
+   - **Benefit**: Luna knows *"This is the 3rd time you fought about Money"*.
 
-**RAG Flow:**
-1. Generate query embedding (Voyage-3) → ~100ms
-2. Fetch current conflict chunks (Pinecone filter) → ~150ms
-3. Fetch profiles + past conflicts (parallel queries) → ~200ms
-4. Rerank secondary context (Voyage-Rerank-2) → ~100ms
-5. Format & inject into LLM → LLM response → TTS
-6. **Total latency: ~1.2-2.2s per turn**
+3. **TRANSCRIPT RAG** (Fallback/Deep Dive)
+   - If no summary exists, fetches full transcript chunks from Pinecone.
+   - Used when user asks specific questions about "what was said".
+
+---
+
+## Graph Memory (Neo4j)
+
+To solve the "Kitchen Sink" problem (fights about everything) and "Sagas" (multi-day fights), we use a Graph Database.
+
+- **Nodes**: `Conflict`, `Topic`, `Person`
+- **Edges**: `(:Conflict)-[:ABOUT]->(:Topic)`, `(:Conflict)-[:EVOLVED_FROM]->(:Conflict)`
+- **Visualization**: Frontend shows a timeline of related conflicts and badges for recurring themes.
 
 ---
 
@@ -72,6 +78,7 @@ User (Browser) → React Frontend → LiveKit Cloud → Python Agent → RAG + L
 | **Embeddings** | Voyage-3 (1024 dimensions) |
 | **Reranking** | Voyage-Rerank-2 |
 | **Vector DB** | Pinecone (4 namespaces: transcripts, profiles, analysis, repair_plans) |
+| **Graph DB** | Neo4j Community (Docker) |
 | **Backend** | FastAPI + PostgreSQL + S3 |
 | **Frontend** | React 18 + Vite + TailwindCSS |
 | **Chunking** | LangChain RecursiveCharacterTextSplitter (1000 chars, 200 overlap) |
@@ -82,36 +89,36 @@ User (Browser) → React Frontend → LiveKit Cloud → Python Agent → RAG + L
 
 ### Prerequisites
 - Python 3.9+, Node.js 16+
+- Docker (for Neo4j)
 - PostgreSQL database
 - API Keys: LiveKit, Deepgram, OpenRouter, ElevenLabs, Voyage AI, Pinecone, AWS S3
 
 ### Local Development
 
-**1. Backend:**
+**1. Infrastructure:**
+```bash
+docker-compose up -d  # Starts Neo4j
+```
+
+**2. Backend:**
 ```bash
 cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 
-# Create .env with API keys:
-# LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
-# DEEPGRAM_API_KEY, OPENROUTER_API_KEY, ELEVENLABS_API_KEY
-# VOYAGE_API_KEY, PINECONE_API_KEY
-# AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
-# DATABASE_URL, SUPABASE_URL, SUPABASE_KEY
-
+# Create .env with API keys (see config.py)
 python -m uvicorn app.main:app --reload
 ```
 
-**2. Agent (separate terminal):**
+**3. Agent (separate terminal):**
 ```bash
 cd backend
 source venv/bin/activate
 python start_agent.py
 ```
 
-**3. Frontend (separate terminal):**
+**4. Frontend (separate terminal):**
 ```bash
 cd frontend
 npm install
@@ -121,16 +128,21 @@ npm run dev
 **Access:**
 - Frontend: http://localhost:5175
 - API: http://localhost:8000
-- Docs: http://localhost:8000/docs
+- Neo4j Browser: http://localhost:7474 (user: neo4j, pass: password)
 
 ---
 
 ## Design Decisions
 
-### Why Two-Stage RAG?
-- **Problem**: If we query entire corpus and rerank, other conflicts can overshadow current one
-- **Solution**: Always fetch ENTIRE current conflict (no reranking), then supplementary context separately
-- **Benefit**: Users always get accurate summary of "this" conversation without mixing conflicts
+### Why Graph Database (Neo4j)?
+- **Problem**: Vector search is bad at structural queries like "How did our money fights evolve?".
+- **Solution**: Neo4j explicitly links conflicts by Topic and Saga.
+- **Benefit**: Luna can track the *story* of the relationship, not just isolated events.
+
+### Why Summary-First?
+- **Problem**: Loading full transcripts (5k+ tokens) is slow and expensive.
+- **Solution**: Use the generated analysis summary (300 tokens) as primary context.
+- **Benefit**: Faster response times and better focus on core issues.
 
 ### Why These Technologies?
 | Choice | Rationale |
@@ -151,10 +163,15 @@ npm run dev
 
 ## Key Files
 
-- `backend/app/services/transcript_rag.py` - RAG lookup logic (primary + secondary)
-- `backend/app/agents/mediator_agent.py` - Voice agent with context fetching
-- `backend/app/routes/post_fight.py` - Analysis & repair plan generation
+- `backend/app/services/neo4j_service.py` - Graph operations
+- `backend/app/services/transcript_rag.py` - Vector RAG logic
+- `backend/app/agents/mediator_agent.py` - Voice agent with Graph+Summary context
+- `backend/app/routes/post_fight.py` - Analysis generation & Graph ingestion
+- `backend/app/routes/analytics.py` - Analytics data endpoints
 - `frontend/src/pages/PostFightSession.tsx` - Analysis/repair display
+- `frontend/src/pages/Calendar.tsx` - Cycle tracking & event management
+- `frontend/src/pages/Analytics.tsx` - Conflict trends dashboard
+- `frontend/src/components/RelatedConflicts.tsx` - Graph visualization UI
 
 ---
 
@@ -177,7 +194,7 @@ npm run dev
 1. Voice-triggered conflict analysis ("Luna, analyze this conflict")
 2. Chapter-level PDF queries with metadata preservation
 3. Multi-tenant support for multiple relationships
-4. Advanced pattern detection across conflicts
+4. Advanced pattern detection across conflicts (using Graph Data Science)
 5. Partner-specific voice cloning for TTS
 
 ---

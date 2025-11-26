@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { ArrowLeft, MessageCircle, Sparkles, Brain, Heart, Shield, Zap, ChevronRight, Play, Pause, RotateCcw, Volume2, VolumeX, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { RelatedConflicts } from '@/components/RelatedConflicts';
+import { Button } from "@/components/ui/button";
 import TranscriptBubble from '../components/TranscriptBubble';
 import MediatorModal from '../components/MediatorModal';
-import { 
-  BarChart4Icon, RefreshCwIcon, FileTextIcon, SparklesIcon, HeartIcon, 
-  LoaderIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon, 
+import {
+  BarChart4Icon, RefreshCwIcon, FileTextIcon, SparklesIcon, HeartIcon,
+  LoaderIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon,
   AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, XIcon, SendIcon, MicIcon, MicOffIcon, MessageCircleIcon
 } from 'lucide-react';
 
@@ -43,7 +46,7 @@ const PostFightSession = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const state = location.state as LocationState | null;
-  
+
   console.log('🚀 PostFightSession Component Mounted/Rendered');
   console.log('📍 Location:', {
     pathname: location.pathname,
@@ -51,13 +54,13 @@ const PostFightSession = () => {
     state: location.state,
     key: location.key
   });
-  
+
   const [isPrivateMode, setIsPrivateMode] = useState(false);
-  
+
   // Refs must be declared before useEffects that use them
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasAutoAnalyzedRef = useRef<boolean>(false);
-  
+
   // Initialize conflictId from state - use a function to access location.state safely
   const [conflictId, setConflictId] = useState<string | null>(() => {
     const initialState = (location.state as LocationState | null)?.conflict_id;
@@ -75,7 +78,7 @@ const PostFightSession = () => {
     console.log('⚠️ No conflictId found in initial state - will generate one');
     return null;
   });
-  
+
   // Auto-generate conflict ID if none exists (runs once on mount)
   useEffect(() => {
     const generateConflictId = async () => {
@@ -87,7 +90,7 @@ const PostFightSession = () => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
           });
-          
+
           if (response.ok) {
             const data = await response.json();
             if (data.conflict_id) {
@@ -115,10 +118,10 @@ const PostFightSession = () => {
         }
       }
     };
-    
+
     generateConflictId();
   }, []); // Only run once on mount
-  
+
   // Update conflictId when location state changes (e.g., navigating from History)
   useEffect(() => {
     console.log('🔄 useEffect: Checking for conflictId updates', {
@@ -127,7 +130,7 @@ const PostFightSession = () => {
       locationState: location.state,
       locationSearch: location.search
     });
-    
+
     // Check navigation state
     if (state?.conflict_id) {
       if (state.conflict_id !== conflictId) {
@@ -140,7 +143,7 @@ const PostFightSession = () => {
     } else {
       console.log('⚠️ No conflict_id in navigation state');
     }
-    
+
     // Also check URL params as fallback
     const urlParams = new URLSearchParams(location.search);
     const urlConflictId = urlParams.get('conflict_id');
@@ -150,7 +153,7 @@ const PostFightSession = () => {
       hasAutoAnalyzedRef.current = false;
     }
   }, [state?.conflict_id, location.search, location.state, conflictId]);
-  
+
   const [analysisBoyfriend, setAnalysisBoyfriend] = useState<ConflictAnalysis | null>(null);
   const [repairPlanBoyfriend, setRepairPlanBoyfriend] = useState<RepairPlan | null>(null);
   const [repairPlanGirlfriend, setRepairPlanGirlfriend] = useState<RepairPlan | null>(null);
@@ -161,21 +164,21 @@ const PostFightSession = () => {
   const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
-  
+
   const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
-  
+
   // Initialize messages with transcript (merge consecutive messages from same speaker)
   const [messages, setMessages] = useState<Message[]>(() => {
     const initialMessages: Message[] = [];
-    
+
     if (state?.transcript && state.transcript.length > 0) {
       state.transcript.forEach((line: string) => {
         const boyfriendMatch = line.match(/^(?:Adrian Malhotra|Boyfriend|Speaker\s+1):\s*(.+)$/i);
         const girlfriendMatch = line.match(/^(?:Elara Voss|Girlfriend|Speaker\s+2):\s*(.+)$/i);
-        
+
         let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
         let messageText = '';
-        
+
         if (boyfriendMatch) {
           currentSpeaker = 'speaker1';
           messageText = boyfriendMatch[1].trim();
@@ -189,7 +192,7 @@ const PostFightSession = () => {
             messageText = cleanedText;
           }
         }
-        
+
         if (currentSpeaker && messageText) {
           // Check if last message is from same speaker - merge them
           const lastMessage = initialMessages[initialMessages.length - 1];
@@ -206,7 +209,7 @@ const PostFightSession = () => {
         }
       });
     }
-    
+
     return initialMessages;
   });
 
@@ -223,14 +226,14 @@ const PostFightSession = () => {
         try {
           console.log(`📖 Loading transcript for conflict ${conflictId}...`);
           const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`);
-          
+
           if (response.ok) {
             const data = await response.json();
             console.log('📄 API response:', data);
-            
+
             // Check if transcript is in the response (API returns { conflict: {...}, transcript: [...], message: "..." })
             let transcriptLines: string[] = [];
-            
+
             if (data.transcript) {
               if (Array.isArray(data.transcript)) {
                 transcriptLines = data.transcript;
@@ -249,7 +252,7 @@ const PostFightSession = () => {
                 transcriptLines = text.split('\n').filter((line: string) => line.trim());
               }
             }
-            
+
             if (transcriptLines.length > 0) {
               console.log(`📝 Parsing ${transcriptLines.length} transcript lines...`);
               // Parse and add to messages
@@ -257,10 +260,10 @@ const PostFightSession = () => {
               transcriptLines.forEach((line: string) => {
                 const boyfriendMatch = line.match(/^(?:Adrian Malhotra|Boyfriend|Speaker\s+1|partner_a|Speaker\s+0):\s*(.+)$/i);
                 const girlfriendMatch = line.match(/^(?:Elara Voss|Girlfriend|Speaker\s+2|partner_b|Speaker\s+1):\s*(.+)$/i);
-                
+
                 let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
                 let messageText = '';
-                
+
                 if (boyfriendMatch) {
                   currentSpeaker = 'speaker1';
                   messageText = boyfriendMatch[1].trim();
@@ -278,7 +281,7 @@ const PostFightSession = () => {
                     }
                   }
                 }
-                
+
                 if (currentSpeaker && messageText) {
                   const lastMessage = newMessages[newMessages.length - 1];
                   if (lastMessage && lastMessage.speaker === currentSpeaker) {
@@ -293,7 +296,7 @@ const PostFightSession = () => {
                   }
                 }
               });
-              
+
               if (newMessages.length > 0) {
                 setMessages(newMessages);
                 console.log(`✅ Loaded ${newMessages.length} messages from transcript`);
@@ -312,7 +315,7 @@ const PostFightSession = () => {
         }
       }
     };
-    
+
     loadTranscript();
   }, [conflictId, state?.transcript, apiUrl]);
 
@@ -361,7 +364,7 @@ const PostFightSession = () => {
     }
 
     setLoadingAnalysis(true);
-    
+
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-analysis`, {
         method: 'POST',
@@ -380,7 +383,7 @@ const PostFightSession = () => {
 
       const data = await response.json();
       console.log('📦 Analysis API Response:', data);
-      
+
       if (data.success) {
         if (data.analysis_boyfriend) {
           console.log('✅ Setting analysisBoyfriend');
@@ -418,7 +421,7 @@ const PostFightSession = () => {
     }
 
     setLoadingRepairPlan(true);
-    
+
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-repair-plans`, {
         method: 'POST',
@@ -437,7 +440,7 @@ const PostFightSession = () => {
 
       const data = await response.json();
       console.log('📦 Repair Plans API Response:', data);
-      
+
       if (data.success) {
         if (data.repair_plan_boyfriend) {
           console.log('✅ Setting repairPlanBoyfriend');
@@ -475,7 +478,7 @@ const PostFightSession = () => {
 
     setLoadingAnalysis(true);
     setLoadingRepairPlan(true);
-    
+
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-all`, {
         method: 'POST',
@@ -493,7 +496,7 @@ const PostFightSession = () => {
       console.log('📦 Response keys:', Object.keys(data));
       console.log('📦 Has analysis_boyfriend:', !!data.analysis_boyfriend);
       console.log('📦 Has analysis_girlfriend:', !!data.analysis_girlfriend);
-      
+
       if (data.success) {
         if (data.analysis_boyfriend) {
           console.log('✅ Setting analysisBoyfriend:', data.analysis_boyfriend);
@@ -583,7 +586,7 @@ const PostFightSession = () => {
                 </p>
               </div>
             )}
-            
+
             {/* View Buttons - Always visible */}
             <div className="flex flex-wrap gap-2">
               <button
@@ -595,18 +598,17 @@ const PostFightSession = () => {
                   setActiveView('analysis');
                 }}
                 disabled={!conflictId || loadingAnalysis}
-                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                  activeView === 'analysis' 
-                    ? 'bg-purple-200 text-purple-800 border-2 border-purple-400' 
-                    : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
-                }`}
+                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'analysis'
+                  ? 'bg-purple-200 text-purple-800 border-2 border-purple-400'
+                  : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
+                  }`}
                 title="View conflict analysis (generates both perspectives)"
               >
                 {loadingAnalysis && <LoaderIcon size={16} className="mr-2 animate-spin" />}
                 {!loadingAnalysis && <SparklesIcon size={16} className="mr-2" />}
                 {loadingAnalysis ? 'Generating Analysis...' : 'View Analysis'}
               </button>
-              
+
               <button
                 onClick={async () => {
                   if (!repairPlanBoyfriend && !repairPlanGirlfriend) {
@@ -616,18 +618,17 @@ const PostFightSession = () => {
                   setActiveView('repair');
                 }}
                 disabled={!conflictId || loadingRepairPlan}
-                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${
-                  activeView === 'repair' 
-                    ? 'bg-rose-200 text-rose-800 border-2 border-rose-400' 
-                    : 'bg-rose-100 hover:bg-rose-200 text-rose-700'
-                }`}
+                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'repair'
+                  ? 'bg-rose-200 text-rose-800 border-2 border-rose-400'
+                  : 'bg-rose-100 hover:bg-rose-200 text-rose-700'
+                  }`}
                 title="View repair plans (generates both perspectives)"
               >
                 {loadingRepairPlan && <LoaderIcon size={16} className="mr-2 animate-spin" />}
                 {!loadingRepairPlan && <HeartIcon size={16} className="mr-2" />}
                 {loadingRepairPlan ? 'Generating Repair Plans...' : 'View Repair Plan'}
               </button>
-              
+
               <button
                 onClick={() => {
                   console.log('🔘 Talk to Mediator button clicked', { conflictId, activeView, povView });
@@ -649,8 +650,8 @@ const PostFightSession = () => {
                 <div className="text-center">
                   <FileTextIcon size={48} className="mx-auto mb-3 opacity-30" />
                   <p className="text-sm">
-                    {conflictId 
-                      ? 'Loading transcript...' 
+                    {conflictId
+                      ? 'Loading transcript...'
                       : 'No transcript available. Start a fight capture session to record a conflict.'}
                   </p>
                 </div>
@@ -664,11 +665,10 @@ const PostFightSession = () => {
                     const isBoyfriend = msg.speaker === 'speaker1';
                     return (
                       <div key={idx} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
-                        <div className={`rounded-2xl py-2.5 px-4 max-w-[85%] shadow-sm ${
-                          isBoyfriend 
-                            ? 'bg-blue-100 text-gray-800' 
-                            : 'bg-pink-100 text-gray-800'
-                        } ${msg.isPrivate ? 'opacity-70 border-2 border-rose-300' : ''}`}>
+                        <div className={`rounded-2xl py-2.5 px-4 max-w-[85%] shadow-sm ${isBoyfriend
+                          ? 'bg-blue-100 text-gray-800'
+                          : 'bg-pink-100 text-gray-800'
+                          } ${msg.isPrivate ? 'opacity-70 border-2 border-rose-300' : ''}`}>
                           <div className="text-xs font-semibold mb-1 text-gray-600">
                             {isBoyfriend ? 'Adrian Malhotra' : 'Elara Voss'}
                             {msg.isPrivate && <span className="ml-2 text-rose-500 text-[10px]">🔒 Private</span>}
@@ -703,7 +703,7 @@ const PostFightSession = () => {
                   <XIcon size={18} />
                 </button>
               </div>
-              
+
               {loadingAnalysis ? (
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-purple-500 mr-3" />
@@ -723,8 +723,8 @@ const PostFightSession = () => {
                             <LightbulbIcon size={18} className="text-purple-500 mr-2" />
                             <h4 className="font-semibold text-gray-800">Summary</h4>
                           </div>
-                          {expandedSections.has('summary') ? 
-                            <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                          {expandedSections.has('summary') ?
+                            <ChevronUpIcon size={18} className="text-gray-400" /> :
                             <ChevronDownIcon size={18} className="text-gray-400" />
                           }
                         </button>
@@ -747,8 +747,8 @@ const PostFightSession = () => {
                                 {analysisBoyfriend.root_causes.length}
                               </span>
                             </div>
-                            {expandedSections.has('root_causes') ? 
-                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                            {expandedSections.has('root_causes') ?
+                              <ChevronUpIcon size={18} className="text-gray-400" /> :
                               <ChevronDownIcon size={18} className="text-gray-400" />
                             }
                           </button>
@@ -784,7 +784,7 @@ const PostFightSession = () => {
                               </ul>
                             </div>
                           )}
-                          
+
                           {analysisBoyfriend.unmet_needs_girlfriend.length > 0 && (
                             <div className="bg-pink-50 rounded-xl p-4 border border-pink-100">
                               <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
@@ -818,8 +818,8 @@ const PostFightSession = () => {
                                 {analysisBoyfriend.escalation_points.length}
                               </span>
                             </div>
-                            {expandedSections.has('escalation') ? 
-                              <ChevronUpIcon size={18} className="text-gray-400" /> : 
+                            {expandedSections.has('escalation') ?
+                              <ChevronUpIcon size={18} className="text-gray-400" /> :
                               <ChevronDownIcon size={18} className="text-gray-400" />
                             }
                           </button>
@@ -839,6 +839,11 @@ const PostFightSession = () => {
                       )}
                     </div>
                   )}
+                  {/* Related Conflicts Graph */}
+                  <RelatedConflicts
+                    conflictId={conflictId || ''}
+                    apiBase={import.meta.env.VITE_API_URL || 'http://localhost:8000'}
+                  />
                 </>
               ) : (
                 <div className="text-center py-12 text-gray-500">
@@ -865,8 +870,8 @@ const PostFightSession = () => {
                   <XIcon size={18} />
                 </button>
               </div>
-              
-              
+
+
               {loadingRepairPlan ? (
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-rose-500 mr-3" />
@@ -946,14 +951,14 @@ const PostFightSession = () => {
                       )}
                     </div>
                   )}
-                  
+
                   {povView === 'girlfriend' && repairPlanGirlfriend && (
                     <div className="space-y-4">
                       <div className="bg-pink-50 border border-pink-200 rounded-lg p-3 mb-4">
                         <p className="text-sm text-pink-800 font-medium">👤 Girlfriend's Personalized Repair Plan</p>
                         <p className="text-xs text-pink-600 mt-1">Tailored based on your profile and this conflict</p>
                       </div>
-                      
+
                       {/* Steps */}
                       <div className="bg-white rounded-xl p-4 border border-rose-100">
                         <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
@@ -1051,12 +1056,12 @@ const PostFightSession = () => {
           isOpen={isMediatorModalOpen}
           onClose={() => setIsMediatorModalOpen(false)}
           conflictId={conflictId || ''}
-                    context={{
-                      activeView,
-                      povView,
-                      hasAnalysis: !!analysisBoyfriend,
-                      hasRepairPlans: !!(repairPlanBoyfriend || repairPlanGirlfriend)
-                    }}
+          context={{
+            activeView,
+            povView,
+            hasAnalysis: !!analysisBoyfriend,
+            hasRepairPlans: !!(repairPlanBoyfriend || repairPlanGirlfriend)
+          }}
         />
       )}
     </div>

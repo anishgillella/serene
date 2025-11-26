@@ -340,6 +340,64 @@ class PineconeService:
             logger.error(traceback.format_exc())
             raise
 
+    def search_similar_conflicts(
+        self,
+        query_text: str,
+        relationship_id: str,
+        top_k: int = 3,
+        namespace: str = "analysis"
+    ):
+        """
+        Search for past conflicts similar to the query text.
+        
+        Args:
+            query_text: User's current complaint/topic
+            relationship_id: Filter by relationship
+            top_k: Number of similar conflicts to return
+            namespace: Pinecone namespace to search
+            
+        Returns:
+            List of similar conflict summaries with metadata
+        """
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping search")
+            return []
+        
+        try:
+            from app.services.embeddings_service import embeddings_service
+            
+            # Generate embedding for query
+            query_embedding = embeddings_service.embed_query(query_text)
+            
+            # Search Pinecone with relationship filter
+            results = self.query(
+                query_embedding=query_embedding,
+                top_k=top_k,
+                namespace=namespace,
+                filter={"relationship_id": {"$eq": relationship_id}}
+            )
+            
+            # Extract and format results
+            similar_conflicts = []
+            if results and results.matches:
+                for match in results.matches:
+                    similar_conflicts.append({
+                        "conflict_id": match.metadata.get("conflict_id", ""),
+                        "summary": match.metadata.get("fight_summary", "")[:200],
+                        "root_causes": match.metadata.get("root_causes", []),
+                        "similarity_score": match.score,
+                        "date": match.metadata.get("analyzed_at", "Unknown")
+                    })
+            
+            logger.info(f"✅ Found {len(similar_conflicts)} similar conflicts for query")
+            return similar_conflicts
+            
+        except Exception as e:
+            logger.error(f"❌ Error searching similar conflicts: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return []
+
 # Singleton instance
 pinecone_service = PineconeService()
 

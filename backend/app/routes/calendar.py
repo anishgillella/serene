@@ -21,9 +21,11 @@ router = APIRouter(prefix="/api/calendar", tags=["calendar"])
 class CycleEventCreate(BaseModel):
     """Request model for creating a cycle event."""
     partner_id: str = Field(default="partner_b", description="Partner ID (partner_a or partner_b)")
-    event_type: str = Field(..., description="Event type: period_start, period_end, ovulation, etc.")
+    event_type: str = Field(..., description="Event type: period_start, period_end, symptom_log, mood_log")
     event_date: date = Field(..., description="Date of the event")
     notes: Optional[str] = Field(None, description="Optional notes")
+    symptoms: Optional[List[str]] = Field(None, description="Array of symptoms (e.g., ['cramps', 'headache'])")
+
 
 
 class MemorableDateCreate(BaseModel):
@@ -80,9 +82,7 @@ class InsightsResponse(BaseModel):
 @router.post("/cycle-events", summary="Create a cycle event")
 async def create_cycle_event(event: CycleEventCreate):
     """
-    Create a new cycle event (period start, ovulation, etc.).
-    
-    If event_type is 'period_start', cycle predictions will be automatically updated.
+    Create a new cycle event (period start, symptom log, mood log, etc.).
     """
     if not calendar_service:
         raise HTTPException(status_code=500, detail="Calendar service not available")
@@ -91,7 +91,8 @@ async def create_cycle_event(event: CycleEventCreate):
         partner_id=event.partner_id,
         event_type=event.event_type,
         event_date=event.event_date,
-        notes=event.notes
+        notes=event.notes,
+        symptoms=event.symptoms
     )
     
     if not event_id:
@@ -146,37 +147,20 @@ async def get_cycle_phase(
 
 @router.get("/cycle-predictions", summary="Get cycle predictions")
 async def get_cycle_predictions(
-    partner_id: str = Query(default="partner_b", description="Partner ID"),
-    start_date: Optional[date] = Query(None, description="Start date"),
-    end_date: Optional[date] = Query(None, description="End date")
+    partner_id: str = Query(default="partner_b", description="Partner ID")
 ):
-    """Get predicted cycle events based on historical data."""
+    """
+    Get predicted cycle events for next 2 months based on historical data.
+    Predictions are calculated dynamically, not stored in database.
+    """
     if not calendar_service:
         raise HTTPException(status_code=500, detail="Calendar service not available")
     
     predictions = calendar_service.get_cycle_predictions(
-        partner_id=partner_id,
-        start_date=start_date,
-        end_date=end_date
+        partner_id=partner_id
     )
     
     return {"predictions": predictions, "count": len(predictions)}
-
-
-@router.post("/cycle-predictions/update", summary="Update cycle predictions")
-async def update_cycle_predictions(
-    partner_id: str = Query(default="partner_b", description="Partner ID")
-):
-    """Force update cycle predictions based on latest data."""
-    if not calendar_service:
-        raise HTTPException(status_code=500, detail="Calendar service not available")
-    
-    success = calendar_service.update_cycle_predictions(partner_id=partner_id)
-    
-    if not success:
-        raise HTTPException(status_code=400, detail="Failed to update predictions - not enough cycle data")
-    
-    return {"success": True, "message": "Cycle predictions updated"}
 
 
 # =========================================================================

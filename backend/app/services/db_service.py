@@ -2,6 +2,7 @@
 Database service for direct PostgreSQL access (bypasses Supabase RLS)
 """
 import os
+import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Dict, Any, Optional
@@ -175,16 +176,38 @@ class DatabaseService:
             raise e
     
     def save_mediator_message(self, session_id: str, role: str, content: str) -> Optional[str]:
-        """Save a mediator message (user or assistant/Luna)"""
+        """
+        Save a mediator message by appending to the conversation JSON array.
+        Creates a new row if this is the first message, otherwise updates existing row.
+        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            # Create message object
+            message_obj = {
+                "role": role,
+                "content": content,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Try to insert a new row, or update if row already exists (using ON CONFLICT)
             cursor.execute("""
-                INSERT INTO mediator_messages (session_id, role, content, created_at)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO mediator_messages (session_id, content, created_at, updated_at)
+                VALUES (%s, %s::jsonb, %s, %s)
+                ON CONFLICT (session_id) DO UPDATE
+                SET 
+                    content = mediator_messages.content || %s::jsonb,
+                    updated_at = %s
                 RETURNING id;
-            """, (session_id, role, content, datetime.now()))
+            """, (
+                session_id, 
+                json.dumps([message_obj]),  # For INSERT: array with one message
+                datetime.now(), 
+                datetime.now(),
+                json.dumps([message_obj]),  # For UPDATE: append to existing array
+                datetime.now()
+            ))
             
             message_id = cursor.fetchone()[0]
             conn.commit()
@@ -196,28 +219,35 @@ class DatabaseService:
             raise e
     
     def get_mediator_messages(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get all messages for a mediator session"""
+        """
+        Get all messages for a mediator session from the JSON content column.
+        Returns messages in chronological order.
+        """
         try:
             conn = self.get_connection()
             cursor = conn.cursor(cursor_factory=RealDictCursor)
             
             cursor.execute("""
-                SELECT role, content, created_at
+                SELECT content
                 FROM mediator_messages
-                WHERE session_id = %s
-                ORDER BY created_at ASC;
+                WHERE session_id = %s;
             """, (session_id,))
             
-            messages = []
-            for row in cursor.fetchall():
-                messages.append({
-                    "role": row["role"],
-                    "content": row["content"],
-                    "created_at": row["created_at"].isoformat() if row["created_at"] else None
-                })
-            
+            row = cursor.fetchone()
             cursor.close()
-            return messages
+            
+            if row and row["content"]:
+                # Content is already a list of message objects
+                # PostgreSQL returns JSONB as Python dict/list automatically
+                messages = row["content"]
+                
+                # Ensure it's a list
+                if isinstance(messages, list):
+                    return messages
+                else:
+                    return []
+            
+            return []
         except Exception as e:
             raise e
     

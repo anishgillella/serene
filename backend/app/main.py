@@ -33,6 +33,8 @@ from .routes import pdf_upload
 app.include_router(pdf_upload.router)
 from .routes import calendar
 app.include_router(calendar.router)
+from .routes import analytics
+app.include_router(analytics.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
