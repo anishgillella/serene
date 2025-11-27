@@ -301,78 +301,20 @@ async def generate_all_analysis_and_repair(
         
         logger.info(f"🚀 Starting parallel analysis and repair plan generation for {conflict_id}")
         
-        # Get transcript from Pinecone (with fallback to S3)
-        transcript_text = ""
-        transcript_result = pinecone_service.get_by_conflict_id(
-            conflict_id=conflict_id,
-            namespace="transcripts"
-        )
+        # Get transcript from PostgreSQL (direct, fast, reliable)
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
         
-        duration = 0.0
-        speaker_labels = {}
-        
-        if transcript_result and transcript_result.metadata:
-            transcript_text = transcript_result.metadata.get("transcript_text", "")
-            duration = transcript_result.metadata.get("duration", 0.0)
-            speaker_labels = transcript_result.metadata.get("speaker_labels", {})
-        else:
-            # Fallback: Try to get from database/S3
-            try:
-                supabase_url = getattr(settings, 'SUPABASE_URL', None) or os.getenv("SUPABASE_URL")
-                supabase_key = getattr(settings, 'SUPABASE_KEY', None) or os.getenv("SUPABASE_KEY")
-                
-                if supabase_url and supabase_key:
-                    supabase: Client = create_client(supabase_url, supabase_key)
-                    conflict_response = supabase.table("conflicts").select("*").eq("id", conflict_id).execute()
-                    
-                    if conflict_response.data and len(conflict_response.data) > 0:
-                        conflict = conflict_response.data[0]
-                        transcript_path = conflict.get("transcript_path")
-                        
-                        if transcript_path:
-                            # Extract S3 key from URL if it's a full URL
-                            s3_key = transcript_path
-                            if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
-                                s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
-                            
-                            file_response = s3_service.download_file(s3_key)
-                            if file_response:
-                                import json
-                                transcript_data = json.loads(file_response.decode('utf-8'))
-                                
-                                if isinstance(transcript_data, list):
-                                    transcript_lines = []
-                                    for segment in transcript_data:
-                                        if isinstance(segment, dict):
-                                            speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
-                                            text = segment.get("text", segment.get("transcript", segment.get("message", "")))
-                                            if text:
-                                                transcript_lines.append(f"{speaker}: {text}")
-                                    transcript_text = "\n".join(transcript_lines)
-                                elif isinstance(transcript_data, dict):
-                                    if "transcript_text" in transcript_data:
-                                        transcript_text = transcript_data["transcript_text"]
-                                    elif "segments" in transcript_data:
-                                        transcript_lines = []
-                                        for segment in transcript_data["segments"]:
-                                            speaker = segment.get("speaker", "Speaker")
-                                            text = segment.get("text", "")
-                                            if text:
-                                                transcript_lines.append(f"{speaker}: {text}")
-                                        transcript_text = "\n".join(transcript_lines)
-                                
-                                duration = conflict.get("duration", 0.0)
-                                speaker_labels = conflict.get("speaker_labels", {})
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to fetch transcript from S3: {e}")
-        
-        if not transcript_text:
+        if not transcript_data:
             raise HTTPException(
                 status_code=404,
                 detail=f"Transcript not found for conflict {conflict_id}. Please ensure the fight was properly captured."
             )
         
-        logger.info(f"📝 Using transcript: {len(transcript_text)} characters")
+        transcript_text = transcript_data.get("transcript_text", "")
+        duration = transcript_data.get("duration", 0.0) if "duration" in transcript_data else 0.0
+        speaker_labels = transcript_data.get("speaker_labels", {}) if "speaker_labels" in transcript_data else {}
+        
+        logger.info(f"📝 Using transcript from PostgreSQL: {len(transcript_text)} characters")
         
         # Use RAG pipeline with reranker to get relevant profile information
         boyfriend_profile = None
@@ -692,119 +634,20 @@ async def generate_analysis_only(
         
         logger.info(f"📝 No existing analysis found, generating new analysis for {conflict_id}")
         
-        # Get transcript (same logic as generate-all)
-        transcript_text = ""
-        transcript_result = pinecone_service.get_by_conflict_id(
-            conflict_id=conflict_id,
-            namespace="transcripts"
-        )
+        # Get transcript directly from PostgreSQL
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
         
-        duration = 0.0
-        speaker_labels = {}
-        
-        if transcript_result and transcript_result.metadata:
-            transcript_text = transcript_result.metadata.get("transcript_text", "")
-            duration = transcript_result.metadata.get("duration", 0.0)
-            speaker_labels = transcript_result.metadata.get("speaker_labels", {})
-        else:
-            # Fallback: Try db_service first (bypasses Supabase RLS), then Supabase
-            try:
-                # Try db_service first (direct PostgreSQL, bypasses RLS)
-                if db_service:
-                    conflict = db_service.get_conflict_by_id(conflict_id)
-                    if conflict and conflict.get("transcript_path"):
-                        transcript_path = conflict.get("transcript_path")
-                        s3_key = transcript_path
-                        if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
-                            s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
-                        
-                        file_response = s3_service.download_file(s3_key)
-                        if file_response:
-                            transcript_data = json.loads(file_response.decode('utf-8'))
-                            
-                            if isinstance(transcript_data, list):
-                                transcript_lines = []
-                                for segment in transcript_data:
-                                    if isinstance(segment, dict):
-                                        speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
-                                        text = segment.get("text", segment.get("transcript", segment.get("message", "")))
-                                        if text:
-                                            transcript_lines.append(f"{speaker}: {text}")
-                                transcript_text = "\n".join(transcript_lines)
-                            elif isinstance(transcript_data, dict):
-                                if "transcript_text" in transcript_data:
-                                    transcript_text = transcript_data["transcript_text"]
-                                elif "segments" in transcript_data:
-                                    transcript_lines = []
-                                    for segment in transcript_data["segments"]:
-                                        speaker = segment.get("speaker", "Speaker")
-                                        text = segment.get("text", "")
-                                        if text:
-                                            transcript_lines.append(f"{speaker}: {text}")
-                                    transcript_text = "\n".join(transcript_lines)
-                            
-                            duration = conflict.get("metadata", {}).get("duration", 0.0) if conflict.get("metadata") else 0.0
-                            speaker_labels = conflict.get("metadata", {}).get("speaker_labels", {}) if conflict.get("metadata") else {}
-                            logger.info(f"✅ Retrieved transcript from S3 via db_service for conflict {conflict_id}")
-                else:
-                    logger.warning("⚠️ db_service not available, trying Supabase fallback")
-            except Exception as db_error:
-                logger.warning(f"⚠️ db_service fallback failed: {db_error}")
-            
-            # Fallback to Supabase if db_service didn't work or wasn't available
-            if not transcript_text:
-                try:
-                    supabase_url = getattr(settings, 'SUPABASE_URL', None) or os.getenv("SUPABASE_URL")
-                    supabase_key = getattr(settings, 'SUPABASE_KEY', None) or os.getenv("SUPABASE_KEY")
-                    
-                    if supabase_url and supabase_key:
-                        supabase: Client = create_client(supabase_url, supabase_key)
-                        conflict_response = supabase.table("conflicts").select("*").eq("id", conflict_id).execute()
-                        
-                        if conflict_response.data and len(conflict_response.data) > 0:
-                            conflict = conflict_response.data[0]
-                            transcript_path = conflict.get("transcript_path")
-                            
-                            if transcript_path:
-                                s3_key = transcript_path
-                                if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
-                                    s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
-                                
-                                file_response = s3_service.download_file(s3_key)
-                                if file_response:
-                                    transcript_data = json.loads(file_response.decode('utf-8'))
-                                    
-                                    if isinstance(transcript_data, list):
-                                        transcript_lines = []
-                                        for segment in transcript_data:
-                                            if isinstance(segment, dict):
-                                                speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
-                                                text = segment.get("text", segment.get("transcript", segment.get("message", "")))
-                                                if text:
-                                                    transcript_lines.append(f"{speaker}: {text}")
-                                        transcript_text = "\n".join(transcript_lines)
-                                    elif isinstance(transcript_data, dict):
-                                        if "transcript_text" in transcript_data:
-                                            transcript_text = transcript_data["transcript_text"]
-                                        elif "segments" in transcript_data:
-                                            transcript_lines = []
-                                            for segment in transcript_data["segments"]:
-                                                speaker = segment.get("speaker", "Speaker")
-                                                text = segment.get("text", "")
-                                                if text:
-                                                    transcript_lines.append(f"{speaker}: {text}")
-                                            transcript_text = "\n".join(transcript_lines)
-                                    
-                                    duration = conflict.get("duration", 0.0)
-                                    speaker_labels = conflict.get("speaker_labels", {})
-                except Exception as e:
-                    logger.warning(f"⚠️ Failed to fetch transcript from Supabase/S3: {e}")
-        
-        if not transcript_text:
+        if not transcript_data:
             raise HTTPException(
                 status_code=404,
                 detail=f"Transcript not found for conflict {conflict_id}. Please ensure the fight was properly captured and stored."
             )
+        
+        transcript_text = transcript_data.get("transcript_text", "")
+        duration = 0.0
+        speaker_labels = {}
+        
+        logger.info(f"✅ Retrieved transcript from PostgreSQL: {len(transcript_text)} characters")
         
         # Use RAG system to get relevant context from ENTIRE corpus (transcripts + profiles)
         # This is faster than sending full transcript and provides better context
@@ -1042,16 +885,13 @@ async def generate_repair_plans_only(
         
         # Get transcript (same logic)
         transcript_text = ""
-        transcript_result = pinecone_service.get_by_conflict_id(
-            conflict_id=conflict_id,
-            namespace="transcripts"
-        )
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
         
         duration = 0.0
         speaker_labels = {}
         
-        if transcript_result and transcript_result.metadata:
-            transcript_text = transcript_result.metadata.get("transcript_text", "")
+        if transcript_data:
+            transcript_text = transcript_data.get("transcript_text", "") if transcript_data else ""
             duration = transcript_result.metadata.get("duration", 0.0)
             speaker_labels = transcript_result.metadata.get("speaker_labels", {})
         else:
@@ -1481,13 +1321,10 @@ async def generate_analysis_and_repair_plans(
         
         # Get transcript from Pinecone or S3
         transcript_text = ""
-        transcript_result = pinecone_service.get_by_conflict_id(
-            conflict_id=conflict_id,
-            namespace="transcripts"
-        )
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
         
-        if transcript_result and transcript_result.metadata:
-            transcript_text = transcript_result.metadata.get("transcript_text", "")
+        if transcript_data:
+            transcript_text = transcript_data.get("transcript_text", "") if transcript_data else ""
         
         if not transcript_text:
             # Fallback to S3
@@ -1753,10 +1590,7 @@ async def analyze_conflict(
                     logger.warning(f"Failed to parse cached analysis: {e}, generating new one")
         
         # Get transcript from Pinecone
-        transcript_result = pinecone_service.get_by_conflict_id(
-            conflict_id=conflict_id,
-            namespace="transcripts"
-        )
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
         
         if not transcript_result or not transcript_result.metadata:
             raise HTTPException(
@@ -1921,10 +1755,7 @@ async def get_repair_plan(
                     logger.warning(f"Failed to parse cached repair plan: {e}, generating new one")
         
         # Get transcript from Pinecone
-        transcript_result = pinecone_service.get_by_conflict_id(
-            conflict_id=conflict_id,
-            namespace="transcripts"
-        )
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
         
         if not transcript_result or not transcript_result.metadata:
             logger.error(f"❌ Transcript not found for conflict {conflict_id}")

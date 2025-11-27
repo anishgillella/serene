@@ -465,7 +465,6 @@ async def mediator_entrypoint(ctx: JobContext):
                 smart_format=True,
                 punctuate=True,
                 interim_results=True,
-                endpointing=300,  # 300ms silence before considering speech complete
             ),
             llm=llm_instance,
             tts=tts_instance,
@@ -483,20 +482,19 @@ async def mediator_entrypoint(ctx: JobContext):
         # Extract relationship_id if available (could be in room metadata or from conflict lookup)
         relationship_id = None
         if conflict_id:
-            # Try to get relationship_id from Pinecone transcript metadata
+            # Try to get relationship_id from PostgreSQL (reliable)
             try:
-                from app.services.pinecone_service import pinecone_service
-                logger.info("   🔍 Fetching relationship_id from Pinecone (async)...")
-                transcript_result = await asyncio.to_thread(
-                    pinecone_service.get_by_conflict_id,
-                    conflict_id=conflict_id,
-                    namespace="transcripts"
-                )
-                if transcript_result and hasattr(transcript_result, 'metadata'):
-                    relationship_id = transcript_result.metadata.get("relationship_id")
-                    logger.info(f"   ✅ Found relationship_id: {relationship_id}")
+                if db_service:
+                    logger.info("   🔍 Fetching relationship_id from PostgreSQL...")
+                    conflict_data = await asyncio.to_thread(
+                        db_service.get_conflict_by_id,
+                        conflict_id=conflict_id
+                    )
+                    if conflict_data:
+                        relationship_id = str(conflict_data.get("relationship_id"))
+                        logger.info(f"   ✅ Found relationship_id: {relationship_id}")
             except Exception as e:
-                logger.warning(f"   ⚠️ Could not fetch relationship_id: {e}")
+                logger.warning(f"   ⚠️ Could not fetch relationship_id from DB: {e}")
         
         # Initialize RAG system (if available)
         rag_system = None

@@ -726,12 +726,112 @@ class DatabaseService:
             self.conn.close()
             self.conn = None
 
-# Global instance
+    
+    def get_conflict_transcript(self, conflict_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get full transcript from rant_messages for a conflict.
+        Returns transcript text and structured messages.
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT partner_id, content, role, created_at
+                        FROM rant_messages
+                        WHERE conflict_id = %s
+                        ORDER BY created_at
+                    """, (conflict_id,))
+                    
+                    messages = cursor.fetchall()
+                    if not messages:
+                        return None
+                    
+                    transcript_lines = []
+                    formatted_messages = []
+                    
+                    for msg in messages:
+                        speaker = "Adrian Malhotra" if msg["partner_id"] == "partner_a" else "Elara Voss"
+                        transcript_lines.append(f"{speaker}: {msg['content']}")
+                        formatted_messages.append({
+                            "partner_id": msg["partner_id"],
+                            "speaker": speaker,
+                            "content": msg["content"],
+                            "role": msg["role"],
+                            "created_at": msg["created_at"].isoformat() if msg["created_at"] else None
+                        })
+                    
+                    return {
+                        "conflict_id": conflict_id,
+                        "transcript_text": "\n\n".join(transcript_lines),
+                        "messages": formatted_messages,
+                        "message_count": len(messages)
+                    }
+        except Exception as e:
+            raise e
+    
+    def get_conflict_with_transcript(self, conflict_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get conflict metadata along with full transcript.
+        Combines data from conflicts and rant_messages tables.
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Get conflict metadata
+                    cursor.execute("""
+                        SELECT id, relationship_id, started_at, ended_at, 
+                               status, duration_seconds, metadata
+                        FROM conflicts
+                        WHERE id = %s
+                    """, (conflict_id,))
+                    
+                    conflict = cursor.fetchone()
+                    if not conflict:
+                        return None
+                    
+                    # Get transcript
+                    transcript = self.get_conflict_transcript(conflict_id)
+                    
+                    return {
+                        "id": str(conflict["id"]),
+                        "relationship_id": str(conflict["relationship_id"]),
+                        "started_at": conflict["started_at"].isoformat() if conflict["started_at"] else None,
+                        "ended_at": conflict["ended_at"].isoformat() if conflict["ended_at"] else None,
+                        "status": conflict["status"],
+                        "duration_seconds": conflict["duration_seconds"],
+                        "metadata": conflict["metadata"],
+                        "transcript_text": transcript["transcript_text"] if transcript else "",
+                        "messages": transcript["messages"] if transcript else [],
+                        "message_count": transcript["message_count"] if transcript else 0
+                    }
+        except Exception as e:
+            raise e
+
+    def upsert_user(self, auth0_id: str, email: str, name: str, picture: str) -> str:
+        """Upsert user and return user ID"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO users (auth0_id, email, name, picture, last_login)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (auth0_id) DO UPDATE SET
+                            email = EXCLUDED.email,
+                            name = EXCLUDED.name,
+                            picture = EXCLUDED.picture,
+                            last_login = EXCLUDED.last_login
+                        RETURNING id;
+                    """, (auth0_id, email, name, picture, datetime.now()))
+                    
+                    user_id = cursor.fetchone()[0]
+                    conn.commit()
+                    return str(user_id)
+        except Exception as e:
+            raise e
+
+# Global singleton instance
 try:
     db_service = DatabaseService()
 except Exception as e:
     print(f"❌ Failed to initialize DatabaseService: {e}")
     db_service = None
-
-
-

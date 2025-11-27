@@ -35,6 +35,8 @@ from .routes import calendar
 app.include_router(calendar.router)
 from .routes import analytics
 app.include_router(analytics.router)
+from .routes import user_routes
+app.include_router(user_routes.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
@@ -197,57 +199,27 @@ async def get_conflict(conflict_id: str):
         if not conflict:
             raise HTTPException(status_code=404, detail=f"Conflict {conflict_id} not found")
         
-        # Get transcript from Pinecone first, then fallback to S3
-        transcript_data = None
+        # Get transcript directly from PostgreSQL
+        transcript_data = []
         try:
-            transcript_result = pinecone_service.get_by_conflict_id(
-                conflict_id=conflict_id,
-                namespace="transcripts"
-            )
+            transcript_result = db_service.get_conflict_transcript(conflict_id)
             
-            if transcript_result and transcript_result.metadata:
-                metadata = transcript_result.metadata
-                transcript_text = metadata.get("transcript_text", "")
+            if transcript_result and transcript_result.get("messages"):
+                # Convert structured messages to array format for frontend
+                # Format: "Speaker: Message"
+                transcript_data = [
+                    f"{msg.get('speaker', 'Speaker')}: {msg.get('content', '')}"
+                    for msg in transcript_result.get("messages", [])
+                ]
+            elif transcript_result and transcript_result.get("transcript_text"):
+                # Fallback to text splitting if messages not available
+                transcript_text = transcript_result.get("transcript_text", "")
+                transcript_data = [line.strip() for line in transcript_text.split('\n') if line.strip()]
                 
-                # Convert transcript text to array format for frontend
-                if transcript_text:
-                    # Split by newlines and filter empty lines
-                    transcript_lines = [line.strip() for line in transcript_text.split('\n') if line.strip()]
-                    transcript_data = transcript_lines
-                else:
-                    # Try to get segments if available
-                    segments = metadata.get("segments", [])
-                    if segments:
-                        transcript_data = [
-                            f"{seg.get('speaker', 'Speaker')}: {seg.get('text', '')}"
-                            for seg in segments
-                        ]
         except Exception as e:
-            logger.error(f"Error retrieving transcript from Pinecone: {e}")
+            logger.error(f"Error retrieving transcript from PostgreSQL: {e}")
             import traceback
             logger.error(traceback.format_exc())
-        
-        # Fallback to S3 if not found in Pinecone
-        if not transcript_data and conflict.get("transcript_path") and s3_service:
-            try:
-                s3_key = conflict["transcript_path"]
-                if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
-                    s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
-                
-                file_response = s3_service.download_file(s3_key)
-                if file_response:
-                    import json
-                    stored_transcript = json.loads(file_response.decode('utf-8'))
-                    if isinstance(stored_transcript, list):
-                        transcript_data = [f"{seg.get('speaker', 'Speaker')}: {seg.get('text', '')}" for seg in stored_transcript if seg.get('text')]
-                    elif isinstance(stored_transcript, dict) and stored_transcript.get("transcript_text"):
-                        transcript_data = stored_transcript["transcript_text"].split('\n')
-                    elif isinstance(stored_transcript, dict) and stored_transcript.get("segments"):
-                        transcript_data = [f"{seg.get('speaker', 'Speaker')}: {seg.get('text', '')}" for seg in stored_transcript["segments"] if seg.get('text')]
-            except Exception as e:
-                logger.error(f"Error retrieving transcript from S3: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
         
         return {
             "conflict": conflict,
