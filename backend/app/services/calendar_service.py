@@ -73,32 +73,28 @@ class CalendarService:
             Event ID if created successfully
         """
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # If this is a period_start, set cycle_day to 1
-            if event_type == "period_start":
-                cycle_day = 1  # First day of period is always day 1
-            
-            # Insert the event
-            cursor.execute("""
-                INSERT INTO cycle_events 
-                (relationship_id, partner_id, event_type, event_date, timestamp, notes, cycle_day, symptoms)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id;
-            """, (relationship_id, partner_id, event_type, event_date, datetime.now(), notes, cycle_day, symptoms))
-            
-            event_id = cursor.fetchone()[0]
-            conn.commit()
-            cursor.close()
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # If this is a period_start, set cycle_day to 1
+                    if event_type == "period_start":
+                        cycle_day = 1  # First day of period is always day 1
+                    
+                    # Insert the event
+                    cursor.execute("""
+                        INSERT INTO cycle_events 
+                        (relationship_id, partner_id, event_type, event_date, timestamp, notes, cycle_day, symptoms)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (relationship_id, partner_id, event_type, event_date, datetime.now(), notes, cycle_day, symptoms))
+                    
+                    event_id = cursor.fetchone()[0]
+                    conn.commit()
             
             logger.info(f"✅ Created cycle event: {event_type} on {event_date} for {partner_id}")
             return str(event_id)
             
         except Exception as e:
             logger.error(f"❌ Error creating cycle event: {e}")
-            if self.db.conn:
-                self.db.conn.rollback()
             return None
     
     def get_cycle_events(
@@ -110,39 +106,36 @@ class CalendarService:
     ) -> List[Dict[str, Any]]:
         """Get cycle events for a partner within a date range."""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Default to last 90 days if no dates specified
-            if not start_date:
-                start_date = date.today() - timedelta(days=90)
-            if not end_date:
-                end_date = date.today() + timedelta(days=30)
-            
-            cursor.execute("""
-                SELECT id, event_type, event_date, notes, cycle_day, cycle_length, timestamp
-                FROM cycle_events
-                WHERE partner_id = %s AND relationship_id = %s
-                AND event_date BETWEEN %s AND %s
-                ORDER BY event_date ASC;
-            """, (partner_id, relationship_id, start_date, end_date))
-            
-            events = []
-            for row in cursor.fetchall():
-                events.append({
-                    "id": str(row[0]),
-                    "type": "cycle",
-                    "event_type": row[1],
-                    "event_date": row[2].isoformat() if row[2] else None,
-                    "title": self._get_cycle_event_title(row[1]),
-                    "notes": row[3],
-                    "cycle_day": row[4],
-                    "cycle_length": row[5],
-                    "color": EVENT_COLORS.get(row[1], "#ec4899"),
-                    "logged_at": row[6].isoformat() if row[6] else None
-                })
-            
-            cursor.close()
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Default to last 90 days if no dates specified
+                    if not start_date:
+                        start_date = date.today() - timedelta(days=90)
+                    if not end_date:
+                        end_date = date.today() + timedelta(days=30)
+                    
+                    cursor.execute("""
+                        SELECT id, event_type, event_date, notes, cycle_day, timestamp
+                        FROM cycle_events
+                        WHERE partner_id = %s AND relationship_id = %s
+                        AND event_date BETWEEN %s AND %s
+                        ORDER BY event_date ASC;
+                    """, (partner_id, relationship_id, start_date, end_date))
+                    
+                    events = []
+                    for row in cursor.fetchall():
+                        events.append({
+                            "id": str(row[0]),
+                            "type": "cycle",
+                            "event_type": row[1],
+                            "event_date": row[2].isoformat() if row[2] else None,
+                            "title": self._get_cycle_event_title(row[1]),
+                            "notes": row[3],
+                            "cycle_day": row[4],
+                            "color": EVENT_COLORS.get(row[1], "#ec4899"),
+                            "logged_at": row[5].isoformat() if row[5] else None
+                        })
+                    
             return events
             
         except Exception as e:
@@ -182,20 +175,18 @@ class CalendarService:
             List of predicted cycle events for next 60 days
         """
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Get last 3 period_start events to calculate average cycle length
-            cursor.execute("""
-                SELECT event_date FROM cycle_events
-                WHERE partner_id = %s AND relationship_id = %s 
-                AND event_type = 'period_start'
-                ORDER BY event_date DESC
-                LIMIT 3;
-            """, (partner_id, relationship_id))
-            
-            period_dates = [row[0] for row in cursor.fetchall()]
-            cursor.close()
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Get last 3 period_start events to calculate average cycle length
+                    cursor.execute("""
+                        SELECT event_date FROM cycle_events
+                        WHERE partner_id = %s AND relationship_id = %s 
+                        AND event_type = 'period_start'
+                        ORDER BY event_date DESC
+                        LIMIT 3;
+                    """, (partner_id, relationship_id))
+                    
+                    period_dates = [row[0] for row in cursor.fetchall()]
             
             if len(period_dates) < 2:
                 logger.info(f"Not enough period data for {partner_id} to predict")
@@ -263,18 +254,16 @@ class CalendarService:
             target_date = date.today()
         
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Get most recent period starts to calculate cycle length
-            cursor.execute("""
-                SELECT event_date FROM cycle_events
-                WHERE partner_id = %s AND event_type = 'period_start' AND event_date <= %s
-                ORDER BY event_date DESC LIMIT 3;
-            """, (partner_id, target_date))
-            
-            period_dates = [row[0] for row in cursor.fetchall()]
-            cursor.close()
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Get most recent period starts to calculate cycle length
+                    cursor.execute("""
+                        SELECT event_date FROM cycle_events
+                        WHERE partner_id = %s AND event_type = 'period_start' AND event_date <= %s
+                        ORDER BY event_date DESC LIMIT 3;
+                    """, (partner_id, target_date))
+                    
+                    period_dates = [row[0] for row in cursor.fetchall()]
             
             if not period_dates:
                 return {
@@ -384,27 +373,25 @@ class CalendarService:
     ) -> Optional[str]:
         """Create a memorable date (anniversary, birthday, milestone)."""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            if not color_tag:
-                color_tag = EVENT_COLORS.get(event_type, "#f59e0b")
-            
-            cursor.execute("""
-                INSERT INTO memorable_dates 
-                (relationship_id, event_type, title, description, event_date, is_recurring, 
-                 reminder_days, color_tag, partner_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id;
-            """, (relationship_id, event_type, title, description, event_date, 
-                  is_recurring, reminder_days, color_tag, partner_id))
-            
-            event_id = cursor.fetchone()[0]
-            conn.commit()
-            cursor.close()
-            
-            logger.info(f"✅ Created memorable date: {title} on {event_date}")
-            return str(event_id)
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    if not color_tag:
+                        color_tag = EVENT_COLORS.get(event_type, "#f59e0b")
+                    
+                    cursor.execute("""
+                        INSERT INTO memorable_dates 
+                        (relationship_id, event_type, title, description, event_date, is_recurring, 
+                         reminder_days, color_tag, partner_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (relationship_id, event_type, title, description, event_date, 
+                          is_recurring, reminder_days, color_tag, partner_id))
+                    
+                    event_id = cursor.fetchone()[0]
+                    conn.commit()
+                    
+                    logger.info(f"✅ Created memorable date: {title} on {event_date}")
+                    return str(event_id)
             
         except Exception as e:
             logger.error(f"❌ Error creating memorable date: {e}")
@@ -421,77 +408,74 @@ class CalendarService:
     ) -> List[Dict[str, Any]]:
         """Get memorable dates within a date range, including recurring events."""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            if not start_date:
-                start_date = date.today() - timedelta(days=30)
-            if not end_date:
-                end_date = date.today() + timedelta(days=365)
-            
-            # Get all memorable dates
-            cursor.execute("""
-                SELECT id, event_type, title, description, event_date, is_recurring, 
-                       reminder_days, color_tag, partner_id
-                FROM memorable_dates
-                WHERE relationship_id = %s
-                ORDER BY event_date ASC;
-            """, (relationship_id,))
-            
-            events = []
-            current_year = date.today().year
-            
-            for row in cursor.fetchall():
-                event_id, event_type, title, description, event_date, is_recurring, \
-                    reminder_days, color_tag, partner_id = row
-                
-                # For recurring events, generate instances for relevant years
-                if is_recurring and include_recurring:
-                    # Check each year in range
-                    for year in range(start_date.year, end_date.year + 1):
-                        try:
-                            # Create date for this year
-                            yearly_date = event_date.replace(year=year)
-                            
-                            if start_date <= yearly_date <= end_date:
-                                years_since = year - event_date.year
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    if not start_date:
+                        start_date = date.today() - timedelta(days=30)
+                    if not end_date:
+                        end_date = date.today() + timedelta(days=365)
+                    
+                    # Get all memorable dates
+                    cursor.execute("""
+                        SELECT id, event_type, title, description, event_date, is_recurring, 
+                               reminder_days, color_tag, partner_id
+                        FROM memorable_dates
+                        WHERE relationship_id = %s
+                        ORDER BY event_date ASC;
+                    """, (relationship_id,))
+                    
+                    events = []
+                    current_year = date.today().year
+                    
+                    for row in cursor.fetchall():
+                        event_id, event_type, title, description, event_date, is_recurring, \
+                            reminder_days, color_tag, partner_id = row
+                        
+                        # For recurring events, generate instances for relevant years
+                        if is_recurring and include_recurring:
+                            # Check each year in range
+                            for year in range(start_date.year, end_date.year + 1):
+                                try:
+                                    # Create date for this year
+                                    yearly_date = event_date.replace(year=year)
+                                    
+                                    if start_date <= yearly_date <= end_date:
+                                        years_since = year - event_date.year
+                                        events.append({
+                                            "id": str(event_id),
+                                            "type": "memorable",
+                                            "event_type": event_type,
+                                            "title": f"{title}" + (f" ({years_since} years)" if years_since > 0 else ""),
+                                            "description": description,
+                                            "event_date": yearly_date.isoformat(),
+                                            "original_date": event_date.isoformat(),
+                                            "is_recurring": True,
+                                            "years_since": years_since,
+                                            "reminder_days": reminder_days,
+                                            "color": color_tag or EVENT_COLORS.get(event_type, "#f59e0b"),
+                                            "partner_id": partner_id
+                                        })
+                                except ValueError:
+                                    # Handle Feb 29 on non-leap years
+                                    pass
+                        else:
+                            # Non-recurring event
+                            if start_date <= event_date <= end_date:
                                 events.append({
                                     "id": str(event_id),
                                     "type": "memorable",
                                     "event_type": event_type,
-                                    "title": f"{title}" + (f" ({years_since} years)" if years_since > 0 else ""),
+                                    "title": title,
                                     "description": description,
-                                    "event_date": yearly_date.isoformat(),
-                                    "original_date": event_date.isoformat(),
-                                    "is_recurring": True,
-                                    "years_since": years_since,
-                                    "reminder_days": reminder_days,
+                                    "event_date": event_date.isoformat(),
+                                    "is_recurring": False,
                                     "color": color_tag or EVENT_COLORS.get(event_type, "#f59e0b"),
                                     "partner_id": partner_id
                                 })
-                        except ValueError:
-                            # Handle Feb 29 on non-leap years
-                            pass
-                else:
-                    # Non-recurring event
-                    if start_date <= event_date <= end_date:
-                        events.append({
-                            "id": str(event_id),
-                            "type": "memorable",
-                            "event_type": event_type,
-                            "title": title,
-                            "description": description,
-                            "event_date": event_date.isoformat(),
-                            "is_recurring": False,
-                            "color": color_tag or EVENT_COLORS.get(event_type, "#f59e0b"),
-                            "partner_id": partner_id
-                        })
-            
-            cursor.close()
-            
-            # Sort by date
-            events.sort(key=lambda x: x["event_date"])
-            return events
+                    
+                    # Sort by date
+                    events.sort(key=lambda x: x["event_date"])
+                    return events
             
         except Exception as e:
             logger.error(f"❌ Error getting memorable dates: {e}")
@@ -537,25 +521,23 @@ class CalendarService:
     ) -> Optional[str]:
         """Create an intimacy event."""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            if not event_date:
-                event_date = date.today()
-            
-            cursor.execute("""
-                INSERT INTO intimacy_events (relationship_id, timestamp, initiator_partner_id, metadata)
-                VALUES (%s, %s, %s, %s)
-                RETURNING id;
-            """, (relationship_id, datetime.combine(event_date, datetime.min.time()), 
-                  initiator_partner_id, {"notes": notes} if notes else {}))
-            
-            event_id = cursor.fetchone()[0]
-            conn.commit()
-            cursor.close()
-            
-            logger.info(f"✅ Created intimacy event on {event_date}")
-            return str(event_id)
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    if not event_date:
+                        event_date = date.today()
+                    
+                    cursor.execute("""
+                        INSERT INTO intimacy_events (relationship_id, timestamp, initiator_partner_id, metadata)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING id;
+                    """, (relationship_id, datetime.combine(event_date, datetime.min.time()), 
+                          initiator_partner_id, {"notes": notes} if notes else {}))
+                    
+                    event_id = cursor.fetchone()[0]
+                    conn.commit()
+                    
+                    logger.info(f"✅ Created intimacy event on {event_date}")
+                    return str(event_id)
             
         except Exception as e:
             logger.error(f"❌ Error creating intimacy event: {e}")
@@ -571,38 +553,36 @@ class CalendarService:
     ) -> List[Dict[str, Any]]:
         """Get intimacy events within a date range."""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            if not start_date:
-                start_date = date.today() - timedelta(days=90)
-            if not end_date:
-                end_date = date.today() + timedelta(days=1)
-            
-            cursor.execute("""
-                SELECT id, timestamp, initiator_partner_id, metadata
-                FROM intimacy_events
-                WHERE relationship_id = %s
-                AND timestamp BETWEEN %s AND %s
-                ORDER BY timestamp ASC;
-            """, (relationship_id, datetime.combine(start_date, datetime.min.time()),
-                  datetime.combine(end_date, datetime.max.time())))
-            
-            events = []
-            for row in cursor.fetchall():
-                events.append({
-                    "id": str(row[0]),
-                    "type": "intimacy",
-                    "event_type": "intimacy",
-                    "event_date": row[1].date().isoformat() if row[1] else None,
-                    "title": "💕 Intimacy",
-                    "initiator": row[2],
-                    "color": EVENT_COLORS["intimacy"],
-                    "metadata": row[3] if row[3] else {}
-                })
-            
-            cursor.close()
-            return events
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    if not start_date:
+                        start_date = date.today() - timedelta(days=90)
+                    if not end_date:
+                        end_date = date.today() + timedelta(days=1)
+                    
+                    cursor.execute("""
+                        SELECT id, timestamp, initiator_partner_id, metadata
+                        FROM intimacy_events
+                        WHERE relationship_id = %s
+                        AND timestamp BETWEEN %s AND %s
+                        ORDER BY timestamp ASC;
+                    """, (relationship_id, datetime.combine(start_date, datetime.min.time()),
+                          datetime.combine(end_date, datetime.max.time())))
+                    
+                    events = []
+                    for row in cursor.fetchall():
+                        events.append({
+                            "id": str(row[0]),
+                            "type": "intimacy",
+                            "event_type": "intimacy",
+                            "event_date": row[1].date().isoformat() if row[1] else None,
+                            "title": "💕 Intimacy",
+                            "initiator": row[2],
+                            "color": EVENT_COLORS["intimacy"],
+                            "metadata": row[3] if row[3] else {}
+                        })
+                    
+                    return events
             
         except Exception as e:
             logger.error(f"❌ Error getting intimacy events: {e}")
@@ -620,40 +600,38 @@ class CalendarService:
     ) -> List[Dict[str, Any]]:
         """Get conflicts as calendar events."""
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            if not start_date:
-                start_date = date.today() - timedelta(days=90)
-            if not end_date:
-                end_date = date.today() + timedelta(days=1)
-            
-            cursor.execute("""
-                SELECT id, started_at, ended_at, status, metadata
-                FROM conflicts
-                WHERE relationship_id = %s
-                AND started_at BETWEEN %s AND %s
-                ORDER BY started_at ASC;
-            """, (relationship_id, datetime.combine(start_date, datetime.min.time()),
-                  datetime.combine(end_date, datetime.max.time())))
-            
-            events = []
-            for row in cursor.fetchall():
-                events.append({
-                    "id": str(row[0]),
-                    "type": "conflict",
-                    "event_type": "conflict",
-                    "event_date": row[1].date().isoformat() if row[1] else None,
-                    "title": "⚠️ Conflict",
-                    "started_at": row[1].isoformat() if row[1] else None,
-                    "ended_at": row[2].isoformat() if row[2] else None,
-                    "status": row[3],
-                    "color": EVENT_COLORS["conflict"],
-                    "metadata": row[4] if row[4] else {}
-                })
-            
-            cursor.close()
-            return events
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    if not start_date:
+                        start_date = date.today() - timedelta(days=90)
+                    if not end_date:
+                        end_date = date.today() + timedelta(days=1)
+                    
+                    cursor.execute("""
+                        SELECT id, started_at, ended_at, status, metadata
+                        FROM conflicts
+                        WHERE relationship_id = %s
+                        AND started_at BETWEEN %s AND %s
+                        ORDER BY started_at ASC;
+                    """, (relationship_id, datetime.combine(start_date, datetime.min.time()),
+                          datetime.combine(end_date, datetime.max.time())))
+                    
+                    events = []
+                    for row in cursor.fetchall():
+                        events.append({
+                            "id": str(row[0]),
+                            "type": "conflict",
+                            "event_type": "conflict",
+                            "event_date": row[1].date().isoformat() if row[1] else None,
+                            "title": "⚠️ Conflict",
+                            "started_at": row[1].isoformat() if row[1] else None,
+                            "ended_at": row[2].isoformat() if row[2] else None,
+                            "status": row[3],
+                            "color": EVENT_COLORS["conflict"],
+                            "metadata": row[4] if row[4] else {}
+                        })
+                    
+                    return events
             
         except Exception as e:
             logger.error(f"❌ Error getting conflict events: {e}")
@@ -668,6 +646,7 @@ class CalendarService:
         year: int,
         month: int,
         filters: List[str] = None,
+        include_predictions: bool = True,
         relationship_id: str = DEFAULT_RELATIONSHIP_ID,
         partner_id: str = "partner_b"
     ) -> Dict[str, Any]:
@@ -678,6 +657,7 @@ class CalendarService:
             year: Year
             month: Month (1-12)
             filters: List of event types to include (None = all)
+            include_predictions: Whether to include cycle predictions
             relationship_id: Relationship ID
             partner_id: Partner ID for cycle predictions
         
@@ -714,7 +694,7 @@ class CalendarService:
             memorable_dates = self.get_memorable_dates(start_date, end_date, True, relationship_id)
             all_events.extend(memorable_dates)
         
-        if "prediction" in filters:
+        if "prediction" in filters and include_predictions:
             # Get predictions and filter to this month
             predictions = self.get_cycle_predictions(partner_id, relationship_id)
             predictions = [p for p in predictions 
@@ -738,7 +718,7 @@ class CalendarService:
             "total_events": len(all_events),
             "cycle_events": len([e for e in all_events if e.get("type") == "cycle"]),
             "predictions": len([e for e in all_events if e.get("is_prediction")]),
-            "conflicts": len([e for e in all_events if e.get("type") == "conflict"]),
+            "conflict_events": len([e for e in all_events if e.get("type") == "conflict"]),
             "intimacy_events": len([e for e in all_events if e.get("type") == "intimacy"]),
             "memorable_events": len([e for e in all_events if e.get("type") == "memorable"]),
         }
@@ -862,24 +842,21 @@ class CalendarService:
         # TIER 1: Relationship History (Always Include) ~50 tokens
         # =========================================================================
         try:
-            conn = self.db.get_connection()
-            cursor = conn.cursor()
-            
-            # Get relationship start date
-            cursor.execute("""
-                SELECT created_at FROM relationships
-                WHERE id = %s;
-            """, (relationship_id,))
-            
-            rel_result = cursor.fetchone()
-            if rel_result:
-                start_date = rel_result[0]
-                duration_days = (datetime.now().date() - start_date.date()).days
-                duration_months = duration_days // 30
-                insights.append("📖 RELATIONSHIP HISTORY")
-                insights.append(f"   Together since: {start_date.strftime('%B %d, %Y')} ({duration_months} months)")
-            
-            cursor.close()
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Get relationship start date
+                    cursor.execute("""
+                        SELECT created_at FROM relationships
+                        WHERE id = %s;
+                    """, (relationship_id,))
+                    
+                    rel_result = cursor.fetchone()
+                    if rel_result:
+                        start_date = rel_result[0]
+                        duration_days = (datetime.now().date() - start_date.date()).days
+                        duration_months = duration_days // 30
+                        insights.append("📖 RELATIONSHIP HISTORY")
+                        insights.append(f"   Together since: {start_date.strftime('%B %d, %Y')} ({duration_months} months)")
         except Exception as e:
             logger.error(f"Error fetching relationship history: {e}")
         

@@ -23,7 +23,7 @@ const FightCapture = () => {
   const [error, setError] = useState<string>('');
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
   const [conflictId, setConflictId] = useState<string | null>(null);
-  
+
   const wsRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -35,22 +35,22 @@ const FightCapture = () => {
       try {
         setConnectionStatus('connecting');
         setError('');
-        
+
         const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
         const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://');
         const fullWsUrl = `${wsUrl}/api/realtime/transcribe`;
-        
+
         console.log('🔗 Connecting to WebSocket:', fullWsUrl);
-        
+
         // Connect to WebSocket
         const ws = new WebSocket(fullWsUrl);
         wsRef.current = ws;
-        
+
         ws.onopen = async () => {
           console.log('✅ WebSocket connected');
           setConnectionStatus('connected');
           setIsRecording(true);
-          
+
           // Create conflict and get conflict_id
           try {
             const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
@@ -67,10 +67,10 @@ const FightCapture = () => {
             console.error('Failed to create conflict:', e);
             // Continue anyway, we can generate a temp ID
           }
-          
+
           // Request microphone access
           try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
+            const stream = await navigator.mediaDevices.getUserMedia({
               audio: {
                 sampleRate: 16000,
                 channelCount: 1,
@@ -78,30 +78,30 @@ const FightCapture = () => {
                 noiseSuppression: true,
               }
             });
-            
+
             streamRef.current = stream;
-            
+
             // Also record audio with MediaRecorder for post-processing diarization
             const mediaRecorder = new MediaRecorder(stream, {
               mimeType: 'audio/webm;codecs=opus'
             });
             mediaRecorderRef.current = mediaRecorder;
             audioChunksRef.current = [];
-            
+
             mediaRecorder.ondataavailable = (event) => {
               if (event.data.size > 0) {
                 audioChunksRef.current.push(event.data);
               }
             };
-            
+
             mediaRecorder.start(1000); // Collect data every second
             console.log('🎙️ Started MediaRecorder for post-processing');
-            
+
             // Use AudioContext to capture raw PCM audio for real-time streaming
             const audioContext = new AudioContext({ sampleRate: 16000 });
             const source = audioContext.createMediaStreamSource(stream);
             const processor = audioContext.createScriptProcessor(4096, 1, 1);
-            
+
             processor.onaudioprocess = (event) => {
               if (ws.readyState === WebSocket.OPEN) {
                 const inputData = event.inputBuffer.getChannelData(0);
@@ -116,27 +116,27 @@ const FightCapture = () => {
                 ws.send(pcmData.buffer);
               }
             };
-            
+
             source.connect(processor);
             processor.connect(audioContext.destination);
-            
+
             console.log('🎤 Started recording with AudioContext');
-            
+
           } catch (micError) {
             console.error('Microphone error:', micError);
             setError('Failed to access microphone. Please allow microphone access.');
             setConnectionStatus('disconnected');
           }
         };
-        
+
         ws.onmessage = (event) => {
           try {
             const data: TranscriptMessage = JSON.parse(event.data);
-            
+
             if (data.type === 'transcript' && data.text) {
               const speakerName = data.speaker || 'Adrian Malhotra'; // Use speaker from diarization
               console.log('📝 Transcript received:', speakerName, ':', data.text, 'final:', data.is_final);
-              
+
               if (data.is_final) {
                 // Final transcript: add to permanent list and clear interim
                 setTranscript((prev) => [...prev, { speaker: speakerName, text: data.text }]);
@@ -152,20 +152,20 @@ const FightCapture = () => {
             console.error('Failed to parse transcript:', e);
           }
         };
-        
+
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
           setError('Connection error. Please try again.');
           setConnectionStatus('disconnected');
         };
-        
+
         ws.onclose = () => {
           console.log('WebSocket closed');
           setConnectionStatus('disconnected');
           setIsRecording(false);
           setInterimTranscript(null); // Clear interim transcript on disconnect
         };
-        
+
       } catch (e) {
         console.error('Failed to start recording:', e);
         setError(`Failed to start: ${e}`);
@@ -188,16 +188,16 @@ const FightCapture = () => {
 
   const handleEndCapture = async () => {
     setIsRecording(false);
-    
+
     // Stop WebSocket first
     if (wsRef.current) {
       wsRef.current.close();
     }
-    
+
     // Stop MediaRecorder and process audio for accurate diarization
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
-      
+
       // Wait for recording to finish
       await new Promise<void>((resolve) => {
         if (mediaRecorderRef.current) {
@@ -208,27 +208,27 @@ const FightCapture = () => {
           resolve();
         }
       });
-      
+
       // Combine audio chunks
       if (audioChunksRef.current.length > 0) {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        
+
         // Send to REST API for accurate diarization
         try {
           const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
           const formData = new FormData();
           formData.append('audio_file', audioBlob, 'recording.webm');
-          
+
           console.log('🔄 Sending audio to REST API for accurate diarization...');
           const response = await fetch(`${apiUrl}/api/transcription/transcribe`, {
             method: 'POST',
             body: formData,
           });
-          
+
           if (response.ok) {
             const result = await response.json();
             console.log('✅ Received diarized transcript:', result);
-            
+
             // Update transcripts with accurate speaker labels
             if (result.utterances && result.utterances.length > 0) {
               const diarizedTranscripts: TranscriptItem[] = result.utterances.map((utt: any) => {
@@ -236,7 +236,7 @@ const FightCapture = () => {
                 const speakerName = utt.speaker === 0 ? 'Adrian Malhotra' : 'Elara Voss';
                 return { speaker: speakerName, text: utt.transcript };
               });
-              
+
               // Replace current transcripts with accurate ones
               setTranscript(diarizedTranscripts);
               console.log('✅ Updated transcripts with accurate speaker labels');
@@ -248,21 +248,21 @@ const FightCapture = () => {
         }
       }
     }
-    
+
     // Stop microphone
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
     }
-    
+
     // Store transcript in Pinecone via backend if we have conflict_id
     if (conflictId && transcript.length > 0) {
       try {
         const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
         const transcriptStrings = transcript.map(item => `${item.speaker}: ${item.text}`);
-        
+
         // Calculate duration (rough estimate: ~3 seconds per message)
         const estimatedDuration = transcript.length * 3;
-        
+
         // Store transcript in Pinecone
         const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/store-transcript`, {
           method: 'POST',
@@ -276,10 +276,10 @@ const FightCapture = () => {
             speaker_labels: { 0: "Adrian Malhotra", 1: "Elara Voss" } // Adrian (boyfriend) and Elara (girlfriend)
           })
         });
-        
+
         if (response.ok) {
           console.log('✅ Transcript stored in Pinecone');
-          
+
           // Trigger background generation of analysis and repair plan
           // This will cache the results so they're ready when user clicks buttons
           console.log('🔄 Triggering background analysis and repair plan generation...');
@@ -303,12 +303,12 @@ const FightCapture = () => {
         // Continue anyway - transcript is still available locally
       }
     }
-    
+
     // Navigate to post-fight immediately after storing transcript
     // Convert transcript items back to string format for post-fight page compatibility
     const transcriptStrings = transcript.map(item => `${item.speaker}: ${item.text}`);
-    navigate('/post-fight', { 
-      state: { 
+    navigate('/post-fight', {
+      state: {
         transcript: transcriptStrings,
         interimTranscript: interimTranscript ? `${interimTranscript.speaker}: ${interimTranscript.text}` : '',
         conflict_id: conflictId || undefined
@@ -336,17 +336,15 @@ const FightCapture = () => {
   return (
     <div className="flex flex-col items-center justify-between min-h-[80vh] py-8">
       <div className="w-full">
-        <div className="mb-6 flex justify-center">
-          <div className={`py-1 px-4 rounded-full text-sm font-medium flex items-center ${
-            connectionStatus === 'connected' 
-              ? 'bg-green-400 text-white' 
-              : connectionStatus === 'connecting'
-              ? 'bg-yellow-400 text-white'
-              : 'bg-gray-400 text-white'
-          }`}>
-            <div className={`w-2 h-2 rounded-full mr-2 ${
-              connectionStatus === 'connected' ? 'bg-white animate-pulse' : 'bg-white'
-            }`}></div>
+        <div className="mb-8 flex justify-center">
+          <div className={`py-1.5 px-4 rounded-full text-tiny font-medium flex items-center shadow-sm transition-all ${connectionStatus === 'connected'
+            ? 'bg-white text-emerald-600 border border-emerald-200'
+            : connectionStatus === 'connecting'
+              ? 'bg-white text-amber-600 border border-amber-200'
+              : 'bg-white text-text-tertiary border border-border-subtle'
+            }`}>
+            <div className={`w-2 h-2 rounded-full mr-2 ${connectionStatus === 'connected' ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'
+              }`}></div>
             {connectionStatus === 'connecting' && 'Connecting...'}
             {connectionStatus === 'connected' && isRecording && 'Recording conflict...'}
             {connectionStatus === 'disconnected' && 'Disconnected'}
@@ -359,37 +357,35 @@ const FightCapture = () => {
         </div>
 
         {(transcript.length > 0 || interimTranscript) && (
-          <div className="bg-white/40 backdrop-blur-sm rounded-xl p-4 mb-8 max-h-60 overflow-y-auto">
-            <p className="text-xs text-gray-500 mb-3 font-medium">Live transcript</p>
-            <div className="space-y-2">
+          <div className="bg-surface-elevated rounded-xl p-6 mb-8 max-h-80 overflow-y-auto border border-border-subtle shadow-soft">
+            <p className="text-tiny text-text-tertiary mb-4 font-medium uppercase tracking-wider">Live transcript</p>
+            <div className="space-y-4">
               {transcript.map((item, index) => {
                 const isBoyfriend = item.speaker === 'Adrian Malhotra';
                 return (
                   <div key={index} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`rounded-2xl py-2 px-4 max-w-[80%] ${
-                      isBoyfriend 
-                        ? 'bg-blue-100 text-gray-800' 
-                        : 'bg-pink-100 text-gray-800'
-                    }`}>
-                      <div className="text-xs font-semibold mb-1 text-gray-600">
+                    <div className={`rounded-2xl py-3 px-5 max-w-[85%] ${isBoyfriend
+                      ? 'bg-surface-hover text-text-primary border border-border-subtle rounded-tl-sm'
+                      : 'bg-white text-text-primary border border-accent/20 shadow-sm rounded-tr-sm'
+                      }`}>
+                      <div className="text-tiny font-medium mb-1 text-text-secondary">
                         {item.speaker}
                       </div>
-                      <div className="text-sm">{item.text}</div>
+                      <div className="text-body leading-relaxed">{item.text}</div>
                     </div>
                   </div>
                 );
               })}
               {interimTranscript && (
                 <div className={`flex w-full ${interimTranscript.speaker === 'Adrian Malhotra' ? 'justify-start' : 'justify-end'}`}>
-                  <div className={`rounded-2xl py-2 px-4 max-w-[80%] opacity-70 ${
-                    interimTranscript.speaker === 'Adrian Malhotra'
-                      ? 'bg-blue-100 text-gray-800'
-                      : 'bg-pink-100 text-gray-800'
-                  }`}>
-                    <div className="text-xs font-semibold mb-1 text-gray-600">
+                  <div className={`rounded-2xl py-3 px-5 max-w-[85%] opacity-70 ${interimTranscript.speaker === 'Adrian Malhotra'
+                    ? 'bg-surface-hover text-text-primary border border-border-subtle rounded-tl-sm'
+                    : 'bg-white text-text-primary border border-accent/20 shadow-sm rounded-tr-sm'
+                    }`}>
+                    <div className="text-tiny font-medium mb-1 text-text-secondary">
                       {interimTranscript.speaker}
                     </div>
-                    <div className="text-sm italic">{interimTranscript.text}</div>
+                    <div className="text-body italic">{interimTranscript.text}</div>
                   </div>
                 </div>
               )}
@@ -399,7 +395,7 @@ const FightCapture = () => {
 
         {transcript.length === 0 && !interimTranscript && connectionStatus === 'connected' && (
           <div className="bg-white/40 backdrop-blur-sm rounded-xl p-4 mb-8 text-center">
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-text-secondary">
               🎤 Listening... Start speaking to see the transcript.
             </p>
           </div>
@@ -407,7 +403,7 @@ const FightCapture = () => {
 
         {connectionStatus === 'connecting' && (
           <div className="bg-white/40 backdrop-blur-sm rounded-xl p-4 mb-8 text-center">
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-text-secondary">
               Connecting to transcription service...
             </p>
           </div>
@@ -417,9 +413,9 @@ const FightCapture = () => {
       <button
         onClick={handleEndCapture}
         disabled={!isRecording}
-        className="w-full max-w-xs py-3 px-4 bg-rose-100 hover:bg-rose-200 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-cozy text-rose-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+        className="w-full max-w-xs py-4 px-6 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 rounded-xl flex items-center justify-center transition-all shadow-soft hover:shadow-subtle font-medium disabled:opacity-50 disabled:cursor-not-allowed mx-auto"
       >
-        <MicOffIcon size={18} className="mr-2" />
+        <MicOffIcon size={20} className="mr-2" strokeWidth={1.5} />
         End Fight Capture
       </button>
     </div>

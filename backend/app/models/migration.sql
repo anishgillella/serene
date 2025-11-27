@@ -56,10 +56,10 @@ CREATE TABLE IF NOT EXISTS mediator_sessions (
 CREATE TABLE IF NOT EXISTS mediator_messages (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     session_id UUID REFERENCES mediator_sessions(id) ON DELETE CASCADE,
-    role TEXT NOT NULL, -- "user" or "assistant" (Luna)
-    content TEXT NOT NULL,
+    content JSONB DEFAULT '[]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    metadata JSONB DEFAULT '{}'::jsonb
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT uq_mediator_messages_session_id UNIQUE (session_id)
 );
 
 -- Create indexes for faster queries

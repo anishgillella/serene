@@ -1,15 +1,16 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, MessageCircle, Sparkles, Brain, Heart, Shield, Zap, ChevronRight, Play, Pause, RotateCcw, Volume2, VolumeX, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
-import { RelatedConflicts } from '@/components/RelatedConflicts';
-import { Button } from "@/components/ui/button";
-import TranscriptBubble from '../components/TranscriptBubble';
-import MediatorModal from '../components/MediatorModal';
 import {
-  BarChart4Icon, RefreshCwIcon, FileTextIcon, SparklesIcon, HeartIcon,
-  LoaderIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon,
-  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, XIcon, SendIcon, MicIcon, MicOffIcon, MessageCircleIcon
+  MessageCircleIcon, SparklesIcon, HeartIcon, LoaderIcon, XIcon,
+  BarChart4Icon, RefreshCwIcon, FileTextIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon,
+  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, SendIcon, MicIcon, MicOffIcon
 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import { Button } from "@/components/ui/button";
+import VoiceButton from '../components/VoiceButton';
+import MediatorModal from '../components/MediatorModal';
+import TranscriptBubble from '../components/TranscriptBubble';
+import { RelatedConflicts } from '@/components/RelatedConflicts';
 
 interface LocationState {
   transcript?: string[];
@@ -554,17 +555,17 @@ const PostFightSession = () => {
   }
 
   return (
-    <div className="flex flex-col min-h-[85vh] w-full max-w-full bg-white/50 backdrop-blur-sm rounded-xl p-6 shadow-lg relative z-10">
+    <div className="flex flex-col min-h-[85vh] w-full max-w-full bg-surface-elevated rounded-2xl p-6 shadow-lifted relative z-10 border border-border-subtle">
       {/* Header */}
-      <div className="text-center mb-4">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-1">
+      <div className="text-center mb-6">
+        <h2 className="text-h2 text-text-primary mb-2">
           Post-Fight Session
         </h2>
-        <p className="text-sm text-gray-600">
-          Talk freely — HeartSync is here to help you understand and repair.
+        <p className="text-body text-text-secondary">
+          Talk freely — Luna is here to help you understand and repair.
         </p>
         {conflictId && (
-          <p className="text-xs text-gray-500 mt-2 font-mono">
+          <p className="text-tiny text-text-tertiary mt-2 font-mono">
             Conflict ID: {conflictId.substring(0, 8)}...
           </p>
         )}
@@ -575,13 +576,14 @@ const PostFightSession = () => {
         {/* Left Side - Conversation */}
         <div className="flex flex-col flex-1 min-w-0 border-r border-gray-200 pr-6">
           {/* Action Buttons - Top Left */}
-          <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-gray-200">
+          {/* Action Buttons - Top Left */}
+          <div className="flex flex-col gap-3 mb-4 pb-4 border-b border-border-subtle">
             {!conflictId && (
-              <div className="w-full bg-blue-50 border border-blue-200 rounded-lg p-3 mb-2">
-                <p className="text-sm text-blue-800 font-medium">
-                  🆔 Generating conflict ID...
+              <div className="w-full bg-blue-50 border border-blue-100 rounded-xl p-3 mb-2">
+                <p className="text-small text-blue-800 font-medium">
+                  Generating conflict ID...
                 </p>
-                <p className="text-xs text-blue-600 mt-1">
+                <p className="text-tiny text-blue-600 mt-1">
                   Creating a new session for you...
                 </p>
               </div>
@@ -598,14 +600,14 @@ const PostFightSession = () => {
                   setActiveView('analysis');
                 }}
                 disabled={!conflictId || loadingAnalysis}
-                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'analysis'
-                  ? 'bg-purple-200 text-purple-800 border-2 border-purple-400'
-                  : 'bg-purple-100 hover:bg-purple-200 text-purple-700'
+                className={`flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'analysis'
+                  ? 'bg-surface-elevated text-text-primary border border-accent'
+                  : 'bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle'
                   }`}
                 title="View conflict analysis (generates both perspectives)"
               >
-                {loadingAnalysis && <LoaderIcon size={16} className="mr-2 animate-spin" />}
-                {!loadingAnalysis && <SparklesIcon size={16} className="mr-2" />}
+                {loadingAnalysis && <LoaderIcon size={16} className="mr-2 animate-spin" strokeWidth={1.5} />}
+                {!loadingAnalysis && <SparklesIcon size={16} className="mr-2" strokeWidth={1.5} />}
                 {loadingAnalysis ? 'Generating Analysis...' : 'View Analysis'}
               </button>
 
@@ -618,14 +620,14 @@ const PostFightSession = () => {
                   setActiveView('repair');
                 }}
                 disabled={!conflictId || loadingRepairPlan}
-                className={`flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'repair'
-                  ? 'bg-rose-200 text-rose-800 border-2 border-rose-400'
-                  : 'bg-rose-100 hover:bg-rose-200 text-rose-700'
+                className={`flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'repair'
+                  ? 'bg-surface-elevated text-text-primary border border-accent'
+                  : 'bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle'
                   }`}
                 title="View repair plans (generates both perspectives)"
               >
-                {loadingRepairPlan && <LoaderIcon size={16} className="mr-2 animate-spin" />}
-                {!loadingRepairPlan && <HeartIcon size={16} className="mr-2" />}
+                {loadingRepairPlan && <LoaderIcon size={16} className="mr-2 animate-spin" strokeWidth={1.5} />}
+                {!loadingRepairPlan && <HeartIcon size={16} className="mr-2" strokeWidth={1.5} />}
                 {loadingRepairPlan ? 'Generating Repair Plans...' : 'View Repair Plan'}
               </button>
 
@@ -635,9 +637,9 @@ const PostFightSession = () => {
                   setIsMediatorModalOpen(true);
                 }}
                 disabled={!conflictId}
-                className="flex items-center py-2 px-4 rounded-xl text-sm font-medium transition-all shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed bg-blue-100 hover:bg-blue-200 text-blue-700"
+                className="flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle"
               >
-                <MessageCircleIcon size={16} className="mr-2" />
+                <MessageCircleIcon size={16} className="mr-2" strokeWidth={1.5} />
                 Talk to Mediator
               </button>
             </div>
@@ -665,15 +667,15 @@ const PostFightSession = () => {
                     const isBoyfriend = msg.speaker === 'speaker1';
                     return (
                       <div key={idx} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
-                        <div className={`rounded-2xl py-2.5 px-4 max-w-[85%] shadow-sm ${isBoyfriend
-                          ? 'bg-blue-100 text-gray-800'
-                          : 'bg-pink-100 text-gray-800'
-                          } ${msg.isPrivate ? 'opacity-70 border-2 border-rose-300' : ''}`}>
-                          <div className="text-xs font-semibold mb-1 text-gray-600">
+                        <div className={`rounded-2xl py-3 px-5 max-w-[85%] shadow-sm border ${isBoyfriend
+                          ? 'bg-surface-hover text-text-primary border-border-subtle rounded-tl-sm'
+                          : 'bg-white text-text-primary border-accent/20 rounded-tr-sm'
+                          } ${msg.isPrivate ? 'opacity-70 border-dashed border-accent' : ''}`}>
+                          <div className="text-tiny font-medium mb-1 text-text-tertiary">
                             {isBoyfriend ? 'Adrian Malhotra' : 'Elara Voss'}
-                            {msg.isPrivate && <span className="ml-2 text-rose-500 text-[10px]">🔒 Private</span>}
+                            {msg.isPrivate && <span className="ml-2 text-accent text-tiny">🔒 Private</span>}
                           </div>
-                          <div className="text-sm leading-relaxed">{msg.message}</div>
+                          <div className="text-body leading-relaxed">{msg.message}</div>
                         </div>
                       </div>
                     );
@@ -688,19 +690,19 @@ const PostFightSession = () => {
         {/* Right Side - Results Panel */}
         <div className="flex-1 min-w-0 overflow-y-auto pl-6">
           {activeView === 'analysis' && (
-            <div className="bg-gradient-to-br from-purple-50 to-white rounded-2xl p-5 shadow-lg border border-purple-100">
-              <div className="flex items-center justify-between mb-4">
+            <div className="bg-surface-elevated rounded-2xl p-6 shadow-lifted border border-border-subtle animate-slide-up">
+              <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center">
-                  <div className="bg-purple-100 p-2 rounded-lg mr-3">
-                    <SparklesIcon size={20} className="text-purple-600" />
+                  <div className="bg-surface-hover p-2.5 rounded-xl mr-3 border border-border-subtle">
+                    <SparklesIcon size={20} className="text-accent" strokeWidth={1.5} />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-800">Conflict Analysis</h3>
+                  <h3 className="text-h3 text-text-primary">Conflict Analysis</h3>
                 </div>
                 <button
                   onClick={() => setActiveView(null)}
-                  className="text-gray-400 hover:text-gray-600 transition-colors p-1 hover:bg-gray-100 rounded"
+                  className="text-text-tertiary hover:text-text-primary transition-colors p-2 hover:bg-surface-hover rounded-full"
                 >
-                  <XIcon size={18} />
+                  <XIcon size={20} strokeWidth={1.5} />
                 </button>
               </div>
 

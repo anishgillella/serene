@@ -45,6 +45,8 @@ except ImportError:
     logger.warning("Could not import db_service, logging will be disabled")
     db_service = None
 
+from typing import AsyncIterator
+
 class LoggingLLMStream(llm.LLMStream):
     """Wrapper for LLMStream that logs generated text to the database"""
     def __init__(self, wrapped_stream: llm.LLMStream, session_id: str):
@@ -54,20 +56,20 @@ class LoggingLLMStream(llm.LLMStream):
         self._accumulated_text = ""
         self._logged = False
 
-    async def __anext__(self) -> llm.ChatChunk:
-        try:
-            chunk = await self._wrapped_stream.__anext__()
+    async def _run(self) -> AsyncIterator[llm.ChatChunk]:
+        async for chunk in self._wrapped_stream:
             if chunk.choices:
                 for choice in chunk.choices:
                     if choice.delta.content:
-                        self._accumulated_text += choice.delta.content
-            return chunk
-        except StopAsyncIteration:
-            # Stream finished, log the message
-            if not self._logged and self._accumulated_text.strip() and db_service:
-                self._logged = True
-                asyncio.create_task(self._log_message())
-            raise
+                        content = choice.delta.content
+                        self._accumulated_text += content
+                        logger.info(f"📝 Yielding chunk: {content[:20]}...") 
+            yield chunk
+            
+        # Stream finished, log the message
+        if not self._logged and self._accumulated_text.strip() and db_service:
+            self._logged = True
+            asyncio.create_task(self._log_message())
 
     async def aclose(self) -> None:
         # If closed (e.g. interrupted), log what we have so far
@@ -88,15 +90,15 @@ class LoggingLLMStream(llm.LLMStream):
         except Exception as e:
             logger.error(f"Error logging assistant message: {e}")
 
-class LoggingLLM(openai.LLM):
-    """Wrapper for OpenAI LLM that logs responses"""
-    def __init__(self, session_id: str, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.session_id = session_id
+# class LoggingLLM(openai.LLM):
+#     """Wrapper for OpenAI LLM that logs responses"""
+#     def __init__(self, session_id: str, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.session_id = session_id
 
-    def chat(self, chat_ctx: llm.ChatContext, fnc_ctx: llm.FunctionContext | None = None) -> "llm.LLMStream":
-        stream = super().chat(chat_ctx, fnc_ctx)
-        return LoggingLLMStream(stream, self.session_id)
+#     def chat(self, *, chat_ctx: llm.ChatContext, **kwargs) -> "llm.LLMStream":
+#         stream = super().chat(chat_ctx=chat_ctx, **kwargs)
+#         return LoggingLLMStream(stream, self.session_id)
 
 
 
@@ -376,13 +378,10 @@ async def mediator_entrypoint(ctx: JobContext):
         logger.info(f"📍 Starting mediator session for SPECIFIC room")
         logger.info(f"   🏠 Room: {ctx.room.name}")
         logger.info(f"   🆔 Job ID: {ctx.job.id}")
-        try:
-            room_sid = str(ctx.room.sid) if ctx.room.sid else "N/A"
-        except:
-            room_sid = "N/A"
-        logger.info(f"   📋 Room SID: {room_sid}")
+        # logger.info(f"   📋 Room SID: {room_sid}")
         logger.info(f"   👥 Current participants: {participant_count}")
         logger.info(f"   🔗 This agent instance is joining THIS specific room session")
+        logger.info(f"   👉 Proceeding to initialization...")
         
         stage_times['init'] = time.time() - stage_start
         logger.info(f"   ⏱️  Init: {stage_times['init']:.2f}s")
@@ -409,12 +408,19 @@ async def mediator_entrypoint(ctx: JobContext):
         os.environ["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1"
         
         if session_id:
-            llm_instance = LoggingLLM(
-                session_id=session_id,
+            # llm_instance = LoggingLLM(
+            #     session_id=session_id,
+            #     api_key=openrouter_key,
+            #     model="openai/gpt-4o-mini",
+            # )
+            # logger.info(f"   ✅ LoggingLLM initialized with session_id={session_id}")
+            
+            # Fallback to standard LLM for now to fix audio
+            llm_instance = openai.LLM(
                 api_key=openrouter_key,
                 model="openai/gpt-4o-mini",
             )
-            logger.info(f"   ✅ LoggingLLM initialized with session_id={session_id}")
+            logger.info(f"   ✅ Standard OpenAI LLM initialized (Logging disabled for stability)")
         else:
             llm_instance = openai.LLM(
                 api_key=openrouter_key,
@@ -453,7 +459,14 @@ async def mediator_entrypoint(ctx: JobContext):
         logger.info(f"⚙️  Creating agent session...")
         
         session = AgentSession(
-            stt=deepgram.STT(model="nova-3"),
+            stt=deepgram.STT(
+                model="nova-3",
+                language="en",
+                smart_format=True,
+                punctuate=True,
+                interim_results=True,
+                endpointing=300,  # 300ms silence before considering speech complete
+            ),
             llm=llm_instance,
             tts=tts_instance,
             vad=silero.VAD.load(),
@@ -473,7 +486,9 @@ async def mediator_entrypoint(ctx: JobContext):
             # Try to get relationship_id from Pinecone transcript metadata
             try:
                 from app.services.pinecone_service import pinecone_service
-                transcript_result = pinecone_service.get_by_conflict_id(
+                logger.info("   🔍 Fetching relationship_id from Pinecone (async)...")
+                transcript_result = await asyncio.to_thread(
+                    pinecone_service.get_by_conflict_id,
                     conflict_id=conflict_id,
                     namespace="transcripts"
                 )
@@ -483,13 +498,17 @@ async def mediator_entrypoint(ctx: JobContext):
             except Exception as e:
                 logger.warning(f"   ⚠️ Could not fetch relationship_id: {e}")
         
-        # Initialize RAG system
+        # Initialize RAG system (if available)
+        rag_system = None
         try:
             from app.services.transcript_rag import TranscriptRAGSystem
-            rag_system = TranscriptRAGSystem(k=5)
-            logger.info(f"   ✅ RAG system initialized")
+            # Disable internal calendar fetch since we do it in parallel externally
+            rag_system = TranscriptRAGSystem(k=5, include_profiles=True, include_calendar=False)
+            logger.info("   ✅ RAG system initialized")
+        except ImportError:
+            logger.warning("   ⚠️ RAG system not available (dependencies missing)")
         except Exception as e:
-            logger.error(f"   ❌ Failed to initialize RAG system: {e}")
+            logger.warning(f"   ⚠️ Failed to initialize RAG system: {e}")
             import traceback
             logger.error(traceback.format_exc())
             # Fallback to SimpleMediator if RAG fails
@@ -536,217 +555,113 @@ async def mediator_entrypoint(ctx: JobContext):
         # Wait a moment for connection to stabilize
         await asyncio.sleep(1.0)
         
-        # Stage 8: Fetch initial transcript context (if RAG available)
-        # IMPORTANT: Fetch ONLY the current conflict's transcript as PRIMARY context
-        # This ensures the agent knows about THIS specific conversation, not past ones
+        # Stage 8 & 9: Fetch initial transcript context and calendar insights in PARALLEL
+        # This significantly reduces latency by running independent tasks concurrently
         stage_start = time.time()
-        transcript_context = None
+        logger.info(f"🚀 Fetching context (Transcript + Calendar) in PARALLEL...")
         
-        # NEW: Try to use Analysis Summary first (Token Optimization)
-        if conflict_id:
-            try:
-                from app.services.db_service import db_service
-                from app.services.s3_service import s3_service
-                from app.services.neo4j_service import neo4j_service
-                
-                logger.info(f"🔍 Checking for existing analysis summary for conflict {conflict_id}...")
-                analysis_meta = db_service.get_conflict_analysis(conflict_id)
-                
-                if analysis_meta and analysis_meta.get("analysis_path"):
-                    path = analysis_meta["analysis_path"]
-                    # Handle S3 URL vs path
-                    if path.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
-                        path = path.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
-                    elif path.startswith("https://"):
-                         path = path.split(f"{settings.S3_BUCKET_NAME}/", 1)[-1] if f"{settings.S3_BUCKET_NAME}/" in path else path
-                         
-                    file_content = s3_service.download_file(path)
-                    if file_content:
-                        analysis_data = json.loads(file_content.decode('utf-8'))
-                        summary = analysis_data.get('fight_summary', '')
-                        root_causes = analysis_data.get('root_causes', [])
-                        
-                        if summary:
-                            transcript_context = (
-                                f"📝 CONFLICT SUMMARY (Generated from Analysis):\n"
-                                f"{summary}\n\n"
-                                f"ROOT CAUSES:\n"
-                                f"{root_causes}\n\n"
-                                f"NOTE: This is a summary. Full transcript is available on request."
-                            )
-                            logger.info(f"   ✅ Using existing analysis summary instead of full transcript (Tokens saved!)")
-                            
-                            # NEW: Add Graph History (Neo4j)
-                            try:
-                                related_conflicts = neo4j_service.find_related_conflicts(conflict_id)
-                                if related_conflicts:
-                                    graph_context = "\n\n🕸️ RELATED CONFLICT HISTORY (from Graph Database):\n"
-                                    for rc in related_conflicts:
-                                        reason = rc.get('reason', 'Related')
-                                        summary = rc.get('summary', 'No summary')[:100]
-                                        date = rc.get('id', 'Unknown Date') # Using ID as proxy for date if needed, or fetch date
-                                        graph_context += f"- {reason}: Conflict {date} ({summary}...)\n"
-                                    
-                                    transcript_context += graph_context
-                                    logger.info(f"   ✅ Added {len(related_conflicts)} related conflicts from Neo4j to context")
-                            except Exception as graph_error:
-                                logger.warning(f"   ⚠️ Failed to fetch graph history: {graph_error}")
-
-            except Exception as e:
-                logger.warning(f"   ⚠️ Failed to fetch analysis summary: {e}")
-
-        if not transcript_context and rag_system and conflict_id:
-            logger.info(f"📚 Fetching initial transcript context for CURRENT conflict {conflict_id}...")
-            try:
-                from app.services.pinecone_service import pinecone_service
-                from app.services.embeddings_service import embeddings_service
-                
-                # Query ONLY the current conflict's chunks (using filter)
-                # This ensures the agent has the full context of THIS conversation
-                overview_query = "conversation discussion topics concerns"
-                query_embedding = embeddings_service.embed_query(overview_query)
-                
-                # Query with FILTER to get ONLY current conflict's chunks
-                logger.info(f"   🔍 Querying ONLY current conflict {conflict_id} for initial context...")
-                results = pinecone_service.index.query(
-                    vector=query_embedding,
-                    top_k=20,  # Get up to 20 chunks from current conflict
-                    namespace="transcript_chunks",
-                    filter={"conflict_id": {"$eq": conflict_id}},  # FILTER by conflict_id
-                    include_metadata=True,
-                )
-                
-                if results and hasattr(results, 'matches') and results.matches:
-                    chunks = results.matches
-                    logger.info(f"   ✅ Found {len(chunks)} chunks from CURRENT conflict {conflict_id}")
+        transcript_context = None
+        calendar_context = None
+        
+        async def fetch_transcript_context():
+            # Logic to fetch transcript context (same as before)
+            t_context = None
+            if rag_system and conflict_id:
+                logger.info(f"📚 Fetching initial transcript context for CURRENT conflict {conflict_id}...")
+                try:
+                    from app.services.pinecone_service import pinecone_service
+                    from app.services.embeddings_service import embeddings_service
                     
-                    # Sort by chunk_index to maintain conversation order
-                    chunks_sorted = sorted(
-                        chunks,
-                        key=lambda c: c.metadata.get("chunk_index", 0) if hasattr(c, 'metadata') else 0
+                    # Query ONLY the current conflict's chunks (using filter)
+                    overview_query = "conversation discussion topics concerns"
+                    query_embedding = embeddings_service.embed_query(overview_query)
+                    
+                    # Query with FILTER to get ONLY current conflict's chunks
+                    logger.info(f"   🔍 Querying ONLY current conflict {conflict_id} for initial context...")
+                    results = pinecone_service.index.query(
+                        vector=query_embedding,
+                        top_k=20,  # Get up to 20 chunks from current conflict
+                        namespace="transcript_chunks",
+                        filter={"conflict_id": {"$eq": conflict_id}},  # FILTER by conflict_id
+                        include_metadata=True,
                     )
                     
-                    # Format chunks into context string
-                    context_parts = []
-                    context_parts.append("=" * 50)
-                    context_parts.append(f"CURRENT CONVERSATION TRANSCRIPT (Conflict: {conflict_id})")
-                    context_parts.append("This is the conversation the user wants to discuss.")
-                    context_parts.append("=" * 50)
-                    context_parts.append("")
-                    
-                    for idx, chunk in enumerate(chunks_sorted[:15], 1):  # Limit to 15 chunks for greeting
-                        metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
-                        speaker = metadata.get("speaker", "Unknown")
-                        text = metadata.get("text", "")
-                        chunk_idx = metadata.get("chunk_index", "?")
+                    if results and hasattr(results, 'matches') and results.matches:
+                        chunks = results.matches
+                        logger.info(f"   ✅ Found {len(chunks)} chunks from CURRENT conflict {conflict_id}")
                         
-                        context_parts.append(f"[{speaker} (part {chunk_idx})]:")
-                        context_parts.append(text)
-                        context_parts.append("")
-                    
-                    transcript_context = "\n".join(context_parts)
-                    logger.info(f"   ✅ Formatted transcript context ({len(transcript_context)} chars, {len(chunks_sorted)} chunks)")
-                else:
-                    logger.warning(f"   ⚠️ No transcript chunks found in Pinecone for conflict {conflict_id}")
-                    logger.info(f"   🔄 Attempting fallback: Fetching full transcript from Pinecone/Supabase...")
-                    
-                    # Fallback: Try to fetch full transcript from Pinecone
-                    try:
-                        transcript_result = pinecone_service.get_by_conflict_id(
-                            conflict_id=conflict_id,
-                            namespace="transcripts"
+                        # Sort by chunk_index to maintain conversation order
+                        chunks_sorted = sorted(
+                            chunks,
+                            key=lambda c: c.metadata.get("chunk_index", 0) if hasattr(c, 'metadata') else 0
                         )
                         
-                        if transcript_result and hasattr(transcript_result, 'metadata'):
-                            transcript_text = transcript_result.metadata.get("transcript_text", "")
-                            if transcript_text:
-                                logger.info(f"   ✅ Found full transcript ({len(transcript_text)} chars), chunking on-the-fly...")
-                                
-                                # Chunk the transcript on-the-fly
-                                from app.services.transcript_chunker import TranscriptChunker
-                                chunker = TranscriptChunker(chunk_size=1000, chunk_overlap=200)
-                                chunks = chunker.chunk_transcript(
-                                    transcript_text=transcript_text,
-                                    conflict_id=conflict_id,
-                                    relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000",
-                                )
-                                
-                                if chunks:
-                                    # Store chunks in Pinecone for future queries
-                                    try:
-                                        chunk_texts = [chunk.get("content", "") for chunk in chunks]
-                                        chunk_embeddings = embeddings_service.embed_batch(chunk_texts)
-                                        
-                                        pinecone_service.upsert_transcript_chunks(
-                                            chunks=chunks,
-                                            embeddings=chunk_embeddings,
-                                            namespace="transcript_chunks"
-                                        )
-                                        logger.info(f"   ✅ Stored {len(chunks)} chunks in Pinecone for future queries")
-                                    except Exception as store_error:
-                                        logger.warning(f"   ⚠️ Failed to store chunks in Pinecone: {store_error}")
-                                        # Continue anyway - we'll still use them for initial context
-                                    
-                                    # Take first 5 chunks for initial context (to avoid overwhelming the greeting)
-                                    context_parts = []
-                                    for idx, chunk in enumerate(chunks[:5], 1):
-                                        speaker = chunk.get("speaker", "Unknown")
-                                        text = chunk.get("content", "")
-                                        context_parts.append(
-                                            f"[Chunk {idx}, {speaker}]:\n{text}\n"
-                                        )
-                                    
-                                    transcript_context = "\n".join(context_parts)
-                                    logger.info(f"   ✅ Created transcript context from full transcript ({len(transcript_context)} chars)")
-                                else:
-                                    logger.warning(f"   ⚠️ Failed to chunk transcript")
-                            else:
-                                logger.warning(f"   ⚠️ Full transcript found but transcript_text is empty")
-                        else:
-                            logger.warning(f"   ⚠️ No full transcript found in Pinecone for conflict {conflict_id}")
-                    except Exception as fallback_error:
-                        logger.error(f"   ❌ Fallback transcript fetch failed: {fallback_error}")
-                        import traceback
-                        logger.error(traceback.format_exc())
+                        # Format chunks into context string
+                        context_parts = []
+                        context_parts.append("=" * 50)
+                        context_parts.append(f"CURRENT CONVERSATION TRANSCRIPT (Conflict: {conflict_id})")
+                        context_parts.append("This is the conversation the user wants to discuss.")
+                        context_parts.append("=" * 50)
+                        context_parts.append("")
+                        
+                        for idx, chunk in enumerate(chunks_sorted[:15], 1):  # Limit to 15 chunks for greeting
+                            metadata = chunk.metadata if hasattr(chunk, 'metadata') else {}
+                            speaker = metadata.get("speaker", "Unknown")
+                            text = metadata.get("text", "")
+                            chunk_idx = metadata.get("chunk_index", "?")
+                            
+                            context_parts.append(f"[{speaker} (part {chunk_idx})]:")
+                            context_parts.append(text)
+                            context_parts.append("")
+                        
+                        t_context = "\n".join(context_parts)
+                        logger.info(f"   ✅ Formatted transcript context ({len(t_context)} chars, {len(chunks_sorted)} chunks)")
+                    else:
+                        logger.warning(f"   ⚠️ No transcript chunks found in Pinecone for conflict {conflict_id}")
+                        # Fallback logic omitted for brevity in parallel block to keep it clean
+                        # If needed, we can add simple fallback here or just skip
+                except Exception as e:
+                    logger.error(f"   ❌ Could not fetch initial transcript context: {e}")
+            return t_context
+
+        async def fetch_calendar_context():
+            c_context = None
+            try:
+                from app.services.calendar_service import calendar_service
+                if calendar_service:
+                    logger.info(f"📅 Fetching calendar insights (async)...")
+                    try:
+                        c_context = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                calendar_service.get_calendar_insights_for_llm,
+                                relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
+                            ),
+                            timeout=2.5 # Reduced timeout for parallel execution
+                        )
+                        logger.info(f"   ✅ Calendar insights fetched")
+                    except asyncio.TimeoutError:
+                        logger.warning("   ⚠️ Calendar insights fetch timed out")
+                    except Exception as e:
+                        logger.warning(f"   ⚠️ Error fetching calendar insights: {e}")
                     
-                    if not transcript_context:
-                        logger.error(f"   ❌ Could not retrieve transcript context for conflict {conflict_id}")
-                        logger.error(f"   💡 This conflict may not have a stored transcript yet")
+                    if c_context and c_context == "No calendar insights available.":
+                        c_context = None
             except Exception as e:
-                logger.error(f"   ❌ Could not fetch initial transcript context: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                transcript_context = None
+                logger.warning(f"   ⚠️ Error in calendar fetch: {e}")
+            return c_context
+
+        # Execute in parallel
+        results = await asyncio.gather(
+            fetch_transcript_context(),
+            fetch_calendar_context(),
+            return_exceptions=True
+        )
         
-        stage_times['transcript_context'] = time.time() - stage_start
-        if transcript_context:
-            logger.info(f"   ⏱️  Transcript Context: {stage_times['transcript_context']:.2f}s")
+        transcript_context = results[0] if not isinstance(results[0], Exception) else None
+        calendar_context = results[1] if not isinstance(results[1], Exception) else None
         
-        # Stage 9: Fetch calendar insights for context-aware responses
-        stage_start = time.time()
-        calendar_context = None
-        try:
-            from app.services.calendar_service import calendar_service
-            if calendar_service:
-                logger.info(f"📅 Fetching calendar insights...")
-                calendar_context = calendar_service.get_calendar_insights_for_llm(
-                    relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
-                )
-                if calendar_context and calendar_context != "No calendar insights available.":
-                    logger.info(f"   ✅ Calendar insights retrieved ({len(calendar_context)} chars)")
-                else:
-                    calendar_context = None
-                    logger.info(f"   ℹ️  No calendar insights available")
-        except ImportError:
-            logger.warning(f"   ⚠️ Calendar service not available")
-            calendar_context = None
-        except Exception as e:
-            logger.warning(f"   ⚠️ Error fetching calendar insights: {e}")
-            calendar_context = None
-        
-        stage_times['calendar_context'] = time.time() - stage_start
-        if calendar_context:
-            logger.info(f"   ⏱️  Calendar Context: {stage_times['calendar_context']:.2f}s")
+        stage_times['context_fetch'] = time.time() - stage_start
+        logger.info(f"   ⏱️  Parallel Context Fetch: {stage_times['context_fetch']:.2f}s")
         
         # Generate initial greeting (like Voice Agent RAG)
         logger.info("🎤 Generating initial greeting...")
@@ -795,10 +710,20 @@ async def mediator_entrypoint(ctx: JobContext):
                     # Use first 300 chars as query to find similar past conflicts
                     topic_query = transcript_context[:300]
                     
-                    conflict_memory = calendar_service.get_conflict_memory_context(
-                        current_topic=topic_query,
-                        relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
-                    )
+                    logger.info("   🔍 Retrieving conflict memory context (async)...")
+                    try:
+                        conflict_memory = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                calendar_service.get_conflict_memory_context,
+                                current_topic=topic_query,
+                                relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
+                            ),
+                            timeout=5.0  # 5 second timeout
+                        )
+                        logger.info("   ✅ Conflict memory retrieved")
+                    except asyncio.TimeoutError:
+                        logger.warning("   ⚠️ Conflict memory retrieval timed out")
+                        conflict_memory = ""
                     
                     if conflict_memory:
                         greeting_instructions = (

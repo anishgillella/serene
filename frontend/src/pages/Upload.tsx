@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UploadIcon, FileTextIcon, CheckCircleIcon, LoaderIcon, XIcon, AlertCircleIcon, SparklesIcon, ArrowLeftIcon } from 'lucide-react';
 
@@ -19,7 +19,7 @@ const Upload = () => {
   const [selectedPdfType, setSelectedPdfType] = useState<string>('boyfriend_profile');
   const [relationshipId, setRelationshipId] = useState<string>('00000000-0000-0000-0000-000000000000');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
   const handleDragEnter = (e: React.DragEvent) => {
@@ -64,7 +64,7 @@ const Upload = () => {
 
   const handleFiles = async (fileList: File[]) => {
     for (const file of fileList) {
-      const fileId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const fileId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)} `;
       const newFile: UploadedFile = {
         id: fileId,
         filename: file.name,
@@ -83,7 +83,7 @@ const Upload = () => {
   const uploadFile = async (file: File, fileInfo: UploadedFile) => {
     try {
       // Update status to processing
-      setFiles(prev => prev.map(f => 
+      setFiles(prev => prev.map(f =>
         f.id === fileInfo.id ? { ...f, status: 'processing', progress: 50 } : f
       ));
 
@@ -92,23 +92,23 @@ const Upload = () => {
       formData.append('relationship_id', relationshipId);
       formData.append('pdf_type', fileInfo.pdfType);
 
-      const response = await fetch(`${apiUrl}/api/pdfs/upload`, {
+      const response = await fetch(`${apiUrl} /api/pdfs / upload`, {
         method: 'POST',
         body: formData
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-        throw new Error(errorData.detail || `Upload failed: ${response.statusText}`);
+        throw new Error(errorData.detail || `Upload failed: ${response.statusText} `);
       }
 
       const data = await response.json();
 
       // Update status to success
-      setFiles(prev => prev.map(f => 
-        f.id === fileInfo.id ? { 
-          ...f, 
-          status: 'success', 
+      setFiles(prev => prev.map(f =>
+        f.id === fileInfo.id ? {
+          ...f,
+          status: 'success',
           progress: 100,
           message: `Extracted ${data.extracted_text_length} characters`,
           extractedTextLength: data.extracted_text_length
@@ -117,9 +117,9 @@ const Upload = () => {
 
     } catch (error: any) {
       console.error('Error uploading file:', error);
-      setFiles(prev => prev.map(f => 
-        f.id === fileInfo.id ? { 
-          ...f, 
+      setFiles(prev => prev.map(f =>
+        f.id === fileInfo.id ? {
+          ...f,
           status: 'error',
           message: error.message || 'Upload failed'
         } : f
@@ -150,26 +150,26 @@ const Upload = () => {
         </button>
       </div>
 
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+      <div className="text-center mb-8">
+        <h2 className="text-h2 text-text-primary mb-2">
           Upload PDFs for RAG Pipeline
         </h2>
-        <p className="text-sm text-gray-600">
+        <p className="text-body text-text-secondary">
           Upload PDFs to extract text via OCR and store in vector database
         </p>
       </div>
 
       {/* Configuration */}
-      <div className="bg-white/80 backdrop-blur-sm rounded-xl p-4 mb-6 shadow-sm">
-        <div className="space-y-4">
+      <div className="bg-surface-elevated rounded-xl p-6 mb-8 border border-border-subtle shadow-soft">
+        <div className="space-y-5">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-tiny font-medium text-text-secondary mb-1.5 uppercase tracking-wider">
               PDF Type
             </label>
             <select
               value={selectedPdfType}
               onChange={(e) => setSelectedPdfType(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-xl transition-all outline-none appearance-none"
             >
               {pdfTypeOptions.map(option => (
                 <option key={option.value} value={option.value}>
@@ -177,13 +177,13 @@ const Upload = () => {
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-tiny text-text-tertiary mt-1.5">
               {pdfTypeOptions.find(opt => opt.value === selectedPdfType)?.description}
             </p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-tiny font-medium text-text-secondary mb-1.5 uppercase tracking-wider">
               Relationship ID
             </label>
             <input
@@ -191,9 +191,9 @@ const Upload = () => {
               value={relationshipId}
               onChange={(e) => setRelationshipId(e.target.value)}
               placeholder="00000000-0000-0000-0000-000000000000"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2.5 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-xl transition-all outline-none font-mono text-small"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-tiny text-text-tertiary mt-1.5">
               Default relationship ID (can be changed)
             </p>
           </div>
@@ -206,118 +206,114 @@ const Upload = () => {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`border-2 border-dashed rounded-xl p-8 mb-6 transition-all ${
-          isDragging
-            ? 'border-purple-500 bg-purple-50'
-            : 'border-gray-300 bg-white/50 hover:border-purple-300 hover:bg-purple-50/50'
-        }`}
+        className={`border border - dashed rounded - xl p - 12 mb - 8 transition - all flex flex - col items - center justify - center text - center ${isDragging
+            ? 'border-accent bg-surface-hover'
+            : 'border-border-medium bg-transparent hover:border-accent hover:bg-surface-hover'
+          } `}
       >
-        <div className="flex flex-col items-center justify-center text-center">
-          <UploadIcon size={48} className={`mb-4 ${isDragging ? 'text-purple-500' : 'text-gray-400'}`} />
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">
-            {isDragging ? 'Drop PDF here' : 'Drag & Drop PDF files here'}
-          </h3>
-          <p className="text-sm text-gray-600 mb-4">
-            or click to browse
-          </p>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="px-6 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-lg font-medium transition-colors"
-          >
-            Select PDF Files
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-          />
-        </div>
+        <UploadIcon size={40} className={`mb - 4 ${isDragging ? 'text-accent' : 'text-text-tertiary'} `} strokeWidth={1.5} />
+        <h3 className="text-h3 text-text-primary mb-2">
+          {isDragging ? 'Drop PDF here' : 'Drag & Drop PDF files here'}
+        </h3>
+        <p className="text-body text-text-secondary mb-6">
+          or click to browse
+        </p>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="px-6 py-2.5 bg-white border border-border-subtle text-text-primary hover:border-accent hover:text-accent rounded-xl font-medium transition-all shadow-soft hover:shadow-subtle"
+        >
+          Select PDF Files
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf"
+          multiple
+          onChange={handleFileSelect}
+          className="hidden"
+        />
       </div>
 
       {/* Uploaded Files List */}
       {files.length > 0 && (
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold text-gray-800 mb-3">
+          <h3 className="text-h3 text-text-primary mb-4">
             Uploaded Files ({files.length})
           </h3>
           {files.map((file) => (
             <div
               key={file.id}
-              className="bg-white/80 backdrop-blur-sm rounded-xl p-4 shadow-sm border border-gray-200"
+              className="bg-surface-elevated rounded-xl p-4 shadow-soft border border-border-subtle"
             >
               <div className="flex items-start justify-between">
                 <div className="flex items-start flex-1">
-                  <div className={`p-2 rounded-lg mr-3 ${
-                    file.status === 'success' ? 'bg-green-100' :
-                    file.status === 'error' ? 'bg-red-100' :
-                    file.status === 'processing' ? 'bg-blue-100' :
-                    'bg-gray-100'
-                  }`}>
+                  <div className={`p - 2.5 rounded - lg mr - 4 ${file.status === 'success' ? 'bg-green-50 text-green-600' :
+                      file.status === 'error' ? 'bg-red-50 text-red-600' :
+                        file.status === 'processing' ? 'bg-blue-50 text-blue-600' :
+                          'bg-surface-hover text-text-tertiary'
+                    } `}>
                     {file.status === 'success' ? (
-                      <CheckCircleIcon size={20} className="text-green-600" />
+                      <CheckCircleIcon size={20} strokeWidth={1.5} />
                     ) : file.status === 'error' ? (
-                      <AlertCircleIcon size={20} className="text-red-600" />
+                      <AlertCircleIcon size={20} strokeWidth={1.5} />
                     ) : file.status === 'processing' ? (
-                      <LoaderIcon size={20} className="text-blue-600 animate-spin" />
+                      <LoaderIcon size={20} className="animate-spin" strokeWidth={1.5} />
                     ) : (
-                      <FileTextIcon size={20} className="text-gray-600" />
+                      <FileTextIcon size={20} strokeWidth={1.5} />
                     )}
                   </div>
-                  
+
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center mb-1">
-                      <h4 className="text-sm font-medium text-gray-800 truncate">
+                      <h4 className="text-body font-medium text-text-primary truncate">
                         {file.filename}
                       </h4>
-                      <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">
+                      <span className="ml-3 text-tiny font-medium bg-surface-hover text-text-secondary px-2 py-0.5 rounded border border-border-subtle">
                         {pdfTypeOptions.find(opt => opt.value === file.pdfType)?.label}
                       </span>
                     </div>
-                    
+
                     {file.status === 'processing' && (
                       <div className="mt-2">
-                        <div className="flex items-center text-xs text-gray-600 mb-1">
-                          <SparklesIcon size={12} className="mr-1" />
+                        <div className="flex items-center text-tiny text-text-secondary mb-1.5">
+                          <SparklesIcon size={12} className="mr-1.5 text-accent" />
                           <span>Running OCR and storing in vector database...</span>
                         </div>
-                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                        <div className="w-full bg-surface-hover rounded-full h-1">
                           <div
-                            className="bg-blue-500 h-1.5 rounded-full transition-all duration-300"
-                            style={{ width: `${file.progress || 0}%` }}
+                            className="bg-accent h-1 rounded-full transition-all duration-300"
+                            style={{ width: `${file.progress || 0}% ` }}
                           />
                         </div>
                       </div>
                     )}
-                    
+
                     {file.status === 'success' && (
-                      <div className="mt-2 text-xs text-gray-600">
-                        <CheckCircleIcon size={12} className="inline mr-1 text-green-600" />
-                        <span className="text-green-700 font-medium">Success!</span>
+                      <div className="mt-1 text-tiny text-text-secondary">
+                        <CheckCircleIcon size={12} className="inline mr-1.5 text-green-600" />
+                        <span className="text-green-600 font-medium">Success!</span>
                         {file.extractedTextLength && (
-                          <span className="ml-2">
+                          <span className="ml-2 text-text-tertiary">
                             Extracted {file.extractedTextLength.toLocaleString()} characters
                           </span>
                         )}
                       </div>
                     )}
-                    
+
                     {file.status === 'error' && (
-                      <div className="mt-2 text-xs text-red-600">
-                        <AlertCircleIcon size={12} className="inline mr-1" />
+                      <div className="mt-1 text-tiny text-red-600">
+                        <AlertCircleIcon size={12} className="inline mr-1.5" />
                         <span>{file.message || 'Upload failed'}</span>
                       </div>
                     )}
                   </div>
                 </div>
-                
+
                 <button
                   onClick={() => removeFile(file.id)}
-                  className="ml-4 p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                  className="ml-4 p-2 text-text-tertiary hover:text-text-primary hover:bg-surface-hover rounded-full transition-colors"
                 >
-                  <XIcon size={18} />
+                  <XIcon size={18} strokeWidth={1.5} />
                 </button>
               </div>
             </div>
@@ -326,18 +322,18 @@ const Upload = () => {
       )}
 
       {/* Info Box */}
-      <div className="mt-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
+      <div className="mt-8 bg-surface-hover border border-border-subtle rounded-xl p-5">
         <div className="flex items-start">
-          <SparklesIcon size={20} className="text-blue-600 mr-3 mt-0.5" />
+          <SparklesIcon size={20} className="text-accent mr-3 mt-0.5" strokeWidth={1.5} />
           <div className="flex-1">
-            <h4 className="text-sm font-semibold text-blue-900 mb-1">
+            <h4 className="text-small font-semibold text-text-primary mb-2">
               How it works
             </h4>
-            <ul className="text-xs text-blue-800 space-y-1">
-              <li>• PDFs are automatically processed with Mistral OCR</li>
-              <li>• Extracted text is embedded using Voyage AI</li>
-              <li>• Stored in Pinecone vector database for RAG retrieval</li>
-              <li>• Used for personalized conflict analysis and repair plans</li>
+            <ul className="text-tiny text-text-secondary space-y-1.5 list-disc list-inside">
+              <li>PDFs are automatically processed with Mistral OCR</li>
+              <li>Extracted text is embedded using Voyage AI</li>
+              <li>Stored in Pinecone vector database for RAG retrieval</li>
+              <li>Used for personalized conflict analysis and repair plans</li>
             </ul>
           </div>
         </div>

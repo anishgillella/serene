@@ -104,6 +104,41 @@ async def get_mediator_token(request: dict = Body(...)):
     ))
     
     
+    # Explicitly dispatch the agent to the room
+    # NOTE: Disabled for local development to prevent "two voices" (duplicate agents)
+    # The local start_agent.py script will auto-join the room.
+    # try:
+    #     lkapi = api.LiveKitAPI(
+    #         settings.LIVEKIT_URL,
+    #         settings.LIVEKIT_API_KEY,
+    #         settings.LIVEKIT_API_SECRET
+    #     )
+    #     
+    #     # Check existing participants
+    #     try:
+    #         participants = await lkapi.room.list_participants(api.ListParticipantsRequest(room=room_name))
+    #         agent_exists = any(p.identity.startswith("agent-") or "agent" in p.identity.lower() or "luna" in p.identity.lower() for p in participants.participants)
+    #         
+    #         if agent_exists:
+    #             logging.info(f"ℹ️ Agent already exists in room {room_name}, skipping dispatch")
+    #         else:
+    #             # req = api.CreateAgentDispatchRequest(room=room_name)
+    #             # await lkapi.agent_dispatch.create_dispatch(req)
+    #             # logging.info(f"✅ Explicitly dispatched agent to room {room_name}")
+    #             pass
+    #             
+    #     except Exception as list_error:
+    #         # If room doesn't exist yet, list_participants might fail or return empty
+    #         # In that case, safe to dispatch
+    #         logging.info(f"ℹ️ Room check failed (likely new room), proceeding with dispatch: {list_error}")
+    #         # req = api.CreateAgentDispatchRequest(room=room_name)
+    #         # await lkapi.agent_dispatch.create_dispatch(req)
+    #         # logging.info(f"✅ Explicitly dispatched agent to room {room_name}")
+    #         pass
+            
+    #     await lkapi.aclose()
+    # except Exception as e:
+    #     logging.warning(f"⚠️ Failed to explicit dispatch (agent may still auto-join): {e}")
     return {
         "token": token.to_jwt(),
         "room": room_name,

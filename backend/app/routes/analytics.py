@@ -10,9 +10,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
+from app.services.db_service import DEFAULT_RELATIONSHIP_ID
+
 @router.get("/dashboard", summary="Get analytics dashboard data")
 async def get_analytics_dashboard(
-    relationship_id: str = Query(default="default", description="Relationship ID"),
+    relationship_id: str = Query(default=DEFAULT_RELATIONSHIP_ID, description="Relationship ID"),
     partner_id: str = Query(default="partner_b", description="Partner ID")
 ):
     """

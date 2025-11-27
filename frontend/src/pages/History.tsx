@@ -1,241 +1,121 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ClockIcon, CalendarIcon, ChevronRightIcon, LoaderIcon, AlertCircleIcon, FileTextIcon, MessageSquareIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { History as HistoryIcon, Loader2 } from 'lucide-react';
+import HistoryStats from '../components/history/HistoryStats';
+import FilterBar from '../components/history/FilterBar';
+import Timeline from '../components/history/Timeline';
 
 interface Conflict {
   id: string;
-  relationship_id: string;
-  started_at: string;
-  ended_at: string | null;
+  date: string;
   status: string;
-  metadata?: any;
-}
-
-interface ConflictWithConversations extends Conflict {
+  duration?: string;
+  summary?: string;
 }
 
 const History = () => {
-  const navigate = useNavigate();
-  const [conflicts, setConflicts] = useState<ConflictWithConversations[]>([]);
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'completed'>('all');
 
   useEffect(() => {
-    loadConflicts();
+    const fetchConflicts = async () => {
+      try {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+        const response = await fetch(`${apiUrl}/api/conflicts`);
+        if (response.ok) {
+          const data = await response.json();
+          // Transform data to match Conflict interface if needed
+          // Assuming API returns list of conflicts with created_at, status, title/summary
+          const transformedData = data.conflicts ? data.conflicts.map((item: any) => ({
+            id: item.id,
+            date: item.started_at || item.created_at, // Handle different field names
+            status: item.status,
+            duration: item.duration || '25m', // Placeholder if not available
+            summary: item.title || 'Conflict Session'
+          })) : [];
+
+          // Sort by date descending
+          transformedData.sort((a: Conflict, b: Conflict) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+          setConflicts(transformedData);
+        }
+      } catch (error) {
+        console.error('Error fetching conflicts:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchConflicts();
   }, []);
 
-  const loadConflicts = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch(`${apiUrl}/api/conflicts`);
-      
-      if (!response.ok) {
-        // Only throw error for actual server errors (5xx)
-        if (response.status >= 500) {
-          throw new Error('Server error loading conflicts');
-        }
-        // For 404 or other client errors, treat as empty list (no conflicts exist yet)
-        setConflicts([]);
-        setLoading(false);
-        return;
-      }
-      
-      const data = await response.json();
-      // Handle empty response gracefully - empty array is valid
-      const conflictsList = data.conflicts || [];
-      
-      // Sort by started_at descending (most recent first)
-      const sortedConflicts = conflictsList.sort((a: Conflict, b: Conflict) => {
-        const dateA = new Date(a.started_at).getTime();
-        const dateB = new Date(b.started_at).getTime();
-        return dateB - dateA;
-      });
-      
-      // No conversations to load - Private Rant removed
-      setConflicts(sortedConflicts.map(conflict => ({ ...conflict, conversations: [], messageCount: 0 })));
-    } catch (err: any) {
-      // Only show error for actual network/server errors
-      console.error('Error loading conflicts:', err);
-      setError(err.message || 'Failed to load conflict history');
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Filter conflicts
+  const filteredConflicts = conflicts.filter(conflict => {
+    const matchesSearch = (conflict.summary?.toLowerCase().includes(searchQuery.toLowerCase()) || false) ||
+      conflict.date.includes(searchQuery);
+    const matchesStatus = statusFilter === 'all' || conflict.status.toLowerCase() === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
 
+  // Calculate stats
+  const totalConflicts = conflicts.length;
+  const completedConflicts = conflicts.filter(c => c.status.toLowerCase() === 'completed').length;
+  const resolutionRate = totalConflicts > 0 ? Math.round((completedConflicts / totalConflicts) * 100) : 0;
 
-
-  const formatDate = (dateString: string | null) => {
-    if (!dateString) return 'Ongoing';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const formatDuration = (started: string, ended: string | null) => {
-    if (!ended) return 'In progress';
-    const start = new Date(started);
-    const end = new Date(ended);
-    const diffMs = end.getTime() - start.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffSecs = Math.floor((diffMs % 60000) / 1000);
-    
-    if (diffMins > 0) {
-      return `${diffMins}m ${diffSecs}s`;
-    }
-    return `${diffSecs}s`;
-  };
-
-  const handleConflictClick = (conflictId: string) => {
-    console.log('🖱️ Clicking conflict:', conflictId);
-    // Pass both in state and URL params for reliability
-    navigate(`/post-fight?conflict_id=${conflictId}`, { 
-      state: { conflict_id: conflictId } 
-    });
-  };
+  // Calculate streak
+  const lastConflictDate = conflicts.length > 0 ? new Date(conflicts[0].date) : new Date();
+  const today = new Date();
+  const streakDays = Math.floor((today.getTime() - lastConflictDate.getTime()) / (1000 * 3600 * 24));
+  // If no conflicts, streak is 0 or maybe infinite? Let's say 0 for now if empty, or days since start if we knew that.
+  // Actually, if last conflict was today, streak is 0. If yesterday, 1.
+  const displayStreak = conflicts.length === 0 ? 0 : Math.max(0, streakDays);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-blue-50">
-      {/* Header */}
-      <div className="bg-white/80 backdrop-blur-sm border-b border-pink-200 p-4">
-        <div className="max-w-4xl mx-auto">
-          <h1 className="text-2xl font-semibold text-gray-800 flex items-center gap-2">
-            <FileTextIcon size={24} className="text-rose-500" />
+    <div className="min-h-screen bg-bg-primary p-4 md:p-8 font-sans text-text-primary">
+      <div className="max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-12 animate-fade-in">
+          <h2 className="text-h2 text-text-primary flex items-center justify-center gap-3 mb-2">
+            <HistoryIcon className="text-accent" size={28} strokeWidth={1.5} />
             Conflict History
-          </h1>
-          <p className="text-sm text-gray-600 mt-1">
-            View and access all your previous conflict sessions
+          </h2>
+          <p className="text-body text-text-secondary">
+            Your relationship journey and growth over time
           </p>
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="max-w-4xl mx-auto p-6">
-        {loading && (
-          <div className="flex items-center justify-center py-12">
-            <LoaderIcon size={24} className="animate-spin text-rose-500 mr-3" />
-            <span className="text-gray-600">Loading conflicts...</span>
+        {loading ? (
+          <div className="flex justify-center items-center h-64">
+            <Loader2 className="animate-spin text-accent" size={32} />
           </div>
-        )}
+        ) : (
+          <div className="animate-slide-up">
+            <HistoryStats
+              totalConflicts={totalConflicts}
+              resolutionRate={resolutionRate}
+              streakDays={displayStreak}
+            />
 
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-center gap-3">
-            <AlertCircleIcon size={20} className="text-red-600" />
-            <div>
-              <p className="text-red-800 font-medium">Error loading conflicts</p>
-              <p className="text-red-600 text-sm">{error}</p>
-            </div>
-            <button
-              onClick={loadConflicts}
-              className="ml-auto px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
-            >
-              Retry
-            </button>
-          </div>
-        )}
+            <FilterBar
+              searchQuery={searchQuery}
+              onSearchChange={setSearchQuery}
+              statusFilter={statusFilter}
+              onStatusFilterChange={setStatusFilter}
+            />
 
-        {!loading && !error && conflicts.length === 0 && (
-          <div className="text-center py-12">
-            <FileTextIcon size={48} className="text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-600 text-lg mb-2">No conflicts found</p>
-            <p className="text-gray-500 text-sm">
-              Start a new fight capture session to begin tracking conflicts
-            </p>
-          </div>
-        )}
-
-        {!loading && !error && conflicts.length > 0 && (
-          <div className="space-y-3">
-            {conflicts.map((conflict) => {
-              return (
-                <div
-                  key={conflict.id}
-                  className="bg-white/80 backdrop-blur-sm rounded-xl border border-pink-200 hover:border-rose-300 hover:shadow-md transition-all group"
-                >
-                  {/* Conflict Header */}
-                  <div 
-                    onClick={() => handleConflictClick(conflict.id)}
-                    className="p-4 cursor-pointer"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <div className={`w-2 h-2 rounded-full ${
-                            conflict.status === 'active' ? 'bg-green-500' : 
-                            conflict.status === 'completed' ? 'bg-blue-500' : 
-                            'bg-gray-400'
-                          }`} />
-                          <span className="text-xs font-medium text-gray-600 uppercase">
-                            {conflict.status || 'unknown'}
-                          </span>
-                          {conflict.ended_at && (
-                            <span className="text-xs text-gray-500">
-                              • {formatDuration(conflict.started_at, conflict.ended_at)}
-                            </span>
-                          )}
-                        </div>
-                        
-                        <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
-                          <div className="flex items-center gap-1">
-                            <CalendarIcon size={14} />
-                            <span>{formatDate(conflict.started_at)}</span>
-                          </div>
-                          {conflict.ended_at && (
-                            <div className="flex items-center gap-1">
-                              <ClockIcon size={14} />
-                              <span>Ended: {formatDate(conflict.ended_at)}</span>
-                            </div>
-                          )}
-                        </div>
-                        
-                        <div className="text-xs text-gray-500 font-mono">
-                          ID: {conflict.id.substring(0, 8)}...
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-2">
-                        <ChevronRightIcon 
-                          size={20} 
-                          className="text-gray-400 group-hover:text-rose-500 transition-colors" 
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Stats */}
-        {!loading && !error && conflicts.length > 0 && (
-          <div className="mt-8 bg-white/60 backdrop-blur-sm rounded-xl p-4 border border-pink-200">
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div>
-                <div className="text-2xl font-bold text-gray-800">{conflicts.length}</div>
-                <div className="text-xs text-gray-600">Total Conflicts</div>
+            {filteredConflicts.length > 0 ? (
+              <Timeline conflicts={filteredConflicts} />
+            ) : (
+              <div className="text-center py-12 bg-surface-elevated rounded-2xl border border-border-subtle border-dashed shadow-soft">
+                <div className="text-h3 text-text-secondary mb-2">No conflicts found</div>
+                <p className="text-body text-text-tertiary">
+                  {searchQuery || statusFilter !== 'all'
+                    ? "Try adjusting your filters"
+                    : "Your relationship is in harmony!"}
+                </p>
               </div>
-              <div>
-                <div className="text-2xl font-bold text-green-600">
-                  {conflicts.filter(c => c.status === 'completed').length}
-                </div>
-                <div className="text-xs text-gray-600">Completed</div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold text-blue-600">
-                  {conflicts.filter(c => c.status === 'active').length}
-                </div>
-                <div className="text-xs text-gray-600">Active</div>
-              </div>
-            </div>
+            )}
           </div>
         )}
       </div>
@@ -244,4 +124,3 @@ const History = () => {
 };
 
 export default History;
-

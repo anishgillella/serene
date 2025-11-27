@@ -13,18 +13,18 @@ const AnalyticsCard: React.FC<AnalyticsCardProps> = ({
   title,
   value,
   subValue,
-  color = 'bg-white/60',
+  color = 'bg-surface-elevated',
   children,
   className = ''
 }) => {
   return (
-    <div className={`rounded-3xl p-6 ${color} backdrop-blur-xl shadow-lg border border-white/40 transition-all hover:shadow-xl ${className}`}>
+    <div className={`rounded-2xl p-6 ${color} border border-border-subtle shadow-soft transition-all hover:shadow-subtle ${className}`}>
       <div className="flex justify-between items-start mb-4">
-        <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">{title}</h3>
+        <h3 className="text-tiny font-medium text-text-tertiary uppercase tracking-wider">{title}</h3>
         {value !== undefined && (
           <div className="text-right">
-            <div className="text-2xl font-bold text-slate-800">{value}</div>
-            {subValue && <div className="text-xs font-medium text-slate-400">{subValue}</div>}
+            <div className="text-h2 text-text-primary">{value}</div>
+            {subValue && <div className="text-tiny text-text-secondary mt-0.5">{subValue}</div>}
           </div>
         )}
       </div>
