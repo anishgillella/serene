@@ -18,8 +18,8 @@ const AnalyticsCard: React.FC<AnalyticsCardProps> = ({
   className = ''
 }) => {
   return (
-    <div className={`rounded-2xl p-6 ${color} border border-border-subtle shadow-soft transition-all hover:shadow-subtle ${className}`}>
-      <div className="flex justify-between items-start mb-4">
+    <div className={`flex flex-col rounded-2xl p-6 ${color} border border-border-subtle shadow-soft transition-all hover:shadow-subtle ${className}`}>
+      <div className="flex justify-between items-start mb-4 shrink-0">
         <h3 className="text-tiny font-medium text-text-tertiary uppercase tracking-wider">{title}</h3>
         {value !== undefined && (
           <div className="text-right">
@@ -28,7 +28,7 @@ const AnalyticsCard: React.FC<AnalyticsCardProps> = ({
           </div>
         )}
       </div>
-      <div className="relative">
+      <div className="relative flex-1 min-h-0">
         {children}
       </div>
     </div>

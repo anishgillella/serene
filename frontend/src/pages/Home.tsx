@@ -1,6 +1,142 @@
-import React from 'react';
-import { Moon, ArrowRight, Sparkles } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Moon, ArrowRight, Sparkles, MessageSquare, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+
+const API_BASE = 'http://localhost:8000';
+
+interface Conflict {
+  id: string;
+  title: string;
+  started_at: string;
+  status: string;
+  metadata: {
+    summary?: string;
+    topics?: string[];
+  };
+}
+
+const RecentConflicts = () => {
+  const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchConflicts = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/conflicts`);
+        if (res.ok) {
+          const data = await res.json();
+          // Get last 3 conflicts
+          setConflicts(data.conflicts.slice(0, 3));
+        }
+      } catch (error) {
+        console.error('Error fetching conflicts:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchConflicts();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="mb-12">
+        <h2 className="text-h2 text-text-primary mb-6">Recent Conflicts</h2>
+        <div className="space-y-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="bg-surface-elevated rounded-2xl p-6 border border-border-subtle animate-pulse">
+              <div className="h-4 bg-surface-hover rounded w-3/4 mb-3"></div>
+              <div className="h-3 bg-surface-hover rounded w-1/2"></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (conflicts.length === 0) {
+    return null;
+  }
+
+  const getStatusColor = (status: string) => {
+    if (status === 'completed' || status === 'resolved') return 'text-green-600 bg-green-50';
+    if (status === 'active') return 'text-amber-600 bg-amber-50';
+    return 'text-slate-600 bg-slate-50';
+  };
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+    if (diffHours < 24) return `${diffHours}h ago`;
+    const diffDays = Math.floor(diffHours / 24);
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  return (
+    <div className="mb-12">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-h2 text-text-primary">Recent Conflicts</h2>
+        <button
+          onClick={() => navigate('/history')}
+          className="text-small text-accent hover:text-accent-dark transition-colors flex items-center gap-1"
+        >
+          View All
+          <ArrowRight size={16} />
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        {conflicts.map((conflict) => (
+          <div
+            key={conflict.id}
+            onClick={() => navigate(`/history`)}
+            className="bg-surface-elevated rounded-2xl p-6 border border-border-subtle shadow-soft hover:shadow-subtle transition-all cursor-pointer group"
+          >
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex-1">
+                <h3 className="text-h3 text-text-primary mb-1 group-hover:text-accent transition-colors">
+                  {conflict.title || 'Untitled Conflict'}
+                </h3>
+                <div className="flex items-center gap-3 text-tiny text-text-tertiary">
+                  <span className="flex items-center gap-1">
+                    <Clock size={12} />
+                    {formatDate(conflict.started_at)}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full ${getStatusColor(conflict.status)}`}>
+                    {conflict.status}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {conflict.metadata?.summary && (
+              <p className="text-small text-text-secondary line-clamp-2 mb-3">
+                {conflict.metadata.summary}
+              </p>
+            )}
+
+            {conflict.metadata?.topics && conflict.metadata.topics.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {conflict.metadata.topics.slice(0, 3).map((topic, i) => (
+                  <span
+                    key={i}
+                    className="px-2 py-1 rounded-lg bg-surface-hover text-tiny text-text-secondary"
+                  >
+                    {topic}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 const Home = () => {
   const navigate = useNavigate();
@@ -81,6 +217,9 @@ const Home = () => {
           </div>
         </div>
       </div>
+
+      {/* Recent Conflicts Section */}
+      <RecentConflicts />
     </div>
   );
 };

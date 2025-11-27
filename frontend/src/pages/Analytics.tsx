@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import {
   Bar, XAxis, YAxis, ResponsiveContainer,
-  ComposedChart, Tooltip, Area, CartesianGrid
+  ComposedChart, Tooltip, Area, CartesianGrid,
+  PieChart, Pie, Cell, Legend
 } from 'recharts';
 import AnalyticsCard from '../components/AnalyticsCard';
 import VoiceButton from '../components/VoiceButton';
@@ -32,6 +33,31 @@ interface AnalyticsData {
     conflicts_30d: number;
     intimacy_30d: number;
     unresolved: number;
+  };
+  resolution_breakdown: Array<{
+    name: string;
+    value: number;
+    color: string;
+  }>;
+  day_of_week_activity: Array<{
+    day: string;
+    conflicts: number;
+    intimacy: number;
+  }>;
+  conflict_themes: Array<{
+    name: string;
+    value: number;
+  }>;
+  sex_conflict_ratio_2w: {
+    value: number;
+    conflicts: number;
+    intimacy: number;
+    status: string;
+  };
+  magic_ratio: {
+    value: number;
+    status: string;
+    target: number;
   };
 }
 
@@ -166,63 +192,157 @@ const Analytics = () => {
 
         {/* Middle Row: Trends Chart */}
         <AnalyticsCard title="Interaction Trends (Last 30 Days)" className="bg-surface-elevated h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data.trends} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
-              <defs>
-                <linearGradient id="colorIntimacy" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#A78295" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#A78295" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E4E4E7" />
-              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} dy={10} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)' }}
-                cursor={{ fill: '#F5F5F4' }}
-              />
-              <Area type="monotone" dataKey="intimacy" stroke="#A78295" fillOpacity={1} fill="url(#colorIntimacy)" strokeWidth={2} />
-              <Bar dataKey="conflicts" barSize={20} fill="#D4D4D8" radius={[4, 4, 0, 0]} />
-            </ComposedChart>
-          </ResponsiveContainer>
+          {data.trends.some(t => t.conflicts > 0 || t.intimacy > 0) ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={data.trends} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
+                <defs>
+                  <linearGradient id="colorIntimacy" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#A78295" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#A78295" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E4E4E7" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)' }}
+                  cursor={{ fill: '#F5F5F4' }}
+                />
+                <Area type="monotone" dataKey="intimacy" stroke="#A78295" fillOpacity={1} fill="url(#colorIntimacy)" strokeWidth={2} />
+                <Bar dataKey="conflicts" barSize={20} fill="#D4D4D8" radius={[4, 4, 0, 0]} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
+              <Activity size={48} strokeWidth={1} className="mb-4 opacity-50" />
+              <p>No interaction data recorded in the last 30 days.</p>
+            </div>
+          )}
         </AnalyticsCard>
 
-        {/* Bottom Row: Cycle Heatmap */}
-        <AnalyticsCard title="Conflict Heatmap by Cycle Day" className="bg-surface-elevated">
-          <div className="space-y-4">
-            <div className="flex justify-between text-tiny text-text-tertiary font-medium uppercase tracking-wider px-1">
-              <span>Period</span>
-              <span>Follicular</span>
-              <span>Ovulation</span>
-              <span>Luteal</span>
-              <span>PMS</span>
+
+
+        {/* New Row: Resolution & Weekly Activity */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Resolution Status Pie Chart */}
+          <AnalyticsCard title="Conflict Resolution Status" className="md:col-span-1 bg-surface-elevated">
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={data.resolution_breakdown}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    {data.resolution_breakdown.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} strokeWidth={0} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7' }}
+                  />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
+          </AnalyticsCard>
 
-            <div className="grid grid-cols-30 gap-1 h-12">
-              {data.cycle_correlation.map((count, i) => {
-                // Calculate intensity based on count (0-5 scale)
-                const hasData = count > 0;
+          {/* Day of Week Activity Bar Chart */}
+          <AnalyticsCard title="Activity by Day of Week" className="md:col-span-2 bg-surface-elevated">
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={data.day_of_week_activity} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E4E4E7" />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)' }}
+                    cursor={{ fill: '#F5F5F4' }}
+                  />
+                  <Bar dataKey="conflicts" name="Conflicts" barSize={20} fill="#D4D4D8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="intimacy" name="Intimacy" barSize={20} fill="#A78295" radius={[4, 4, 0, 0]} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </AnalyticsCard>
+        </div>
 
-                return (
-                  <div key={i} className="flex flex-col items-center group relative">
-                    <div
-                      className={`w-full h-full rounded-sm transition-all ${hasData ? `bg-accent opacity-[${Math.min(0.2 + (count * 0.15), 1)}]` : 'bg-surface-hover'
-                        } hover:scale-125 hover:z-10`}
-                      style={hasData ? { opacity: Math.min(0.2 + (count * 0.15), 1) } : {}}
-                    />
-                    {/* Tooltip */}
-                    <div className="absolute bottom-full mb-2 hidden group-hover:block bg-text-primary text-white text-tiny px-2 py-1 rounded whitespace-nowrap z-20">
-                      Day {i + 1}: {count} conflicts
+
+
+        {/* New Row: Themes, Balance, Ratio */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+          {/* Conflict Themes */}
+          <AnalyticsCard title="Common Conflict Themes" className="md:col-span-1 bg-surface-elevated">
+            <div className="h-64 flex flex-col justify-center space-y-4">
+              {data.conflict_themes && data.conflict_themes.length > 0 ? (
+                data.conflict_themes.map((theme, i) => (
+                  <div key={i} className="space-y-1">
+                    <div className="flex justify-between text-small text-text-primary">
+                      <span>{theme.name}</span>
+                      <span className="text-text-tertiary">{theme.value}</span>
+                    </div>
+                    <div className="h-2 bg-surface-hover rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-rose-400 rounded-full"
+                        style={{ width: `${(theme.value / Math.max(...data.conflict_themes.map(t => t.value))) * 100}%` }}
+                      />
                     </div>
                   </div>
-                );
-              })}
+                ))
+              ) : (
+                <div className="text-center text-text-tertiary">No themes detected yet</div>
+              )}
             </div>
-            <div className="text-center text-tiny text-text-tertiary mt-2">
-              Higher opacity indicates more frequent conflicts on this cycle day.
+          </AnalyticsCard>
+
+          {/* Sex:Conflict Ratio (2 Weeks) */}
+          <AnalyticsCard title="Sex:Conflict Ratio (2 Weeks)" className="md:col-span-1 bg-surface-elevated">
+            <div className="h-64 flex flex-col items-center justify-center text-center">
+              <div className="text-5xl font-light text-text-primary mb-2">
+                {data.sex_conflict_ratio_2w.value}:1
+              </div>
+              <div className={`text-h3 mb-4 ${data.sex_conflict_ratio_2w.status === 'Healthy' ? 'text-green-600' : 'text-amber-600'
+                }`}>
+                {data.sex_conflict_ratio_2w.status}
+              </div>
+              <div className="flex gap-4 text-small text-text-secondary">
+                <div className="flex flex-col items-center">
+                  <span className="text-h3 text-rose-400">{data.sex_conflict_ratio_2w.intimacy}</span>
+                  <span className="text-tiny text-text-tertiary">Intimacy</span>
+                </div>
+                <div className="h-8 w-px bg-border-subtle"></div>
+                <div className="flex flex-col items-center">
+                  <span className="text-h3 text-slate-400">{data.sex_conflict_ratio_2w.conflicts}</span>
+                  <span className="text-tiny text-text-tertiary">Conflicts</span>
+                </div>
+              </div>
             </div>
-          </div>
-        </AnalyticsCard>
+          </AnalyticsCard>
+
+          {/* Magic Ratio */}
+          <AnalyticsCard title="The Magic Ratio" className="md:col-span-1 bg-surface-elevated">
+            <div className="h-64 flex flex-col items-center justify-center text-center">
+              <div className="text-5xl font-light text-text-primary mb-2">
+                {data.magic_ratio.value}:1
+              </div>
+              <div className={`text-h3 mb-4 ${data.magic_ratio.status === 'Healthy' ? 'text-green-600' :
+                data.magic_ratio.status === 'Balanced' ? 'text-blue-600' : 'text-amber-600'
+                }`}>
+                {data.magic_ratio.status}
+              </div>
+              <p className="text-body text-text-secondary px-4">
+                Intimacy events vs. Conflicts (30d). <br />
+                <span className="text-tiny text-text-tertiary">Based on Dr. Gottman's "5:1 Ratio" for relationship stability.</span>
+              </p>
+            </div>
+          </AnalyticsCard>
+
+        </div>
 
         {/* Voice Command Hint */}
         <div className="flex flex-col items-center mt-8 space-y-4">
@@ -232,8 +352,8 @@ const Analytics = () => {
           </p>
         </div>
 
-      </div>
-    </div>
+      </div >
+    </div >
   );
 };
 
