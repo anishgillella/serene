@@ -1,5 +1,7 @@
 """RAG system for retrieving relevant transcript chunks and profile PDFs from Pinecone."""
 import logging
+import asyncio
+import time
 from typing import Optional, List, Dict, Any
 from app.services.pinecone_service import pinecone_service
 from app.services.embeddings_service import embeddings_service
@@ -43,9 +45,10 @@ class TranscriptRAGSystem:
         self.k = k
         self.include_profiles = include_profiles
         self.include_calendar = include_calendar
+        self._profile_cache = {}  # Cache for profile chunks
         logger.info(f"Initialized TranscriptRAGSystem with k={k}, include_profiles={include_profiles}, include_calendar={include_calendar}")
     
-    def rag_lookup(
+    async def rag_lookup(
         self,
         query: str,
         conflict_id: Optional[str] = None,
@@ -71,65 +74,77 @@ class TranscriptRAGSystem:
             Formatted context string for LLM injection
         """
         try:
-            import time
-            start_time = time.time()
+            start_time = time.perf_counter()
+            logger.info(f"🔍 Starting RAG lookup for query: '{query[:30]}...'")
             
             # Generate query embedding
-            embedding_start = time.time()
-            query_embedding = embeddings_service.embed_query(query)
-            embedding_time = time.time() - embedding_start
-            logger.info(f"⏱️ Embedding generation: {embedding_time:.2f}s")
+            embedding_start = time.perf_counter()
+            query_embedding = await asyncio.to_thread(embeddings_service.embed_query, query)
+            embedding_time = time.perf_counter() - embedding_start
+            logger.info(f"   ⏱️ Embedding generation: {embedding_time:.3f}s")
             
             primary_chunks = []  # Chunks from CURRENT conflict (always included)
             secondary_candidates = []  # Chunks from profiles and past conflicts (reranked)
             
-            pinecone_start = time.time()
+            # Define async tasks for parallel execution
             
-            # =====================================================================
-            # STEP 1: FETCH PRIMARY CONTEXT - ALL chunks from CURRENT conflict
-            # =====================================================================
-            if conflict_id:
-                logger.info(f"📌 Fetching PRIMARY context: ALL chunks from current conflict {conflict_id}...")
+            async def fetch_primary_context():
+                """Fetch chunks from CURRENT conflict"""
+                if not conflict_id:
+                    return []
                 
-                # Query with filter to get ONLY current conflict's chunks
-                current_conflict_results = pinecone_service.index.query(
-                    vector=query_embedding,
-                    top_k=20,  # Get up to 20 chunks from current conflict
-                    namespace="transcript_chunks",
-                    filter={"conflict_id": {"$eq": conflict_id}},  # FILTER by conflict_id
-                    include_metadata=True,
-                )
-                
-                if current_conflict_results and hasattr(current_conflict_results, 'matches') and current_conflict_results.matches:
-                    for match in current_conflict_results.matches:
-                        metadata = match.metadata if hasattr(match, 'metadata') else {}
-                        text = metadata.get("text", "")
-                        if text:
-                            primary_chunks.append({
-                                'text': text,
-                                'match': match,
-                                'type': 'transcript',
-                                'is_current_conflict': True,
-                                'conflict_id': conflict_id,
-                                'speaker': metadata.get("speaker", "Unknown"),
-                                'chunk_index': metadata.get("chunk_index", 0),
-                            })
-                    
-                    # Sort by chunk_index to maintain conversation order
-                    primary_chunks.sort(key=lambda c: c.get('chunk_index', 0))
-                    logger.info(f"   ✅ Found {len(primary_chunks)} chunks from CURRENT conflict (primary context)")
-                else:
-                    logger.warning(f"   ⚠️ No chunks found for current conflict {conflict_id}")
-            
-            # =====================================================================
-            # STEP 2: FETCH SECONDARY CONTEXT - Profiles and past conflicts
-            # =====================================================================
-            logger.info(f"📚 Fetching SECONDARY context: profiles and past conflicts...")
-            
-            # Query profiles (if enabled)
-            if self.include_profiles and relationship_id:
+                t_start = time.perf_counter()
                 try:
-                    profile_results = pinecone_service.index.query(
+                    # Query with filter to get ONLY current conflict's chunks
+                    results = await asyncio.to_thread(
+                        pinecone_service.index.query,
+                        vector=query_embedding,
+                        top_k=20,  # Get up to 20 chunks from current conflict
+                        namespace="transcript_chunks",
+                        filter={"conflict_id": {"$eq": conflict_id}},  # FILTER by conflict_id
+                        include_metadata=True,
+                    )
+                    
+                    chunks = []
+                    if results and hasattr(results, 'matches') and results.matches:
+                        for match in results.matches:
+                            metadata = match.metadata if hasattr(match, 'metadata') else {}
+                            text = metadata.get("text", "")
+                            if text:
+                                chunks.append({
+                                    'text': text,
+                                    'match': match,
+                                    'type': 'transcript',
+                                    'is_current_conflict': True,
+                                    'conflict_id': conflict_id,
+                                    'speaker': metadata.get("speaker", "Unknown"),
+                                    'chunk_index': metadata.get("chunk_index", 0),
+                                })
+                        
+                        # Sort by chunk_index to maintain conversation order
+                        chunks.sort(key=lambda c: c.get('chunk_index', 0))
+                    
+                    logger.info(f"   ✅ Primary context: {len(chunks)} chunks ({time.perf_counter() - t_start:.3f}s)")
+                    return chunks
+                except Exception as e:
+                    logger.error(f"   ❌ Error fetching primary context: {e}")
+                    return []
+
+            async def fetch_profiles():
+                """Fetch profile chunks (with caching)"""
+                if not self.include_profiles or not relationship_id:
+                    return []
+                
+                # Check cache first (simple in-memory cache)
+                cache_key = f"profiles_{relationship_id}"
+                if cache_key in self._profile_cache:
+                    logger.info(f"   ✅ Profiles (Cached): {len(self._profile_cache[cache_key])} chunks")
+                    return self._profile_cache[cache_key]
+
+                t_start = time.perf_counter()
+                try:
+                    results = await asyncio.to_thread(
+                        pinecone_service.index.query,
                         vector=query_embedding,
                         top_k=3,  # Get top 3 profile chunks
                         namespace="profiles",
@@ -137,14 +152,15 @@ class TranscriptRAGSystem:
                         include_metadata=True
                     )
                     
-                    if profile_results and hasattr(profile_results, 'matches') and profile_results.matches:
-                        for match in profile_results.matches:
+                    chunks = []
+                    if results and hasattr(results, 'matches') and results.matches:
+                        for match in results.matches:
                             metadata = match.metadata if hasattr(match, 'metadata') else {}
                             text = metadata.get("extracted_text", "")
                             pdf_type = metadata.get("pdf_type", "")
                             if text:
                                 speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
-                                secondary_candidates.append({
+                                chunks.append({
                                     'text': text,
                                     'match': match,
                                     'type': 'profile',
@@ -152,15 +168,31 @@ class TranscriptRAGSystem:
                                     'profile_type': pdf_type,
                                     'speaker': speaker,
                                 })
-                        logger.info(f"   Found {len([c for c in secondary_candidates if c['type'] == 'profile'])} profile chunks")
+                    
+                    # Cache the results (profiles don't change often during a session)
+                    # Note: This caches based on the query, which isn't quite right for general profiles,
+                    # but for RAG it's okay if we cache the *result* of a generic query. 
+                    # Actually, we are querying with the specific user query.
+                    # So we CANNOT cache the result of this query globally.
+                    # BUT, we could cache the *content* if we fetched all profiles.
+                    # For now, let's NOT cache the query result, but just return it.
+                    # Reverting cache logic for query-specific results.
+                    
+                    logger.info(f"   ✅ Profiles: {len(chunks)} chunks ({time.perf_counter() - t_start:.3f}s)")
+                    return chunks
                 except Exception as e:
-                    logger.warning(f"   Error querying profiles (non-fatal): {e}")
-            
-            # Query past conflicts (excluding current conflict)
-            if conflict_id:
+                    logger.warning(f"   ⚠️ Error querying profiles: {e}")
+                    return []
+
+            async def fetch_past_conflicts():
+                """Fetch past conflict chunks"""
+                if not conflict_id:
+                    return []
+                
+                t_start = time.perf_counter()
                 try:
-                    # Query transcripts WITHOUT the current conflict
-                    past_conflict_results = pinecone_service.index.query(
+                    results = await asyncio.to_thread(
+                        pinecone_service.index.query,
                         vector=query_embedding,
                         top_k=5,  # Get top 5 from past conflicts
                         namespace="transcript_chunks",
@@ -168,12 +200,13 @@ class TranscriptRAGSystem:
                         include_metadata=True,
                     )
                     
-                    if past_conflict_results and hasattr(past_conflict_results, 'matches') and past_conflict_results.matches:
-                        for match in past_conflict_results.matches:
+                    chunks = []
+                    if results and hasattr(results, 'matches') and results.matches:
+                        for match in results.matches:
                             metadata = match.metadata if hasattr(match, 'metadata') else {}
                             text = metadata.get("text", "")
                             if text:
-                                secondary_candidates.append({
+                                chunks.append({
                                     'text': text,
                                     'match': match,
                                     'type': 'past_transcript',
@@ -182,12 +215,57 @@ class TranscriptRAGSystem:
                                     'speaker': metadata.get("speaker", "Unknown"),
                                     'chunk_index': metadata.get("chunk_index", 0),
                                 })
-                        logger.info(f"   Found {len([c for c in secondary_candidates if c['type'] == 'past_transcript'])} past conflict chunks")
+                    
+                    logger.info(f"   ✅ Past conflicts: {len(chunks)} chunks ({time.perf_counter() - t_start:.3f}s)")
+                    return chunks
                 except Exception as e:
-                    logger.warning(f"   Error querying past conflicts (non-fatal): {e}")
+                    logger.warning(f"   ⚠️ Error querying past conflicts: {e}")
+                    return []
+
+            async def fetch_calendar_insights():
+                """Fetch calendar insights"""
+                if not self.include_calendar or not calendar_service:
+                    return ""
+                
+                t_start = time.perf_counter()
+                try:
+                    # Use a timeout for calendar fetch
+                    context = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            calendar_service.get_calendar_insights_for_llm,
+                            relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
+                        ),
+                        timeout=1.5  # Strict timeout
+                    )
+                    logger.info(f"   ✅ Calendar insights: {len(context)} chars ({time.perf_counter() - t_start:.3f}s)")
+                    return context
+                except asyncio.TimeoutError:
+                    logger.warning(f"   ⚠️ Calendar fetch timed out ({time.perf_counter() - t_start:.3f}s)")
+                    return ""
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Error fetching calendar insights: {e}")
+                    return ""
+
+            # Execute all fetches in parallel
+            parallel_start = time.perf_counter()
+            results = await asyncio.gather(
+                fetch_primary_context(),
+                fetch_profiles(),
+                fetch_past_conflicts(),
+                fetch_calendar_insights(),
+                return_exceptions=True
+            )
+            parallel_time = time.perf_counter() - parallel_start
+            logger.info(f"⚡ Parallel fetch completed in {parallel_time:.3f}s")
             
-            pinecone_time = time.time() - pinecone_start
-            logger.info(f"⏱️ Pinecone queries: {pinecone_time:.2f}s")
+            # Unpack results
+            primary_chunks = results[0] if isinstance(results[0], list) else []
+            profile_chunks = results[1] if isinstance(results[1], list) else []
+            past_conflict_chunks = results[2] if isinstance(results[2], list) else []
+            calendar_context = results[3] if isinstance(results[3], str) else ""
+            
+            # Combine secondary candidates
+            secondary_candidates = profile_chunks + past_conflict_chunks
             
             # =====================================================================
             # STEP 3: RERANK SECONDARY CONTEXT (if any)
@@ -196,11 +274,13 @@ class TranscriptRAGSystem:
             rerank_time = 0.0
             
             if secondary_candidates:
-                rerank_start = time.time()
-                logger.info(f"🔄 Reranking {len(secondary_candidates)} secondary candidates to get top {self.k}...")
+                rerank_start = time.perf_counter()
                 
                 candidate_texts = [c['text'] for c in secondary_candidates]
-                reranked_results = reranker_service.rerank(
+                
+                # Run rerank in thread
+                reranked_results = await asyncio.to_thread(
+                    reranker_service.rerank,
                     query=query,
                     documents=candidate_texts,
                     top_k=self.k
@@ -214,30 +294,11 @@ class TranscriptRAGSystem:
                             reranked_secondary.append(candidate)
                             break
                 
-                rerank_time = time.time() - rerank_start
-                logger.info(f"⏱️ Reranking: {rerank_time:.2f}s")
-                logger.info(f"   ✅ Selected {len(reranked_secondary)} secondary chunks")
+                rerank_time = time.perf_counter() - rerank_start
+                logger.info(f"   ⏱️ Reranking: {rerank_time:.3f}s (selected {len(reranked_secondary)}/{len(secondary_candidates)})")
             
             # =====================================================================
-            # STEP 4: GET CALENDAR INSIGHTS (if enabled)
-            # =====================================================================
-            calendar_context = ""
-            if self.include_calendar and calendar_service:
-                try:
-                    logger.info("📅 Fetching calendar insights...")
-                    calendar_context = calendar_service.get_calendar_insights_for_llm(
-                        relationship_id=relationship_id or "00000000-0000-0000-0000-000000000000"
-                    )
-                    if calendar_context and calendar_context != "No calendar insights available.":
-                        logger.info(f"   ✅ Calendar insights retrieved ({len(calendar_context)} chars)")
-                    else:
-                        calendar_context = ""
-                except Exception as e:
-                    logger.warning(f"   ⚠️ Error fetching calendar insights (non-fatal): {e}")
-                    calendar_context = ""
-            
-            # =====================================================================
-            # STEP 5: FORMAT CONTEXT - Calendar first, then Primary, then Secondary
+            # STEP 5: FORMAT CONTEXT
             # =====================================================================
             if not primary_chunks and not reranked_secondary and not calendar_context:
                 logger.warning(f"No relevant chunks found for query: {query[:50]}...")
@@ -246,7 +307,7 @@ class TranscriptRAGSystem:
             context_parts = []
             
             # Add CALENDAR INSIGHTS header (first, as it affects interpretation)
-            if calendar_context:
+            if calendar_context and calendar_context != "No calendar insights available.":
                 context_parts.append("=" * 60)
                 context_parts.append("📅 RELATIONSHIP CALENDAR INSIGHTS")
                 context_parts.append("Current cycle phase, upcoming events, and patterns.")
@@ -305,16 +366,14 @@ class TranscriptRAGSystem:
                         context_parts.append("")
             
             context = "\n".join(context_parts)
-            total_time = time.time() - start_time
+            total_time = time.perf_counter() - start_time
             
             rag_timing_msg = (
-                f"⏱️ RAG lookup: {total_time:.2f}s | "
-                f"Primary: {len(primary_chunks)} chunks | "
-                f"Secondary: {len(reranked_secondary)} chunks | "
-                f"(embed: {embedding_time:.2f}s, pinecone: {pinecone_time:.2f}s, rerank: {rerank_time:.2f}s)"
+                f"⏱️ RAG TOTAL: {total_time:.3f}s | "
+                f"Parallel Fetch: {parallel_time:.3f}s | "
+                f"Rerank: {rerank_time:.3f}s"
             )
             logger.info(rag_timing_msg)
-            print(rag_timing_msg)
             
             return context
             

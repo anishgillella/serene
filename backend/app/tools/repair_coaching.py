@@ -2,6 +2,7 @@
 Repair coaching tool - generates personalized repair plans
 """
 import logging
+import asyncio
 from datetime import datetime
 from typing import Optional
 from app.services.llm_service import llm_service
@@ -72,19 +73,30 @@ async def generate_repair_plan(
         
         # NEW: Get calendar context for timing-aware repair plans
         calendar_context = None
-        if include_calendar and calendar_service:
-            try:
-                logger.info("📅 Fetching calendar insights for repair plan timing...")
-                calendar_context = calendar_service.get_calendar_insights_for_llm(
-                    relationship_id=relationship_id
-                )
-                if calendar_context and calendar_context != "No calendar insights available.":
-                    logger.info(f"   ✅ Calendar context retrieved ({len(calendar_context)} chars)")
-                else:
-                    calendar_context = None
-            except Exception as e:
-                logger.warning(f"   ⚠️ Error fetching calendar context (non-fatal): {e}")
-                calendar_context = None
+        # Fetch calendar context (cycle-aware timing recommendations)
+        if include_calendar: # Only attempt if include_calendar is True
+            logger.info(f"📅 Fetching calendar insights for repair plan timing...")
+            calendar_context = ""
+            if calendar_service:
+                try:
+                    # Add timeout to prevent blocking (calendar can be slow)
+                    calendar_context = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            calendar_service.get_calendar_insights_for_llm,
+                            relationship_id or "00000000-0000-0000-0000-000000000000"
+                        ),
+                        timeout=3.0  # 3-second timeout (with caching, should be <0.1s on cache hit)
+                    )
+                    if calendar_context: # Only log if context was actually retrieved
+                        logger.info(f"   ✅ Calendar context retrieved ({len(calendar_context)} chars)")
+                    else:
+                        logger.info(f"   ℹ️ No calendar context available.")
+                except asyncio.TimeoutError:
+                    logger.warning(f"   ⚠️ Calendar fetch timed out after 3s, proceeding without calendar context")
+                    calendar_context = ""
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Error fetching calendar context: {e}")
+                    calendar_context = ""
         
         # Generate repair plan using LLM with partner profiles and calendar context
         repair_plan = llm_service.generate_repair_plan(

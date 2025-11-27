@@ -3,6 +3,7 @@ Calendar service for managing relationship events, cycle predictions, and patter
 Provides chronological data from PostgreSQL + semantic insights via RAG.
 """
 import logging
+import time
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from decimal import Decimal
@@ -42,6 +43,8 @@ class CalendarService:
     
     def __init__(self):
         self.db = db_service
+        # Cache for calendar insights (5-minute TTL)
+        self._insights_cache = {}  # {relationship_id: (insights_string, timestamp)}
     
     # =========================================================================
     # CYCLE EVENT MANAGEMENT
@@ -833,9 +836,31 @@ class CalendarService:
         Generate a formatted calendar insights string for injection into LLM context.
         Uses tiered retrieval: relationship history + milestones + recent events + cycle phase.
         
+        OPTIMIZED: Caches results for 5 minutes to prevent repeated slow queries.
+        
         Returns:
             Formatted string with comprehensive but token-efficient relationship context
         """
+        # Check cache first (5-minute TTL)
+        cache_key = relationship_id
+        if cache_key in self._insights_cache:
+            cached_insights, cached_time = self._insights_cache[cache_key]
+            age = time.time() - cached_time
+            if age < 300:  # 5 minutes
+                logger.info(f"✅ Calendar insights from cache (age: {age:.1f}s)")
+                return cached_insights
+        
+        # Generate fresh insights
+        logger.info(f"🔄 Generating fresh calendar insights (cache miss or expired)")
+        insights = self._generate_calendar_insights(relationship_id)
+        
+        # Cache for 5 minutes
+        self._insights_cache[cache_key] = (insights, time.time())
+        
+        return insights
+    
+    def _generate_calendar_insights(self, relationship_id: str) -> str:
+        """Internal method to generate calendar insights (called when cache misses)"""
         insights = []
         
         # =========================================================================

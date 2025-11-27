@@ -662,7 +662,7 @@ async def generate_analysis_only(
         # Create query from transcript for RAG lookup
         # Use first 500 chars as query to get relevant context from entire corpus
         query_for_rag = transcript_text[:500] if len(transcript_text) > 500 else transcript_text
-        rag_context = rag_system.rag_lookup(
+        rag_context = await rag_system.rag_lookup(
             query=query_for_rag,
             conflict_id=conflict_id,
             relationship_id=relationship_id
@@ -891,9 +891,9 @@ async def generate_repair_plans_only(
         speaker_labels = {}
         
         if transcript_data:
-            transcript_text = transcript_data.get("transcript_text", "") if transcript_data else ""
-            duration = transcript_result.metadata.get("duration", 0.0)
-            speaker_labels = transcript_result.metadata.get("speaker_labels", {})
+            transcript_text = transcript_data.get("transcript_text", "")
+            duration = transcript_data.get("duration", 0.0)
+            speaker_labels = transcript_data.get("speaker_labels", {})
         else:
             # Fallback to S3
             try:
@@ -975,33 +975,21 @@ async def generate_repair_plans_only(
         except Exception as e:
             logger.warning(f"⚠️ RAG retrieval failed: {e}")
         
-        # Generate both repair plans in parallel
-        repair_plan_boyfriend, repair_plan_girlfriend = await asyncio.gather(
-            generate_repair_plan(
-                conflict_id=conflict_id,
-                transcript_text=transcript_text,
-                partner_requesting_id="partner_a",
-                relationship_id=relationship_id,
-                partner_a_id=partner_a_id,
-                partner_b_id=partner_b_id,
-                analysis=None,
-                boyfriend_profile=boyfriend_profile,
-                girlfriend_profile=girlfriend_profile
-            ),
-            generate_repair_plan(
-                conflict_id=conflict_id,
-                transcript_text=transcript_text,
-                partner_requesting_id="partner_b",
-                relationship_id=relationship_id,
-                partner_a_id=partner_a_id,
-                partner_b_id=partner_b_id,
-                analysis=None,
-                boyfriend_profile=boyfriend_profile,
-                girlfriend_profile=girlfriend_profile
-            )
+        # Generate ONLY boyfriend repair plan (user requested to remove girlfriend)
+        logger.info(f"🔧 Generating repair plan for boyfriend (partner_a) only")
+        repair_plan_boyfriend = await generate_repair_plan(
+            conflict_id=conflict_id,
+            transcript_text=transcript_text,
+            partner_requesting_id="partner_a",
+            relationship_id=relationship_id,
+            partner_a_id=partner_a_id,
+            partner_b_id=partner_b_id,
+            analysis=None,
+            boyfriend_profile=boyfriend_profile,
+            girlfriend_profile=girlfriend_profile
         )
         
-        # Store repair plans
+        # Store boyfriend repair plan
         try:
             plan_path_bf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json"
             plan_json_bf = json.dumps(repair_plan_boyfriend.model_dump(), default=str, indent=2)
@@ -1018,21 +1006,6 @@ async def generate_repair_plans_only(
                     plan_path=s3_url_bf
                 )
             
-            plan_path_gf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_b.json"
-            plan_json_gf = json.dumps(repair_plan_girlfriend.model_dump(), default=str, indent=2)
-            s3_url_gf = s3_service.upload_file(
-                file_path=plan_path_gf,
-                file_content=plan_json_gf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_gf and db_service:
-                db_service.create_repair_plan(
-                    conflict_id=conflict_id,
-                    relationship_id=relationship_id,
-                    partner_requesting="partner_b",
-                    plan_path=s3_url_gf
-                )
-            
             # Store in Pinecone
             repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
             repair_plan_embedding_bf = embeddings_service.embed_text(repair_plan_text_bf)
@@ -1045,30 +1018,21 @@ async def generate_repair_plans_only(
                 repair_plan_data=repair_plan_dict_bf,
                 namespace="repair_plans"
             )
-            
-            repair_plan_text_gf = f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.steps)}"
-            repair_plan_embedding_gf = embeddings_service.embed_text(repair_plan_text_gf)
-            repair_plan_dict_gf = repair_plan_girlfriend.model_dump()
-            repair_plan_dict_gf["conflict_id"] = conflict_id  # Ensure original conflict_id is in data
-            repair_plan_dict_gf["partner_requesting"] = "partner_b"  # Explicitly set partner
-            pinecone_service.upsert_repair_plan(
-                conflict_id=conflict_id,  # Use original conflict_id (not _girlfriend suffix)
-                embedding=repair_plan_embedding_gf,
-                repair_plan_data=repair_plan_dict_gf,
-                namespace="repair_plans"
-            )
         except Exception as e:
             logger.error(f"❌ Error storing repair plans: {e}")
         
+        # Calculate total time
         repair_total_time = time.time() - repair_start
-        logger.info(f"\n⏱️  === REPAIR PLAN GENERATION SUMMARY ===")
-        logger.info(f"   Total Time: {repair_total_time:.2f}s")
-        logger.info(f"✅ Repair plan generation complete!\n")
+        logger.info(f"""
+⏱️  === REPAIR PLAN GENERATION SUMMARY ===
+   Total Time: {repair_total_time:.2f}s
+✅ Repair plan generation complete (boyfriend only)!
+""")
         
         return {
             "success": True,
             "repair_plan_boyfriend": repair_plan_boyfriend.model_dump(),
-            "repair_plan_girlfriend": repair_plan_girlfriend.model_dump()
+            "message": "Repair plan generated for boyfriend (Adrian) only"
         }
     except HTTPException:
         raise

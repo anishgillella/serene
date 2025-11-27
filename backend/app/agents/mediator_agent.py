@@ -290,12 +290,17 @@ Remember: You're here to help Adrian, validate his feelings by connecting them t
 
             logger.info(f"User query: {user_query}")
             
-            # Perform RAG lookup
-            rag_context = self.rag_system.rag_lookup(
+            turn_start = time.perf_counter()
+            
+            # Perform RAG lookup (ASYNC now)
+            rag_context = await self.rag_system.rag_lookup(
                 query=user_query,
                 conflict_id=self.conflict_id,
                 relationship_id=self.relationship_id,
             )
+            
+            rag_time = time.perf_counter() - turn_start
+            logger.info(f"⏱️ RAG Lookup Complete: {rag_time:.3f}s")
             
             # Format context for LLM
             formatted_context = self.rag_system.format_context_for_llm(rag_context)
@@ -468,7 +473,10 @@ async def mediator_entrypoint(ctx: JobContext):
             ),
             llm=llm_instance,
             tts=tts_instance,
-            vad=silero.VAD.load(),
+            vad=silero.VAD.load(
+                min_speech_duration=0.1,
+                min_silence_duration=0.3,
+            ),
         )
         
         stage_times['session_create'] = time.time() - stage_start
