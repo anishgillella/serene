@@ -745,16 +745,15 @@ class CalendarService:
     ) -> Dict[str, Any]:
         """
         Analyze correlation between conflicts and cycle phases.
-        OPTIMIZED: Fetches cycle data in bulk to avoid N+1 queries.
+        
+        Returns:
+            Dict with correlation stats and insights
         """
         try:
             # Get conflicts from last N days
-            start_date = date.today() - timedelta(days=lookback_days)
-            end_date = date.today()
-            
             conflicts = self.get_conflict_events(
-                start_date,
-                end_date,
+                date.today() - timedelta(days=lookback_days),
+                date.today(),
                 relationship_id
             )
             
@@ -764,28 +763,6 @@ class CalendarService:
                     "message": "Not enough conflict data for analysis"
                 }
             
-            # Fetch all cycle events for the period ONCE
-            # We need to go back a bit further to catch the cycle start for the first conflict
-            cycle_events = self.get_cycle_events(
-                "partner_b", 
-                start_date - timedelta(days=40), 
-                end_date, 
-                relationship_id
-            )
-            
-            # Filter for period start dates
-            period_starts = sorted([
-                date.fromisoformat(e["event_date"]) 
-                for e in cycle_events 
-                if e.get("event_type") == "period_start"
-            ])
-            
-            if not period_starts:
-                 return {
-                    "has_data": False,
-                    "message": "No period data available for correlation"
-                }
-
             # For each conflict, determine what cycle phase Elara was in
             phase_counts = {
                 "Menstruation": 0,
@@ -796,44 +773,16 @@ class CalendarService:
                 "Unknown": 0
             }
             
-            # Helper to find last period before a date
-            def get_last_period(target_date):
-                last = None
-                for p_date in period_starts:
-                    if p_date <= target_date:
-                        last = p_date
-                    else:
-                        break
-                return last
-
             for conflict in conflicts:
                 conflict_date_str = conflict.get("event_date")
                 if conflict_date_str:
                     conflict_date = date.fromisoformat(conflict_date_str)
-                    
-                    last_period = get_last_period(conflict_date)
-                    
-                    if last_period:
-                        day_of_cycle = (conflict_date - last_period).days + 1
-                        
-                        # Approximate phases (assuming 28 day cycle for speed)
-                        # TODO: Use actual cycle length if available
-                        if 1 <= day_of_cycle <= 5:
-                            phase_name = "Menstruation"
-                        elif 6 <= day_of_cycle <= 12:
-                            phase_name = "Follicular"
-                        elif 13 <= day_of_cycle <= 16:
-                            phase_name = "Ovulation"
-                        elif 17 <= day_of_cycle <= 23:
-                            phase_name = "Luteal (Early)"
-                        elif day_of_cycle >= 24:
-                            phase_name = "Luteal (PMS)"
-                        else:
-                            phase_name = "Unknown"
+                    phase = self.get_current_cycle_phase("partner_b", conflict_date, relationship_id)
+                    phase_name = phase.get("phase_name", "Unknown")
+                    if phase_name in phase_counts:
+                        phase_counts[phase_name] += 1
                     else:
-                        phase_name = "Unknown"
-                        
-                    phase_counts[phase_name] += 1
+                        phase_counts["Unknown"] += 1
             
             total_conflicts = sum(phase_counts.values())
             
@@ -844,6 +793,7 @@ class CalendarService:
             }
             
             # Identify high-risk phases (significantly above average)
+            # Average would be ~20% per phase (5 phases)
             high_risk_phases = [
                 phase for phase, pct in phase_percentages.items()
                 if pct > 25 and phase != "Unknown"
@@ -855,11 +805,11 @@ class CalendarService:
             menstruation_pct = phase_percentages.get("Menstruation", 0)
             
             if pms_pct + menstruation_pct > 50:
-                insight = f"⚠️ {pms_pct + menstruation_pct:.0f}% of conflicts occur during PMS or menstruation phases."
+                insight = f"⚠️ {pms_pct + menstruation_pct:.0f}% of conflicts occur during PMS or menstruation phases. Consider being extra patient during these times."
             elif high_risk_phases:
                 insight = f"📊 Higher conflict frequency during: {', '.join(high_risk_phases)}"
             else:
-                insight = "✅ Conflicts are evenly distributed across cycle phases."
+                insight = "✅ Conflicts are evenly distributed across cycle phases - no strong correlation detected."
             
             return {
                 "has_data": True,
@@ -1158,8 +1108,7 @@ class CalendarService:
             
             # Conflict penalty
             conflict_count = len(conflicts)
-            # Treat both "resolved" and "completed" as resolved
-            unresolved_count = len([c for c in conflicts if c.get("status") not in ["resolved", "completed"]])
+            unresolved_count = len([c for c in conflicts if c.get("status") != "resolved"])
             resolved_count = conflict_count - unresolved_count
             
             # Cap max penalty to avoid 0 score for active users
@@ -1217,31 +1166,16 @@ class CalendarService:
             history_conflicts = self.get_conflict_events(today - timedelta(days=90), today, relationship_id)
             cycle_heatmap = [0] * 30 # Days 1-30
             
-            # Use the optimized correlation method to get phases, but here we need days
-            # For MVP, let's just use the same optimization logic locally
-            cycle_events = self.get_cycle_events("partner_b", today - timedelta(days=130), today, relationship_id)
-            period_starts = sorted([
-                date.fromisoformat(e["event_date"]) 
-                for e in cycle_events 
-                if e.get("event_type") == "period_start"
-            ])
-            
-            def get_last_period(target_date):
-                last = None
-                for p_date in period_starts:
-                    if p_date <= target_date:
-                        last = p_date
-                    else:
-                        break
-                return last
-
             for c in history_conflicts:
                 c_date = date.fromisoformat(c["event_date"])
-                last_period = get_last_period(c_date)
-                if last_period:
-                    day = (c_date - last_period).days + 1
-                    if 1 <= day <= 30:
-                        cycle_heatmap[day-1] += 1
+                # Get cycle day for that date
+                # This is expensive if we call get_current_cycle_phase for every conflict
+                # For MVP, we'll approximate using the current cycle logic if available
+                # Or just skip if too complex. Let's try to get it.
+                phase_info = self.get_current_cycle_phase(partner_id, c_date, relationship_id)
+                day = phase_info.get("day_of_cycle")
+                if day and 1 <= day <= 30:
+                    cycle_heatmap[day-1] += 1
             
             # 5. Tension Forecast
             # Simple heuristic: High risk if in PMS (Luteal PMS) or if recent conflict trend is high
@@ -1255,96 +1189,6 @@ class CalendarService:
                 tension_level = "Medium"
                 forecast_msg = "Recent conflict frequency suggests underlying tension."
             
-            # 6. New Stats: Resolution Breakdown
-            resolution_breakdown = [
-                {"name": "Resolved", "value": resolved_count, "color": "#10B981"}, # Green
-                {"name": "Unresolved", "value": unresolved_count, "color": "#F43F5E"} # Red
-            ]
-            
-            # 7. New Stats: Activity by Day of Week
-            # 0=Mon, 6=Sun
-            dow_counts = {i: {"day": d, "conflicts": 0, "intimacy": 0} 
-                         for i, d in enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])}
-            
-            for c in conflicts:
-                c_date = date.fromisoformat(c["event_date"])
-                dow_counts[c_date.weekday()]["conflicts"] += 1
-                
-            for i_evt in intimacy:
-                i_date = date.fromisoformat(i_evt["event_date"])
-                dow_counts[i_date.weekday()]["intimacy"] += 1
-                
-            day_of_week_activity = list(dow_counts.values())
-
-            # 8. New Stats: Conflict Themes (Extract from metadata or titles)
-            theme_counts = {}
-            for c in conflicts:
-                # Try to get themes from metadata first
-                meta = c.get("metadata", {})
-                topics = meta.get("topics", [])
-                
-                if not topics and c.get("title"):
-                    # Enhanced keyword extraction from title
-                    title_lower = c["title"].lower()
-                    
-                    # Check for multiple keywords and assign the most specific match
-                    if "money" in title_lower or "finance" in title_lower or "budget" in title_lower or "spending" in title_lower:
-                        topics.append("Finances")
-                    elif "chore" in title_lower or "clean" in title_lower or "household" in title_lower or "living space" in title_lower or "mess" in title_lower:
-                        topics.append("Household & Chores")
-                    elif "time" in title_lower or "late" in title_lower or "schedule" in title_lower or "plans" in title_lower:
-                        topics.append("Time & Plans")
-                    elif "family" in title_lower or "parent" in title_lower or "in-law" in title_lower:
-                        topics.append("Family")
-                    elif "intimacy" in title_lower or "sex" in title_lower or "physical" in title_lower:
-                        topics.append("Intimacy")
-                    elif "jealous" in title_lower or "trust" in title_lower or "friend" in title_lower or "night" in title_lower:
-                        topics.append("Trust & Jealousy")
-                    elif "work" in title_lower or "job" in title_lower or "career" in title_lower:
-                        topics.append("Work & Career")
-                    # If title is generic like "Conflict Session", skip it (don't default to Communication)
-                    elif title_lower not in ["conflict session", "conflict", "dispute", "argument"]:
-                        topics.append("Communication")
-                
-                # Only count if we found a topic
-                for t in topics:
-                    theme_counts[t] = theme_counts.get(t, 0) + 1
-            
-            # Sort themes by count and take top 5
-            sorted_themes = sorted(theme_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-            conflict_themes = [{"name": k, "value": v} for k, v in sorted_themes]
-            
-            # 9. New Stats: Sex:Conflict Ratio (Last 2 Weeks)
-            two_weeks_ago = today - timedelta(days=14)
-            
-            conflicts_14d = len([c for c in conflicts if date.fromisoformat(c["event_date"]) >= two_weeks_ago])
-            intimacy_14d = len([i for i in intimacy if date.fromisoformat(i["event_date"]) >= two_weeks_ago])
-            
-            ratio_14d = 0
-            if conflicts_14d > 0:
-                ratio_14d = round(intimacy_14d / conflicts_14d, 1)
-            else:
-                ratio_14d = intimacy_14d # Infinite if no conflicts
-                
-            sex_conflict_ratio_2w = {
-                "value": ratio_14d,
-                "conflicts": conflicts_14d,
-                "intimacy": intimacy_14d,
-                "status": "Healthy" if ratio_14d >= 3 else "Needs Work"
-            }
-
-            # 10. New Stats: Magic Ratio (Positive : Negative)
-            # Gottman ratio: 5:1 is ideal.
-            magic_ratio = 0
-            if conflict_count > 0:
-                magic_ratio = round(intimacy_count / conflict_count, 1)
-            else:
-                magic_ratio = intimacy_count # Infinite if no conflicts, but show count
-            
-            magic_ratio_status = "Needs Work"
-            if magic_ratio >= 5: magic_ratio_status = "Healthy"
-            elif magic_ratio >= 3: magic_ratio_status = "Balanced"
-
             return {
                 "health_score": {
                     "value": health_score,
@@ -1362,15 +1206,6 @@ class CalendarService:
                     "conflicts_30d": conflict_count,
                     "intimacy_30d": intimacy_count,
                     "unresolved": unresolved_count
-                },
-                "resolution_breakdown": resolution_breakdown,
-                "day_of_week_activity": day_of_week_activity,
-                "conflict_themes": conflict_themes,
-                "sex_conflict_ratio_2w": sex_conflict_ratio_2w,
-                "magic_ratio": {
-                    "value": magic_ratio,
-                    "status": magic_ratio_status,
-                    "target": 5
                 }
             }
             

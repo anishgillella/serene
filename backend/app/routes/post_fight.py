@@ -5,6 +5,7 @@ import logging
 import json
 import os
 import asyncio
+import time
 from fastapi import APIRouter, HTTPException, Body, BackgroundTasks
 from typing import Optional, List
 from datetime import datetime
@@ -13,6 +14,7 @@ from app.services.embeddings_service import embeddings_service
 from app.services.reranker_service import reranker_service
 from app.services.s3_service import s3_service
 from app.services.neo4j_service import neo4j_service
+from app.services.llm_service import llm_service
 from app.services.transcript_chunker import TranscriptChunker
 from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
@@ -24,6 +26,38 @@ from app.services.db_service import db_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/post-fight", tags=["post-fight"])
+
+async def generate_title_background(conflict_id: str, transcript_text: str):
+    """Background task to generate and save conflict title"""
+    try:
+        logger.info(f"🏷️ Generating title for conflict {conflict_id}...")
+        title = await asyncio.to_thread(llm_service.generate_conflict_title, transcript_text)
+        
+        if title:
+            logger.info(f"✅ Generated title: '{title}'")
+            # Update in database
+            await asyncio.to_thread(db_service.update_conflict_title, conflict_id, title)
+        else:
+            logger.warning("⚠️ Failed to generate title")
+            
+    except Exception as e:
+        logger.error(f"❌ Error generating title in background: {e}")
+
+async def generate_title_background(conflict_id: str, transcript_text: str):
+    """Background task to generate and save conflict title"""
+    try:
+        logger.info(f"🏷️ Generating title for conflict {conflict_id}...")
+        title = await asyncio.to_thread(llm_service.generate_conflict_title, transcript_text)
+        
+        if title:
+            logger.info(f"✅ Generated title: '{title}'")
+            # Update in database
+            await asyncio.to_thread(db_service.update_conflict_title, conflict_id, title)
+        else:
+            logger.warning("⚠️ Failed to generate title")
+            
+    except Exception as e:
+        logger.error(f"❌ Error generating title in background: {e}")
 
 async def generate_analysis_and_repair_plan_background(
     conflict_id: str,
@@ -305,6 +339,57 @@ async def generate_all_analysis_and_repair(
         transcript_data = db_service.get_conflict_transcript(conflict_id)
         
         if not transcript_data:
+            # Fallback to S3 via db_service (bypasses RLS)
+            try:
+                if db_service:
+                    conflict = db_service.get_conflict(conflict_id)
+                    
+                    if conflict:
+                        transcript_path = conflict.get("transcript_path")
+                        
+                        if transcript_path:
+                            s3_key = transcript_path
+                            if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
+                                s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+                            
+                            file_response = s3_service.download_file(s3_key)
+                            if file_response:
+                                transcript_data = json.loads(file_response.decode('utf-8'))
+                                
+                                transcript_text = ""
+                                if isinstance(transcript_data, list):
+                                    transcript_lines = []
+                                    for segment in transcript_data:
+                                        if isinstance(segment, dict):
+                                            speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
+                                            text = segment.get("text", segment.get("transcript", segment.get("message", "")))
+                                            if text:
+                                                transcript_lines.append(f"{speaker}: {text}")
+                                        elif isinstance(segment, str):
+                                            transcript_lines.append(segment)
+                                    transcript_text = "\n".join(transcript_lines)
+                                elif isinstance(transcript_data, dict):
+                                    if "transcript_text" in transcript_data:
+                                        transcript_text = transcript_data["transcript_text"]
+                                    elif "segments" in transcript_data:
+                                        transcript_lines = []
+                                        for segment in transcript_data["segments"]:
+                                            speaker = segment.get("speaker", "Speaker")
+                                            text = segment.get("text", "")
+                                            if text:
+                                                transcript_lines.append(f"{speaker}: {text}")
+                                        transcript_text = "\n".join(transcript_lines)
+                                
+                                # Construct transcript_data dict to match expected format
+                                transcript_data = {
+                                    "transcript_text": transcript_text,
+                                    "duration": conflict.get("duration", 0.0),
+                                    "speaker_labels": conflict.get("speaker_labels", {})
+                                }
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to fetch transcript from S3: {e}")
+
+        if not transcript_data:
             raise HTTPException(
                 status_code=404,
                 detail=f"Transcript not found for conflict {conflict_id}. Please ensure the fight was properly captured."
@@ -344,18 +429,25 @@ async def generate_all_analysis_and_repair(
         except Exception as e:
             logger.warning(f"⚠️ RAG retrieval failed, using transcript only: {e}")
         
-        # Generate ALL LLM calls in parallel: 2 analyses (boyfriend POV + girlfriend POV) + 2 repair plans
+        # Check if analysis/repair plans already exist to avoid duplicate work
+        # This is a basic check - for robust idempotency, we might check DB/S3
+        # For now, we rely on the fact that this is triggered once per store_transcript call
+        
+        # Generate LLM calls in parallel: 2 analyses (boyfriend POV + girlfriend POV) + 1 repair plan (boyfriend only)
         timestamp_now = datetime.now()
-        analysis_boyfriend, analysis_girlfriend, repair_plan_boyfriend, repair_plan_girlfriend = await asyncio.gather(
+        
+        # We use asyncio.gather to run tasks concurrently
+        # Note: We are NOT generating girlfriend repair plan as per requirements
+        results = await asyncio.gather(
             # Analysis from Boyfriend's POV (personalized)
             analyze_conflict_transcript(
-            conflict_id=conflict_id,
-            transcript_text=transcript_text,
-            relationship_id=relationship_id,
-            partner_a_id=partner_a_id,
-            partner_b_id=partner_b_id,
-            speaker_labels=speaker_labels,
-            duration=duration,
+                conflict_id=conflict_id,
+                transcript_text=transcript_text,
+                relationship_id=relationship_id,
+                partner_a_id=partner_a_id,
+                partner_b_id=partner_b_id,
+                speaker_labels=speaker_labels,
+                duration=duration,
                 timestamp=timestamp_now,
                 partner_id="partner_a",  # Boyfriend's perspective
                 boyfriend_profile=boyfriend_profile,
@@ -386,174 +478,121 @@ async def generate_all_analysis_and_repair(
                 analysis=None,  # Generated in parallel, repair plan works without it
                 boyfriend_profile=boyfriend_profile,
                 girlfriend_profile=girlfriend_profile
-            ),
-            # Girlfriend repair plan (personalized)
-            generate_repair_plan(
-                conflict_id=conflict_id,
-                transcript_text=transcript_text,
-                partner_requesting_id="partner_b",
-                relationship_id=relationship_id,
-                partner_a_id=partner_a_id,
-                partner_b_id=partner_b_id,
-                analysis=None,  # Generated in parallel, repair plan works without it
-                boyfriend_profile=boyfriend_profile,
-                girlfriend_profile=girlfriend_profile
             )
         )
         
-        logger.info(f"✅ All LLM calls completed in parallel: 2 analyses (boyfriend + girlfriend POV) + 2 repair plans")
+        analysis_boyfriend, analysis_girlfriend, repair_plan_boyfriend = results
+        repair_plan_girlfriend = None # Explicitly set to None as we skipped it
         
-        # Store both analyses in Pinecone and S3
-        try:
-            import json
-            
-            # Store boyfriend analysis in S3
-            analysis_path_bf = f"analysis/{relationship_id}/{conflict_id}_analysis_boyfriend.json"
-            analysis_json_bf = json.dumps(analysis_boyfriend.model_dump(), default=str, indent=2)
-            s3_url_bf = s3_service.upload_file(
-                file_path=analysis_path_bf,
-                file_content=analysis_json_bf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_bf:
-                logger.info(f"✅ Stored boyfriend analysis in S3: {analysis_path_bf}")
-                # Store in Pinecone
-                analysis_embedding_bf = embeddings_service.embed_text(analysis_boyfriend.fight_summary)
-                analysis_dict_bf = analysis_boyfriend.model_dump()
-                analysis_dict_bf["analyzed_at"] = datetime.now()
-                analysis_dict_bf["partner_pov"] = "boyfriend"
-                pinecone_service.upsert_analysis(
-                    conflict_id=f"{conflict_id}_boyfriend",
-                    embedding=analysis_embedding_bf,
-                    analysis_data=analysis_dict_bf,
-                    namespace="analysis"
-                )
-            
-            # Store girlfriend analysis in S3
-            analysis_path_gf = f"analysis/{relationship_id}/{conflict_id}_analysis_girlfriend.json"
-            analysis_json_gf = json.dumps(analysis_girlfriend.model_dump(), default=str, indent=2)
-            s3_url_gf = s3_service.upload_file(
-                file_path=analysis_path_gf,
-                file_content=analysis_json_gf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_gf:
-                logger.info(f"✅ Stored girlfriend analysis in S3: {analysis_path_gf}")
-                # Store in Pinecone
-                analysis_embedding_gf = embeddings_service.embed_text(analysis_girlfriend.fight_summary)
-                analysis_dict_gf = analysis_girlfriend.model_dump()
-                analysis_dict_gf["analyzed_at"] = datetime.now()
-                analysis_dict_gf["partner_pov"] = "girlfriend"
-                pinecone_service.upsert_analysis(
-                    conflict_id=f"{conflict_id}_girlfriend",
-                    embedding=analysis_embedding_gf,
-                    analysis_data=analysis_dict_gf,
-                    namespace="analysis"
-                )
-            
-            # Store metadata in database
-            if db_service:
-                if s3_url_bf:
-                    db_service.create_conflict_analysis(
-                        conflict_id=conflict_id,
-                        relationship_id=relationship_id,
-                        analysis_path=s3_url_bf
-                    )
-                if s3_url_gf:
-                    db_service.create_conflict_analysis(
-                        conflict_id=conflict_id,
-                        relationship_id=relationship_id,
-                        analysis_path=s3_url_gf
-                    )
-                logger.info(f"✅ Stored both analyses metadata in database")
-            
-            # Store in Neo4j Graph
-            try:
-                # Merge topics from both perspectives
-                all_root_causes = list(set(analysis_boyfriend.root_causes + analysis_girlfriend.root_causes))
-                
-                # Use a combined summary or just the first one
-                combined_summary = f"BF POV: {analysis_boyfriend.fight_summary[:100]}... GF POV: {analysis_girlfriend.fight_summary[:100]}..."
-                
-                neo4j_service.create_conflict_node({
-                    "conflict_id": conflict_id,
-                    "summary": combined_summary,
-                    "date": datetime.now().isoformat(),
-                    "root_causes": all_root_causes,
-                    "intensity": 5  # Default, could extract from analysis if added
-                })
-                logger.info(f"✅ Created Conflict node in Neo4j graph")
-            except Exception as e:
-                logger.error(f"❌ Error updating Neo4j graph: {e}")
-        except Exception as e:
-            logger.error(f"❌ Error storing analyses: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+        # Calculate timing
+        logger.info(f"✅ All LLM calls completed in parallel: 2 analyses (boyfriend + girlfriend POV) + 1 repair plan")
         
-        # Store repair plans in Pinecone and S3
-        try:
-            # Store boyfriend repair plan in S3
-            plan_path_bf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json"
-            plan_json_bf = json.dumps(repair_plan_boyfriend.model_dump(), default=str, indent=2)
-            s3_url_bf = s3_service.upload_file(
-                file_path=plan_path_bf,
-                file_content=plan_json_bf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_bf:
-                logger.info(f"✅ Stored boyfriend repair plan in S3: {plan_path_bf}")
-                if db_service:
-                    db_service.create_repair_plan(
-                        conflict_id=conflict_id,
-                        relationship_id=relationship_id,
-                        partner_requesting="partner_a",
-                        plan_path=s3_url_bf
-                    )
-            
-            # Store girlfriend repair plan in S3
-            plan_path_gf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_b.json"
-            plan_json_gf = json.dumps(repair_plan_girlfriend.model_dump(), default=str, indent=2)
-            s3_url_gf = s3_service.upload_file(
-                file_path=plan_path_gf,
-                file_content=plan_json_gf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_gf:
-                logger.info(f"✅ Stored girlfriend repair plan in S3: {plan_path_gf}")
-                if db_service:
-                    db_service.create_repair_plan(
-                        conflict_id=conflict_id,
-                        relationship_id=relationship_id,
-                        partner_requesting="partner_b",
-                        plan_path=s3_url_gf
-                    )
-            
-            # Store repair plans in Pinecone
+        # Define background storage task
+        async def store_all_background():
             try:
-                repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
-                repair_plan_embedding_bf = embeddings_service.embed_text(repair_plan_text_bf)
-                pinecone_service.upsert_repair_plan(
-                    conflict_id=f"{conflict_id}_boyfriend",
-                    embedding=repair_plan_embedding_bf,
-                    repair_plan_data=repair_plan_boyfriend.model_dump(),
-                    namespace="repair_plans"
+                # Store both analyses in Pinecone and S3
+                import json
+                
+                # Store boyfriend analysis in S3
+                analysis_path_bf = f"analysis/{relationship_id}/{conflict_id}_analysis_boyfriend.json"
+                analysis_json_bf = json.dumps(analysis_boyfriend.model_dump(), default=str, indent=2)
+                
+                # Store girlfriend analysis in S3
+                analysis_path_gf = f"analysis/{relationship_id}/{conflict_id}_analysis_girlfriend.json"
+                analysis_json_gf = json.dumps(analysis_girlfriend.model_dump(), default=str, indent=2)
+                
+                # Store boyfriend repair plan in S3
+                plan_path_bf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json"
+                plan_json_bf = json.dumps(repair_plan_boyfriend.model_dump(), default=str, indent=2)
+                
+                # Store girlfriend repair plan in S3
+                plan_path_gf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_b.json"
+                plan_json_gf = json.dumps(repair_plan_girlfriend.model_dump(), default=str, indent=2)
+                
+                # Run S3 uploads and embedding generations in parallel
+                loop = asyncio.get_event_loop()
+                results = await asyncio.gather(
+                    # S3 Uploads
+                    loop.run_in_executor(None, lambda: s3_service.upload_file(analysis_path_bf, analysis_json_bf.encode('utf-8'), "application/json")),
+                    loop.run_in_executor(None, lambda: s3_service.upload_file(analysis_path_gf, analysis_json_gf.encode('utf-8'), "application/json")),
+                    loop.run_in_executor(None, lambda: s3_service.upload_file(plan_path_bf, plan_json_bf.encode('utf-8'), "application/json")),
+                    loop.run_in_executor(None, lambda: s3_service.upload_file(plan_path_gf, plan_json_gf.encode('utf-8'), "application/json")),
+                    # Embeddings
+                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(analysis_boyfriend.fight_summary)),
+                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(analysis_girlfriend.fight_summary)),
+                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}")),
+                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.steps)}"))
                 )
                 
-                repair_plan_text_gf = f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.steps)}"
-                repair_plan_embedding_gf = embeddings_service.embed_text(repair_plan_text_gf)
-                pinecone_service.upsert_repair_plan(
-                    conflict_id=f"{conflict_id}_girlfriend",
-                    embedding=repair_plan_embedding_gf,
-                    repair_plan_data=repair_plan_girlfriend.model_dump(),
-                    namespace="repair_plans"
-                )
-                logger.info(f"✅ Stored repair plans in Pinecone")
+                s3_url_analysis_bf, s3_url_analysis_gf, s3_url_plan_bf, s3_url_plan_gf = results[:4]
+                emb_analysis_bf, emb_analysis_gf, emb_plan_bf, emb_plan_gf = results[4:]
+                
+                # Prepare data for Pinecone/DB
+                tasks = []
+                
+                # Analysis BF
+                if s3_url_analysis_bf:
+                    analysis_dict_bf = analysis_boyfriend.model_dump()
+                    analysis_dict_bf["analyzed_at"] = datetime.now()
+                    analysis_dict_bf["partner_pov"] = "boyfriend"
+                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_analysis(f"{conflict_id}_boyfriend", emb_analysis_bf, analysis_dict_bf, "analysis")))
+                    if db_service:
+                        tasks.append(loop.run_in_executor(None, lambda: db_service.create_conflict_analysis(conflict_id, relationship_id, s3_url_analysis_bf)))
+                
+                # Analysis GF
+                if s3_url_analysis_gf:
+                    analysis_dict_gf = analysis_girlfriend.model_dump()
+                    analysis_dict_gf["analyzed_at"] = datetime.now()
+                    analysis_dict_gf["partner_pov"] = "girlfriend"
+                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_analysis(f"{conflict_id}_girlfriend", emb_analysis_gf, analysis_dict_gf, "analysis")))
+                    if db_service:
+                        tasks.append(loop.run_in_executor(None, lambda: db_service.create_conflict_analysis(conflict_id, relationship_id, s3_url_analysis_gf)))
+
+                # Repair Plan BF
+                if s3_url_plan_bf:
+                    repair_plan_dict_bf = repair_plan_boyfriend.model_dump()
+                    repair_plan_dict_bf["conflict_id"] = conflict_id
+                    repair_plan_dict_bf["partner_requesting"] = "partner_a"
+                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_repair_plan(conflict_id, emb_plan_bf, repair_plan_dict_bf, "repair_plans"))) # Use original conflict_id
+                    if db_service:
+                        tasks.append(loop.run_in_executor(None, lambda: db_service.create_repair_plan(conflict_id, relationship_id, "partner_a", s3_url_plan_bf)))
+
+                # Repair Plan GF
+                if s3_url_plan_gf:
+                    repair_plan_dict_gf = repair_plan_girlfriend.model_dump()
+                    repair_plan_dict_gf["conflict_id"] = conflict_id
+                    repair_plan_dict_gf["partner_requesting"] = "partner_b"
+                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_repair_plan(f"{conflict_id}_girlfriend", emb_plan_gf, repair_plan_dict_gf, "repair_plans")))
+                    if db_service:
+                        tasks.append(loop.run_in_executor(None, lambda: db_service.create_repair_plan(conflict_id, relationship_id, "partner_b", s3_url_plan_gf)))
+                
+                # Neo4j
+                try:
+                    all_root_causes = list(set(analysis_boyfriend.root_causes + analysis_girlfriend.root_causes))
+                    combined_summary = f"BF POV: {analysis_boyfriend.fight_summary[:100]}... GF POV: {analysis_girlfriend.fight_summary[:100]}..."
+                    tasks.append(loop.run_in_executor(None, lambda: neo4j_service.create_conflict_node({
+                        "conflict_id": conflict_id,
+                        "summary": combined_summary,
+                        "date": datetime.now().isoformat(),
+                        "root_causes": all_root_causes,
+                        "intensity": 5
+                    })))
+                except Exception as e:
+                    logger.error(f"❌ Error preparing Neo4j task: {e}")
+
+                # Execute all DB/Pinecone/Neo4j tasks
+                if tasks:
+                    await asyncio.gather(*tasks)
+                
+                logger.info("✅ Stored all analyses and repair plans in background")
+                
             except Exception as e:
-                logger.warning(f"⚠️ Failed to store repair plan embeddings: {e}")
-        except Exception as e:
-            logger.error(f"❌ Error storing repair plans: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+                logger.error(f"❌ Error storing all data in background: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
+        # Schedule background task
+        background_tasks.add_task(store_all_background)
         
         return {
             "success": True,
@@ -637,6 +676,57 @@ async def generate_analysis_only(
         # Get transcript directly from PostgreSQL
         transcript_data = db_service.get_conflict_transcript(conflict_id)
         
+        if not transcript_data:
+            # Fallback to S3 via db_service (bypasses RLS)
+            try:
+                if db_service:
+                    conflict = db_service.get_conflict(conflict_id)
+                    
+                    if conflict:
+                        transcript_path = conflict.get("transcript_path")
+                        
+                        if transcript_path:
+                            s3_key = transcript_path
+                            if s3_key.startswith(f"s3://{settings.S3_BUCKET_NAME}/"):
+                                s3_key = s3_key.replace(f"s3://{settings.S3_BUCKET_NAME}/", "")
+                            
+                            file_response = s3_service.download_file(s3_key)
+                            if file_response:
+                                transcript_data = json.loads(file_response.decode('utf-8'))
+                                
+                                transcript_text = ""
+                                if isinstance(transcript_data, list):
+                                    transcript_lines = []
+                                    for segment in transcript_data:
+                                        if isinstance(segment, dict):
+                                            speaker = segment.get("speaker", segment.get("speaker_name", "Speaker"))
+                                            text = segment.get("text", segment.get("transcript", segment.get("message", "")))
+                                            if text:
+                                                transcript_lines.append(f"{speaker}: {text}")
+                                        elif isinstance(segment, str):
+                                            transcript_lines.append(segment)
+                                    transcript_text = "\n".join(transcript_lines)
+                                elif isinstance(transcript_data, dict):
+                                    if "transcript_text" in transcript_data:
+                                        transcript_text = transcript_data["transcript_text"]
+                                    elif "segments" in transcript_data:
+                                        transcript_lines = []
+                                        for segment in transcript_data["segments"]:
+                                            speaker = segment.get("speaker", "Speaker")
+                                            text = segment.get("text", "")
+                                            if text:
+                                                transcript_lines.append(f"{speaker}: {text}")
+                                        transcript_text = "\n".join(transcript_lines)
+                                
+                                # Construct transcript_data dict to match expected format
+                                transcript_data = {
+                                    "transcript_text": transcript_text,
+                                    "duration": conflict.get("duration", 0.0),
+                                    "speaker_labels": conflict.get("speaker_labels", {})
+                                }
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to fetch transcript from S3: {e}")
+
         if not transcript_data:
             raise HTTPException(
                 status_code=404,
@@ -820,7 +910,8 @@ async def generate_analysis_only(
 @router.post("/conflicts/{conflict_id}/generate-repair-plans")
 async def generate_repair_plans_only(
     conflict_id: str,
-    request: dict = Body(...)
+    request: dict = Body(...),
+    background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
     Generate repair plans for both perspectives (boyfriend + girlfriend)
@@ -895,17 +986,12 @@ async def generate_repair_plans_only(
             duration = transcript_data.get("duration", 0.0)
             speaker_labels = transcript_data.get("speaker_labels", {})
         else:
-            # Fallback to S3
+            # Fallback to S3 via db_service (bypasses RLS)
             try:
-                supabase_url = getattr(settings, 'SUPABASE_URL', None) or os.getenv("SUPABASE_URL")
-                supabase_key = getattr(settings, 'SUPABASE_KEY', None) or os.getenv("SUPABASE_KEY")
-                
-                if supabase_url and supabase_key:
-                    supabase: Client = create_client(supabase_url, supabase_key)
-                    conflict_response = supabase.table("conflicts").select("*").eq("id", conflict_id).execute()
+                if db_service:
+                    conflict = db_service.get_conflict(conflict_id)
                     
-                    if conflict_response.data and len(conflict_response.data) > 0:
-                        conflict = conflict_response.data[0]
+                    if conflict:
                         transcript_path = conflict.get("transcript_path")
                         
                         if transcript_path:
@@ -925,6 +1011,8 @@ async def generate_repair_plans_only(
                                             text = segment.get("text", segment.get("transcript", segment.get("message", "")))
                                             if text:
                                                 transcript_lines.append(f"{speaker}: {text}")
+                                        elif isinstance(segment, str):
+                                            transcript_lines.append(segment)
                                     transcript_text = "\n".join(transcript_lines)
                                 elif isinstance(transcript_data, dict):
                                     if "transcript_text" in transcript_data:
@@ -989,38 +1077,6 @@ async def generate_repair_plans_only(
             girlfriend_profile=girlfriend_profile
         )
         
-        # Store boyfriend repair plan
-        try:
-            plan_path_bf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json"
-            plan_json_bf = json.dumps(repair_plan_boyfriend.model_dump(), default=str, indent=2)
-            s3_url_bf = s3_service.upload_file(
-                file_path=plan_path_bf,
-                file_content=plan_json_bf.encode('utf-8'),
-                content_type="application/json"
-            )
-            if s3_url_bf and db_service:
-                db_service.create_repair_plan(
-                    conflict_id=conflict_id,
-                    relationship_id=relationship_id,
-                    partner_requesting="partner_a",
-                    plan_path=s3_url_bf
-                )
-            
-            # Store in Pinecone
-            repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
-            repair_plan_embedding_bf = embeddings_service.embed_text(repair_plan_text_bf)
-            repair_plan_dict_bf = repair_plan_boyfriend.model_dump()
-            repair_plan_dict_bf["conflict_id"] = conflict_id  # Ensure original conflict_id is in data
-            repair_plan_dict_bf["partner_requesting"] = "partner_a"  # Explicitly set partner
-            pinecone_service.upsert_repair_plan(
-                conflict_id=conflict_id,  # Use original conflict_id (not _boyfriend suffix)
-                embedding=repair_plan_embedding_bf,
-                repair_plan_data=repair_plan_dict_bf,
-                namespace="repair_plans"
-            )
-        except Exception as e:
-            logger.error(f"❌ Error storing repair plans: {e}")
-        
         # Calculate total time
         repair_total_time = time.time() - repair_start
         logger.info(f"""
@@ -1028,6 +1084,64 @@ async def generate_repair_plans_only(
    Total Time: {repair_total_time:.2f}s
 ✅ Repair plan generation complete (boyfriend only)!
 """)
+        
+        # Define background storage task
+        async def store_repair_plan_background():
+            try:
+                plan_path_bf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json"
+                plan_json_bf = json.dumps(repair_plan_boyfriend.model_dump(), default=str, indent=2)
+                
+                # Run S3 upload and embedding generation in parallel
+                loop = asyncio.get_event_loop()
+                s3_url_bf, repair_plan_embedding_bf = await asyncio.gather(
+                    loop.run_in_executor(
+                        None,
+                        lambda: s3_service.upload_file(
+                            file_path=plan_path_bf,
+                            file_content=plan_json_bf.encode('utf-8'),
+                            content_type="application/json"
+                        )
+                    ),
+                    loop.run_in_executor(
+                        None,
+                        lambda: embeddings_service.embed_text(
+                            f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
+                        )
+                    )
+                )
+                
+                if s3_url_bf:
+                    # Store in DB and Pinecone in parallel
+                    repair_plan_dict_bf = repair_plan_boyfriend.model_dump()
+                    repair_plan_dict_bf["conflict_id"] = conflict_id
+                    repair_plan_dict_bf["partner_requesting"] = "partner_a"
+                    
+                    await asyncio.gather(
+                        loop.run_in_executor(
+                            None,
+                            lambda: db_service.create_repair_plan(
+                                conflict_id=conflict_id,
+                                relationship_id=relationship_id,
+                                partner_requesting="partner_a",
+                                plan_path=s3_url_bf
+                            )
+                        ) if db_service else asyncio.sleep(0),
+                        loop.run_in_executor(
+                            None,
+                            lambda: pinecone_service.upsert_repair_plan(
+                                conflict_id=conflict_id,
+                                embedding=repair_plan_embedding_bf,
+                                repair_plan_data=repair_plan_dict_bf,
+                                namespace="repair_plans"
+                            )
+                        )
+                    )
+                    logger.info("✅ Stored repair plan in background (S3 + Pinecone + DB)")
+            except Exception as e:
+                logger.error(f"❌ Error storing repair plans in background: {e}")
+
+        # Schedule background task
+        background_tasks.add_task(store_repair_plan_background)
         
         return {
             "success": True,
@@ -1038,6 +1152,24 @@ async def generate_repair_plans_only(
         raise
     except Exception as e:
         logger.error(f"❌ Error generating repair plans: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.put("/conflicts/{conflict_id}/title")
+async def update_conflict_title(
+    conflict_id: str,
+    title: str = Body(..., embed=True)
+):
+    """Update the title of a conflict"""
+    try:
+        success = db_service.update_conflict_title(conflict_id, title)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conflict not found or update failed")
+        
+        return {"success": True, "title": title}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error updating conflict title: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/conflicts/{conflict_id}/store-transcript")
@@ -1244,10 +1376,27 @@ async def store_transcript(
         # Transcript storage complete - analysis and repair plans will be generated on-demand
         # when user clicks "View Analysis" or "View Repair Plan" buttons
         
+        # 3. Generate Title (NEW)
+        background_tasks.add_task(generate_title_background, conflict_id, transcript_text)
+
+        # 4. Generate Analysis and Repair Plan (NEW - Parallel)
+        # We pass partner IDs from the request
+        background_tasks.add_task(
+            generate_analysis_and_repair_plan_background,
+            conflict_id=conflict_id,
+            transcript_text=transcript_text,
+            relationship_id=relationship_id,
+            partner_a_id=partner_a_id,
+            partner_b_id=partner_b_id,
+            speaker_labels=speaker_labels,
+            duration=duration,
+            timestamp=datetime.now()
+        )
+        
         return {
             "success": True,
             "conflict_id": conflict_id,
-            "message": "Transcript stored successfully. Use 'View Analysis' or 'View Repair Plan' buttons to generate insights."
+            "message": "Transcript stored. Analysis and repair plans are generating in background."
         }
         
     except Exception as e:
@@ -1301,23 +1450,38 @@ async def generate_analysis_and_repair_plans(
                     else:
                         s3_key = transcript_path
                     
-                    from app.services.s3_service import s3_service
                     file_response = s3_service.download_file(s3_key)
                     if file_response:
                         import json
-                        transcript_data = json.loads(file_response.decode('utf-8'))
-                        if isinstance(transcript_data, list):
-                            transcript_lines = []
-                            for segment in transcript_data:
-                                if isinstance(segment, dict):
-                                    speaker = segment.get("speaker", "Speaker")
-                                    text = segment.get("text", "")
-                                    if text:
-                                        transcript_lines.append(f"{speaker}: {text}")
-                            transcript_text = "\n".join(transcript_lines)
+                        try:
+                            json_content = json.loads(file_response)
+                            if isinstance(json_content, list):
+                                transcript_text = "\n".join([f"{item.get('speaker', 'Unknown')}: {item.get('text', '')}" for item in json_content])
+                            else:
+                                transcript_text = str(json_content)
+                        except:
+                            transcript_text = file_response.decode('utf-8')
                 except Exception as e:
-                    logger.error(f"Error fetching transcript from S3: {e}")
+                    logger.error(f"Error fetching from S3: {e}")
+
+        # Check if analysis/repair plans already exist
+        existing_analysis_bf = s3_service.file_exists(f"analysis/{relationship_id}/{conflict_id}_analysis_partner_a.json")
+        existing_repair_bf = s3_service.file_exists(f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json")
         
+        if existing_analysis_bf and existing_repair_bf:
+            logger.info(f"✅ Found existing analysis and repair plans for {conflict_id}")
+            # Fetch and return existing data
+            analysis_bf_content = s3_service.download_file(f"analysis/{relationship_id}/{conflict_id}_analysis_partner_a.json")
+            repair_bf_content = s3_service.download_file(f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json")
+            
+            import json
+            return {
+                "success": True,
+                "analysis_boyfriend": json.loads(analysis_bf_content) if analysis_bf_content else None,
+                "repair_plan_boyfriend": json.loads(repair_bf_content) if repair_bf_content else None,
+                "message": "Retrieved existing analysis and repair plans"
+            }
+
         if not transcript_text:
             raise HTTPException(status_code=400, detail="Transcript not found for this conflict")
         

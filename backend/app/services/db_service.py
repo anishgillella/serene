@@ -589,29 +589,70 @@ class DatabaseService:
         conflict_id: str,
         relationship_id: str = None,
         status: str = "active"
-    ) -> bool:
-        """Create a conflict record (bypasses RLS) - uses default relationship ID"""
+    ):
+        """
+        Create a conflict record (bypasses RLS) - uses default relationship ID
+        """
         try:
-            # Always use default relationship ID for MVP
-            relationship_id = DEFAULT_RELATIONSHIP_ID
-            
+            # Use default relationship ID if not provided
+            if not relationship_id:
+                relationship_id = DEFAULT_RELATIONSHIP_ID
+                
             # Ensure relationship exists first
-            self.ensure_default_relationship()
+            self.get_or_create_relationship(relationship_id)
             
             with self.get_db_context() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                        INSERT INTO conflicts (id, relationship_id, started_at, status)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (id) DO UPDATE SET
-                            relationship_id = EXCLUDED.relationship_id,
-                            status = EXCLUDED.status;
-                    """, (conflict_id, relationship_id, datetime.now(), status))
+                        INSERT INTO conflicts (id, relationship_id, status, started_at)
+                        VALUES (%s, %s, %s, NOW())
+                        ON CONFLICT (id) DO NOTHING
+                        RETURNING id
+                    """, (conflict_id, relationship_id, status))
                     
+                    result = cursor.fetchone()
+                    conn.commit()
+                    if result:
+                        return result[0]
+                    return conflict_id
+        except Exception as e:
+            print(f"Error creating conflict: {e}")
+            # Don't raise, just return None or log
+            return None
+
+    def get_conflict(self, conflict_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get conflict details by ID (bypasses RLS).
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT *
+                        FROM conflicts
+                        WHERE id = %s
+                    """, (conflict_id,))
+                    
+                    return cursor.fetchone()
+        except Exception as e:
+            print(f"Error getting conflict: {e}")
+            return None
+
+    def update_conflict_title(self, conflict_id: str, title: str) -> bool:
+        """Update the title of a conflict"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE conflicts
+                        SET title = %s
+                        WHERE id = %s
+                    """, (title, conflict_id))
                     conn.commit()
                     return True
         except Exception as e:
-            raise e
+            print(f"Error updating conflict title: {e}")
+            return False
     
     def update_conflict(
         self,
@@ -665,7 +706,7 @@ class DatabaseService:
             with self.get_db_context() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                     cursor.execute("""
-                        SELECT id, relationship_id, started_at, ended_at, status, transcript_path, metadata
+                        SELECT id, relationship_id, started_at, ended_at, status, transcript_path, metadata, title
                         FROM conflicts
                         WHERE id = %s;
                     """, (conflict_id,))
@@ -680,7 +721,8 @@ class DatabaseService:
                             "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
                             "status": row["status"],
                             "transcript_path": row["transcript_path"],
-                            "metadata": row["metadata"] if row["metadata"] else {}
+                            "metadata": row["metadata"] if row["metadata"] else {},
+                            "title": row["title"]
                         }
                     return None
         except Exception as e:
@@ -693,14 +735,14 @@ class DatabaseService:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                     if relationship_id:
                         cursor.execute("""
-                            SELECT id, relationship_id, started_at, ended_at, status, transcript_path, metadata
+                            SELECT id, relationship_id, started_at, ended_at, status, transcript_path, metadata, title
                             FROM conflicts
                             WHERE relationship_id = %s
                             ORDER BY started_at DESC;
                         """, (relationship_id,))
                     else:
                         cursor.execute("""
-                            SELECT id, relationship_id, started_at, ended_at, status, transcript_path, metadata
+                            SELECT id, relationship_id, started_at, ended_at, status, transcript_path, metadata, title
                             FROM conflicts
                             ORDER BY started_at DESC;
                         """)
@@ -714,7 +756,8 @@ class DatabaseService:
                             "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
                             "status": row["status"],
                             "transcript_path": row["transcript_path"],
-                            "metadata": row["metadata"] if row["metadata"] else {}
+                            "metadata": row["metadata"] if row["metadata"] else {},
+                            "title": row["title"]
                         })
                     return conflicts
         except Exception as e:

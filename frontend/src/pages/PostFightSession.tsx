@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageCircleIcon, SparklesIcon, HeartIcon, LoaderIcon, XIcon,
   BarChart4Icon, RefreshCwIcon, FileTextIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon,
-  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, SendIcon, MicIcon, MicOffIcon
+  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, SendIcon, MicIcon, MicOffIcon, PencilIcon
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from "@/components/ui/button";
@@ -161,10 +161,12 @@ const PostFightSession = () => {
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
   const [activeView, setActiveView] = useState<'analysis' | 'repair' | null>(null);
-  const [povView, setPovView] = useState<'boyfriend' | 'girlfriend'>('boyfriend'); // POV switcher for both analysis and repair plans
   const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
+  const [title, setTitle] = useState<string>('Post-Fight Session');
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [editedTitle, setEditedTitle] = useState('');
 
   const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -390,7 +392,6 @@ const PostFightSession = () => {
           console.log('✅ Setting analysisBoyfriend');
           setAnalysisBoyfriend(data.analysis_boyfriend);
         }
-        addMessage('heartsync', `I've analyzed your conflict from your perspective.`);
         setActiveView('analysis');
       } else {
         throw new Error(data.detail || 'Generation failed');
@@ -451,7 +452,6 @@ const PostFightSession = () => {
           console.log('✅ Setting repairPlanGirlfriend');
           setRepairPlanGirlfriend(data.repair_plan_girlfriend);
         }
-        addMessage('heartsync', `I've prepared personalized repair plans for both partners. Use the POV switcher to see each partner's view.`);
         setActiveView('repair');
       } else {
         throw new Error(data.detail || 'Generation failed');
@@ -513,7 +513,6 @@ const PostFightSession = () => {
           console.log('✅ Setting repairPlanGirlfriend');
           setRepairPlanGirlfriend(data.repair_plan_girlfriend);
         }
-        addMessage('heartsync', `I've analyzed your conflict from both perspectives and prepared personalized repair plans for both partners. Use the POV switcher to see each partner's view.`);
         // Auto-show analysis tab
         setActiveView('analysis');
       } else {
@@ -541,26 +540,119 @@ const PostFightSession = () => {
       analysisBoyfriend: !!analysisBoyfriend,
       repairPlanBoyfriend: !!repairPlanBoyfriend,
       repairPlanGirlfriend: !!repairPlanGirlfriend,
-      povView,
       activeView,
       locationPath: location.pathname,
       locationState: location.state,
       locationKey: location.key
     });
-  }, [conflictId, state, messages.length, analysisBoyfriend, repairPlanBoyfriend, repairPlanGirlfriend, povView, activeView, location.pathname, location.state, location.key]);
+  }, [conflictId, state, messages.length, analysisBoyfriend, repairPlanBoyfriend, repairPlanGirlfriend, activeView, location.pathname, location.state, location.key]);
 
   // Always render something - add error boundary
   if (!conflictId && !state?.conflict_id) {
     console.warn('⚠️ No conflictId found - showing fallback UI');
   }
 
+  // Fetch title and poll if needed
+  useEffect(() => {
+    let pollInterval: NodeJS.Timeout;
+
+    const fetchTitle = async () => {
+      if (!conflictId) return;
+      try {
+        const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.conflict && data.conflict.title) {
+            setTitle(data.conflict.title);
+            // Stop polling if we have a real title (not default)
+            if (data.conflict.title !== 'Post-Fight Session' && data.conflict.title !== 'Untitled Conflict') {
+              clearInterval(pollInterval);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching title:', error);
+      }
+    };
+
+    if (conflictId) {
+      fetchTitle();
+      // Poll every 5 seconds if title is default
+      pollInterval = setInterval(fetchTitle, 5000);
+    }
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [conflictId, apiUrl]);
+
+  const handleUpdateTitle = async () => {
+    if (!conflictId || !editedTitle.trim()) return;
+    try {
+      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/title`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editedTitle })
+      });
+
+      if (response.ok) {
+        setTitle(editedTitle);
+        setIsEditingTitle(false);
+      } else {
+        console.error('Failed to update title');
+      }
+    } catch (error) {
+      console.error('Error updating title:', error);
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-[85vh] w-full max-w-full bg-surface-elevated rounded-2xl p-6 shadow-lifted relative z-10 border border-border-subtle">
       {/* Header */}
       <div className="text-center mb-6">
-        <h2 className="text-h2 text-text-primary mb-2">
-          Post-Fight Session
-        </h2>
+        {isEditingTitle ? (
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <input
+              type="text"
+              value={editedTitle}
+              onChange={(e) => setEditedTitle(e.target.value)}
+              className="text-h2 text-text-primary text-center bg-white border border-accent rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-accent/20 min-w-[200px]"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleUpdateTitle();
+                if (e.key === 'Escape') setIsEditingTitle(false);
+              }}
+            />
+            <button
+              onClick={handleUpdateTitle}
+              className="p-1.5 bg-accent text-white rounded-full hover:bg-accent-hover transition-colors"
+            >
+              <CheckIcon size={18} />
+            </button>
+            <button
+              onClick={() => setIsEditingTitle(false)}
+              className="p-1.5 bg-gray-200 text-gray-600 rounded-full hover:bg-gray-300 transition-colors"
+            >
+              <XIcon size={18} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center gap-2 mb-2 group">
+            <h2 className="text-h2 text-text-primary">
+              {title}
+            </h2>
+            <button
+              onClick={() => {
+                setEditedTitle(title);
+                setIsEditingTitle(true);
+              }}
+              className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-text-tertiary hover:text-accent hover:bg-surface-hover rounded-full"
+              title="Edit title"
+            >
+              <PencilIcon size={16} />
+            </button>
+          </div>
+        )}
         <p className="text-body text-text-secondary">
           Talk freely — Luna is here to help you understand and repair.
         </p>
@@ -633,7 +725,7 @@ const PostFightSession = () => {
 
               <button
                 onClick={() => {
-                  console.log('🔘 Talk to Mediator button clicked', { conflictId, activeView, povView });
+                  console.log('🔘 Talk to Mediator button clicked', { conflictId, activeView });
                   setIsMediatorModalOpen(true);
                 }}
                 disabled={!conflictId}
@@ -881,7 +973,7 @@ const PostFightSession = () => {
                 </div>
               ) : (repairPlanBoyfriend || repairPlanGirlfriend) ? (
                 <>
-                  {povView === 'boyfriend' && repairPlanBoyfriend && (
+                  {repairPlanBoyfriend && (
                     <div className="space-y-4">
                       {/* Steps */}
                       <div className="bg-white rounded-xl p-4 border border-rose-100">
@@ -953,84 +1045,6 @@ const PostFightSession = () => {
                       )}
                     </div>
                   )}
-
-                  {povView === 'girlfriend' && repairPlanGirlfriend && (
-                    <div className="space-y-4">
-                      <div className="bg-pink-50 border border-pink-200 rounded-lg p-3 mb-4">
-                        <p className="text-sm text-pink-800 font-medium">👤 Girlfriend's Personalized Repair Plan</p>
-                        <p className="text-xs text-pink-600 mt-1">Tailored based on your profile and this conflict</p>
-                      </div>
-
-                      {/* Steps */}
-                      <div className="bg-white rounded-xl p-4 border border-rose-100">
-                        <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                          <LightbulbIcon size={18} className="text-rose-500 mr-2" />
-                          Action Steps
-                        </h4>
-                        <ol className="space-y-3">
-                          {repairPlanGirlfriend.steps.map((step, idx) => (
-                            <li key={idx} className="flex items-start text-gray-700">
-                              <span className="bg-pink-100 text-pink-700 font-semibold rounded-full w-6 h-6 flex items-center justify-center text-xs mr-3 mt-0.5 flex-shrink-0">
-                                {idx + 1}
-                              </span>
-                              <span className="flex-1">{step}</span>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-
-                      {/* Apology Script */}
-                      <div className="bg-gradient-to-r from-pink-50 to-rose-50 rounded-xl p-5 border-2 border-pink-200">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="font-semibold text-gray-800 flex items-center">
-                            <HeartIcon size={18} className="text-pink-500 mr-2" />
-                            Apology Script
-                          </h4>
-                          <button
-                            onClick={() => copyToClipboard(repairPlanGirlfriend.apology_script, 'apology-gf')}
-                            className="text-gray-400 hover:text-gray-600 transition-colors"
-                            title="Copy to clipboard"
-                          >
-                            {copiedText === 'apology-gf' ? (
-                              <CheckIcon size={18} className="text-green-500" />
-                            ) : (
-                              <CopyIcon size={18} />
-                            )}
-                          </button>
-                        </div>
-                        <p className="text-gray-700 leading-relaxed italic whitespace-pre-wrap">
-                          {repairPlanGirlfriend.apology_script}
-                        </p>
-                      </div>
-
-                      {/* Timing */}
-                      <div className="bg-white rounded-xl p-4 border border-rose-100">
-                        <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                          <ClockIcon size={18} className="text-pink-500 mr-2" />
-                          Timing Suggestion
-                        </h4>
-                        <p className="text-gray-700 text-sm">{repairPlanGirlfriend.timing_suggestion}</p>
-                      </div>
-
-                      {/* Risk Factors */}
-                      {repairPlanGirlfriend.risk_factors && repairPlanGirlfriend.risk_factors.length > 0 && (
-                        <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-200">
-                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                            <ShieldIcon size={18} className="text-yellow-600 mr-2" />
-                            Things to Avoid
-                          </h4>
-                          <ul className="space-y-2">
-                            {repairPlanGirlfriend.risk_factors.map((risk, idx) => (
-                              <li key={idx} className="flex items-start text-sm text-gray-700">
-                                <span className="text-yellow-600 mr-2 mt-1">⚠</span>
-                                <span>{risk}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </>
               ) : (
                 <div className="text-center py-12 text-gray-500">
@@ -1060,7 +1074,7 @@ const PostFightSession = () => {
           conflictId={conflictId || ''}
           context={{
             activeView,
-            povView,
+            povView: 'boyfriend',
             hasAnalysis: !!analysisBoyfriend,
             hasRepairPlans: !!(repairPlanBoyfriend || repairPlanGirlfriend)
           }}

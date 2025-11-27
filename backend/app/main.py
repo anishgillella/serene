@@ -215,9 +215,41 @@ async def get_conflict(conflict_id: str):
                 # Fallback to text splitting if messages not available
                 transcript_text = transcript_result.get("transcript_text", "")
                 transcript_data = [line.strip() for line in transcript_text.split('\n') if line.strip()]
-                
+            
+            # If still empty, check S3
+            if not transcript_data and conflict.get("transcript_path"):
+                transcript_path = conflict["transcript_path"]
+                # Handle s3:// prefix
+                if transcript_path.startswith("s3://"):
+                    # Extract key from s3://bucket/key
+                    parts = transcript_path.replace("s3://", "").split("/", 1)
+                    if len(parts) > 1:
+                        key = parts[1]
+                        
+                        # Download from S3
+                        content = s3_service.download_file(key)
+                        if content:
+                            try:
+                                import json
+                                # Try parsing as JSON list of strings or objects
+                                json_content = json.loads(content)
+                                if isinstance(json_content, list):
+                                    if isinstance(json_content[0], dict):
+                                        # List of objects
+                                        transcript_data = [
+                                            f"{item.get('speaker', 'Unknown')}: {item.get('text', '')}" 
+                                            for item in json_content
+                                        ]
+                                    else:
+                                        # List of strings
+                                        transcript_data = [str(line) for line in json_content]
+                            except json.JSONDecodeError:
+                                # Treat as plain text
+                                text_content = content.decode('utf-8')
+                                transcript_data = [line.strip() for line in text_content.split('\n') if line.strip()]
+                                
         except Exception as e:
-            logger.error(f"Error retrieving transcript from PostgreSQL: {e}")
+            logger.error(f"Error retrieving transcript: {e}")
             import traceback
             logger.error(traceback.format_exc())
         

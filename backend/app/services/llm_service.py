@@ -344,7 +344,7 @@ CALENDAR & CYCLE AWARENESS (CRITICAL FOR TIMING):
 {calendar_context}
 
 TIMING GUIDANCE BASED ON CALENDAR:
-- If Elara is in PMS/menstruation phase: Consider waiting a few days for the repair conversation, or be extra gentle and patient
+- If Elara is in PMS/menstruation phase: Consider waiting a few days for the repair conversation, or be extra gentle and patient. Suggest comforting actions like getting her food or coffee instead of just avoiding the conversation.
 - If upcoming anniversary/birthday: Could be a good opportunity to combine repair with celebration
 - If high-risk cycle phase: Keep the conversation brief, focus on acknowledgment rather than problem-solving
 - If low-risk phase (follicular/ovulation): Good time for deeper conversation and planning
@@ -375,9 +375,9 @@ REQUIREMENTS:
 1. **Steps**: SPECIFIC actions for THIS couple. Reference actual issues from the transcript. Not generic advice - what should THIS person do?
 2. **Apology Script**: PERSONALIZED to this conflict. Reference specific things said. If Boyfriend: direct, respectful, solution-focused. If Girlfriend: emotionally validating, shows care through details.
 3. **Timing**: SPECIFIC to their situation. Consider their schedules, moods, when they're most receptive. 
-   - **CRITICAL**: If calendar insights are provided, factor in cycle phase and upcoming events
-   - Suggest specific dates if possible (e.g., "Wait until after Jan 25 when her cycle phase is more favorable")
-   - If she's in a high-risk phase, acknowledge this and adjust approach accordingly
+   - **CRITICAL**: If calendar insights are provided, factor in cycle phase and upcoming events.
+   - If calendar insights are NOT provided, do NOT invent date-related info.
+   - If she's in a high-risk phase (PMS), suggest comforting actions (food, coffee) rather than avoiding the conversation.
 4. **Risk Factors**: SPECIFIC things to avoid based on THIS conflict. What triggered escalation? What words/phrases should be avoided?
    - Include cycle-aware risks if applicable (e.g., "Avoid having this conversation during PMS phase")
 
@@ -411,6 +411,37 @@ If calendar data shows a high-risk period, explicitly mention this in timing rec
             temperature=0.7,
             max_tokens=2000
         )
+
+    def generate_conflict_title(self, transcript_text: str) -> str:
+        """Generate a concise, descriptive title for a conflict based on the transcript"""
+        try:
+            prompt = f"""Generate a short, descriptive title (3-6 words) for this conflict based on the transcript.
+The title should capture the core issue.
+
+TRANSCRIPT:
+{transcript_text[:2000]}... (truncated)
+
+TITLE REQUIREMENTS:
+- 3-6 words maximum
+- Descriptive but neutral
+- Capture the main topic (e.g., "Argument about Holiday Plans", "Disagreement over Finances")
+- No quotes or special characters
+- Just the title text"""
+
+            messages = [{"role": "user", "content": prompt}]
+            
+            title = self.chat_completion(
+                messages=messages,
+                temperature=0.5,
+                max_tokens=20
+            )
+            
+            # Clean up title
+            title = title.strip().strip('"').strip("'")
+            return title
+        except Exception as e:
+            logger.error(f"❌ Error generating conflict title: {e}")
+            return "Untitled Conflict"
 
 # Singleton instance
 llm_service = LLMService()
