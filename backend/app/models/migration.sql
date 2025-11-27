@@ -6,7 +6,20 @@ CREATE TABLE IF NOT EXISTS relationships (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     partner_a_name TEXT,
-    partner_b_name TEXT
+    partner_b_name TEXT,
+    partner_a_id UUID REFERENCES users(id),
+    partner_b_id UUID REFERENCES users(id)
+);
+
+-- Create users table
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    auth0_id TEXT UNIQUE NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT,
+    picture TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_login TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Create conflicts table

@@ -42,8 +42,8 @@ const Sidebar = () => {
                             key={item.path}
                             to={item.path}
                             className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group ${isActive
-                                    ? 'bg-surface-hover text-text-primary font-medium shadow-sm'
-                                    : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
+                                ? 'bg-surface-hover text-text-primary font-medium shadow-sm'
+                                : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'
                                 }`}
                         >
                             <item.icon
