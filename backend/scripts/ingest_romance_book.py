@@ -152,8 +152,40 @@ class ChapterAwareBookIngester:
                     'book_title': book_title,
                 })
         
-        logger.info(f"📦 Created {len(chunks_with_metadata)} chunks from book")
-        return chunks_with_metadata
+        logger.info(f"📦 Created {len(chunks_with_metadata)} chunks from book (before filtering)")
+        
+        # Filter out "junk" chunks (copyright, acknowledgments, etc.)
+        filtered_chunks = []
+        junk_keywords = [
+            "copyright", "all rights reserved", "isbn", "library of congress", 
+            "printed in", "publication data", "cover design", "simon & schuster",
+            "acknowledgments", "dedication", "table of contents", "index",
+            "thisiscrave.com", "atria books"
+        ]
+        
+        for chunk in chunks_with_metadata:
+            text_lower = chunk['text'].lower()
+            
+            # Check for junk keywords
+            junk_score = 0
+            for keyword in junk_keywords:
+                if keyword in text_lower:
+                    junk_score += 1
+            
+            # Heuristic: If multiple junk keywords or very short text with a keyword
+            if junk_score >= 2 or (len(chunk['text']) < 500 and junk_score >= 1):
+                logger.info(f"   🗑️ Skipping junk chunk (score {junk_score}): {chunk['text'][:50]}...")
+                continue
+                
+            # Also skip chunks that are just lists of names (common in acknowledgments)
+            if "thank you" in text_lower and len(text_lower.split('\n')) > 10:
+                 logger.info(f"   🗑️ Skipping likely acknowledgment chunk: {chunk['text'][:50]}...")
+                 continue
+
+            filtered_chunks.append(chunk)
+            
+        logger.info(f"📦 Final valid chunks: {len(filtered_chunks)} (Filtered out {len(chunks_with_metadata) - len(filtered_chunks)})")
+        return filtered_chunks
     
     async def ingest_book(self, pdf_path: str, book_title: str, relationship_id: str = "00000000-0000-0000-0000-000000000000"):
         """

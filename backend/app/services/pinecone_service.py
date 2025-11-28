@@ -398,6 +398,18 @@ class PineconeService:
             logger.error(traceback.format_exc())
             return []
 
+    def delete_all_from_namespace(self, namespace: str):
+        """Delete all vectors from a namespace"""
+        if not self.index:
+            logger.warning("⚠️ Pinecone index not initialized, skipping deletion")
+            return
+        try:
+            self.index.delete(delete_all=True, namespace=namespace)
+            logger.info(f"✅ Deleted all vectors from namespace: {namespace}")
+        except Exception as e:
+            logger.error(f"❌ Error deleting from namespace {namespace}: {e}")
+            raise
+
 # Singleton instance
 pinecone_service = PineconeService()
 

@@ -71,7 +71,7 @@ const Upload = () => {
                 if (lastLog.includes("Pinecone")) progress = 90;
 
                 // Check for completion or error
-                if (lastLog.includes("Processing complete!")) {
+                if (lastLog.includes("Processing complete!") || lastLog.includes("Updated database record")) {
                   clearInterval(interval);
                   fetchExistingFiles(); // Refresh list
                   return { ...f, logs: data.logs, status: 'success', progress: 100, message: 'Processing complete!' };
@@ -411,9 +411,15 @@ const Upload = () => {
                     {/* Logs Display */}
                     {file.logs && file.logs.length > 0 && (
                       <div className="mt-3 bg-gray-900 rounded-lg p-3 font-mono text-xs text-green-400 max-h-32 overflow-y-auto shadow-inner border border-gray-800">
-                        {file.logs.map((log, i) => (
-                          <div key={i} className="whitespace-nowrap">{log}</div>
-                        ))}
+                        {file.logs.map((log, i) => {
+                          // Remove timestamp (HH:MM:SS - )
+                          const cleanLog = log.replace(/^\d{2}:\d{2}:\d{2} - /, '');
+                          return (
+                            <div key={i} className="whitespace-pre-wrap break-words border-b border-gray-800/50 last:border-0 py-0.5">
+                              {cleanLog}
+                            </div>
+                          );
+                        })}
                         <div ref={el => el?.scrollIntoView({ behavior: 'smooth' })} />
                       </div>
                     )}

@@ -165,6 +165,29 @@ async def process_pdf_task(
                     chapter_chunks = splitter.split_text(chapter_text)
                     
                     for local_idx, chunk_text in enumerate(chapter_chunks):
+                        # Filter out junk chunks
+                        text_lower = chunk_text.lower()
+                        junk_keywords = [
+                            "copyright", "all rights reserved", "isbn", "library of congress", 
+                            "printed in", "publication data", "cover design", "simon & schuster",
+                            "acknowledgments", "dedication", "table of contents", "index",
+                            "thisiscrave.com", "atria books"
+                        ]
+                        
+                        junk_score = 0
+                        for keyword in junk_keywords:
+                            if keyword in text_lower:
+                                junk_score += 1
+                        
+                        # Skip if junk
+                        if junk_score >= 2 or (len(chunk_text) < 500 and junk_score >= 1):
+                            log(f"   🗑️ Skipping junk chunk: {chunk_text[:50]}...")
+                            continue
+                            
+                        if "thank you" in text_lower and len(text_lower.split('\n')) > 10:
+                             log(f"   🗑️ Skipping likely acknowledgment chunk: {chunk_text[:50]}...")
+                             continue
+
                         chunk_embedding = embeddings_service.embed_text(chunk_text)
                         chunk_metadata = {
                             'pdf_id': pdf_id,
@@ -192,6 +215,29 @@ async def process_pdf_task(
                 log("   ⚠️ No chapters detected, using standard chunking")
                 all_chunks = splitter.split_text(extracted_text)
                 for idx, chunk_text in enumerate(all_chunks):
+                    # Filter out junk chunks
+                    text_lower = chunk_text.lower()
+                    junk_keywords = [
+                        "copyright", "all rights reserved", "isbn", "library of congress", 
+                        "printed in", "publication data", "cover design", "simon & schuster",
+                        "acknowledgments", "dedication", "table of contents", "index",
+                        "thisiscrave.com", "atria books"
+                    ]
+                    
+                    junk_score = 0
+                    for keyword in junk_keywords:
+                        if keyword in text_lower:
+                            junk_score += 1
+                    
+                    # Skip if junk
+                    if junk_score >= 2 or (len(chunk_text) < 500 and junk_score >= 1):
+                        log(f"   🗑️ Skipping junk chunk: {chunk_text[:50]}...")
+                        continue
+                        
+                    if "thank you" in text_lower and len(text_lower.split('\n')) > 10:
+                            log(f"   🗑️ Skipping likely acknowledgment chunk: {chunk_text[:50]}...")
+                            continue
+
                     chunk_embedding = embeddings_service.embed_text(chunk_text)
                     chunk_metadata = {
                         'pdf_id': pdf_id,
@@ -288,16 +334,23 @@ async def process_pdf_task(
         
         log(f"✅ Stored PDF in Pinecone: {pdf_id}, namespace: {namespace}")
         
-        # 3. Update metadata in database
-        if db_service and profile_id:
-            db_service.update_profile(
-                profile_id=profile_id,
-                extracted_text_length=len(extracted_text),
-                file_path=s3_url or file_path
-            )
-            log(f"✅ Updated profile metadata in database: {profile_id}")
-        
-        log("🎉 Processing complete!")
+        # 3. Update DB record with success status
+        if db_service:
+            try:
+                updates = {
+                    "extracted_text_length": len(extracted_text)
+                }
+                if s3_url:
+                    updates["file_path"] = s3_url
+                    
+                await asyncio.to_thread(
+                    db_service.update_profile,
+                    pdf_id=pdf_id,
+                    updates=updates
+                )
+                log("✅ Updated database record")
+            except Exception as e:
+                log(f"❌ Error updating database: {e}")
         
     except Exception as e:
         log(f"❌ Error in background processing: {e}")

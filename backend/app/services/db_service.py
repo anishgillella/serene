@@ -316,39 +316,43 @@ class DatabaseService:
         except Exception as e:
             raise e
 
-    def update_profile(
-        self,
-        profile_id: str,
-        extracted_text_length: Optional[int] = None,
-        file_path: Optional[str] = None
-    ) -> bool:
-        """Update a profile record"""
+    def update_profile(self, pdf_id: str, updates: Dict[str, Any]) -> bool:
+        """Update profile fields"""
         try:
             with self.get_db_context() as conn:
                 with conn.cursor() as cursor:
-                    updates = []
-                    params = []
+                    set_clauses = []
+                    values = []
+                    for key, value in updates.items():
+                        set_clauses.append(f"{key} = %s")
+                        values.append(value)
                     
-                    if extracted_text_length is not None:
-                        updates.append("extracted_text_length = %s")
-                        params.append(extracted_text_length)
-                    
-                    if file_path is not None:
-                        updates.append("file_path = %s")
-                        params.append(file_path)
-                    
-                    if updates:
-                        params.append(profile_id)
-                        query = f"""
-                            UPDATE profiles
-                            SET {', '.join(updates)}
-                            WHERE id = %s;
-                        """
-                        cursor.execute(query, params)
-                        conn.commit()
+                    if not set_clauses:
+                        return False
+                        
+                    values.append(pdf_id)
+                    query = f"""
+                        UPDATE profiles 
+                        SET {', '.join(set_clauses)}
+                        WHERE pdf_id = %s
+                    """
+                    cursor.execute(query, values)
+                    conn.commit()
                     return True
         except Exception as e:
             print(f"Error updating profile: {e}")
+            return False
+
+    def delete_profile(self, pdf_id: str) -> bool:
+        """Delete a profile/PDF record by ID"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM profiles WHERE pdf_id = %s", (pdf_id,))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error deleting profile: {e}")
             return False
     
     def get_profiles(self, relationship_id: str, pdf_type: Optional[str] = None) -> List[Dict[str, Any]]:

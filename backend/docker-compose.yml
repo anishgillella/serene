@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # The FastAPI Backend
+  api:
+    build: .
+    container_name: serene-api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: always
+    volumes:
+      - ./app:/app/app # Mount app dir for easier debugging/hot reload if needed (remove in prod if preferred)
+
+  # The LiveKit Agent Worker
+  agent:
+    build: .
+    container_name: serene-agent
+    command: python start_agent.py start
+    env_file:
+      - .env
+    restart: always
+    depends_on:
+      - api
+    # No ports needed for the agent as it connects OUT to LiveKit Cloud
