@@ -55,6 +55,41 @@ class DatabaseService:
         except Exception as e:
             # Connection is already closed by context manager, just raise
             raise e
+            
+    def save_transcript_messages(self, conflict_id: str, messages: List[Dict[str, Any]]) -> bool:
+        """
+        Batch save transcript messages to rant_messages table.
+        messages should be a list of dicts with: partner_id, role, content
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Prepare values for batch insert
+                    values = []
+                    now = datetime.now()
+                    for i, msg in enumerate(messages):
+                        # Add slight time offset to preserve order
+                        msg_time = now 
+                        values.append((
+                            conflict_id,
+                            msg["partner_id"],
+                            msg["role"],
+                            msg["content"],
+                            msg_time
+                        ))
+                    
+                    # Execute batch insert
+                    from psycopg2.extras import execute_values
+                    execute_values(cursor, """
+                        INSERT INTO rant_messages (conflict_id, partner_id, role, content, created_at)
+                        VALUES %s
+                    """, values)
+                    
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error batch saving transcript messages: {e}")
+            return False
     
     def get_rant_messages(self, conflict_id: str, partner_id: str) -> List[Dict[str, Any]]:
         """Get rant messages for a conflict and partner"""

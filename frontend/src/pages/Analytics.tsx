@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   Bar, XAxis, YAxis, ResponsiveContainer,
-  ComposedChart, Tooltip, Area, CartesianGrid
+  ComposedChart, Tooltip, Area, CartesianGrid, PieChart, Pie, Cell, Legend, Label
 } from 'recharts';
 import AnalyticsCard from '../components/AnalyticsCard';
 import VoiceButton from '../components/VoiceButton';
@@ -33,6 +33,21 @@ interface AnalyticsData {
     intimacy_30d: number;
     unresolved: number;
   };
+  resolution_stats: {
+    resolved: number;
+    unresolved: number;
+    total: number;
+    rate: number;
+  };
+  interaction_ratio: {
+    value: number;
+    target: number;
+    status: string;
+  };
+  top_topics: Array<{
+    topic: string;
+    count: number;
+  }>;
 }
 
 const Analytics = () => {
@@ -164,6 +179,115 @@ const Analytics = () => {
           </div>
         </div>
 
+        {/* Middle Row: Resolution & Ratio */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+          {/* Conflict Resolution Pie Chart */}
+          <AnalyticsCard title="Conflict Resolution" className="bg-surface-elevated h-80">
+            {data.resolution_stats.total > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={[
+                      { name: 'Resolved', value: data.resolution_stats.resolved },
+                      { name: 'Unresolved', value: data.resolution_stats.unresolved }
+                    ]}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={5}
+                    dataKey="value"
+                  >
+                    <Cell fill="#10B981" /> {/* Green for Resolved */}
+                    <Cell fill="#F59E0B" /> {/* Amber for Unresolved */}
+                    <Label
+                      value={`${data.resolution_stats.rate}%`}
+                      position="center"
+                      className="text-2xl font-bold"
+                      fill="#2C2C2C"
+                    />
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7' }}
+                  />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
+                <p>No conflicts recorded.</p>
+              </div>
+            )}
+          </AnalyticsCard>
+
+          {/* Interaction Ratio */}
+          <AnalyticsCard title="Interaction Ratio (Gottman)" className="bg-surface-elevated h-80">
+            <div className="flex flex-col h-full justify-center items-center space-y-6">
+              <div className="text-center">
+                <div className="text-5xl font-light text-text-primary mb-2">
+                  {data.interaction_ratio.value}<span className="text-2xl text-text-tertiary"> : 1</span>
+                </div>
+                <div className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${data.interaction_ratio.value >= 5 ? 'bg-green-100 text-green-700' :
+                  data.interaction_ratio.value >= 3 ? 'bg-blue-100 text-blue-700' :
+                    'bg-red-100 text-red-700'
+                  }`}>
+                  {data.interaction_ratio.status}
+                </div>
+              </div>
+
+              <div className="w-full max-w-xs space-y-2">
+                <div className="flex justify-between text-xs text-text-secondary">
+                  <span>Current</span>
+                  <span>Target (5:1)</span>
+                </div>
+                <div className="h-4 bg-surface-hover rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-1000 ${data.interaction_ratio.value >= 5 ? 'bg-green-500' : 'bg-accent'
+                      }`}
+                    style={{ width: `${Math.min((data.interaction_ratio.value / 5) * 100, 100)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-text-tertiary text-center mt-4">
+                  Aim for 5 positive interactions for every 1 negative interaction.
+                </p>
+              </div>
+            </div>
+          </AnalyticsCard>
+        </div>
+
+        {/* Top Conflict Topics */}
+        <AnalyticsCard title="Top Conflict Topics" className="bg-surface-elevated h-80">
+          {data.top_topics.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart
+                data={data.top_topics}
+                layout="vertical"
+                margin={{ top: 20, right: 30, bottom: 20, left: 20 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E4E4E7" />
+                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} />
+                <YAxis
+                  type="category"
+                  dataKey="topic"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fill: '#2C2C2C', fontSize: 12 }}
+                  width={150}
+                />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7' }}
+                />
+                <Bar dataKey="count" fill="#A78295" radius={[0, 4, 4, 0]} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
+              <p>No conflict topics recorded yet.</p>
+            </div>
+          )}
+        </AnalyticsCard>
+
         {/* Middle Row: Trends Chart */}
         <AnalyticsCard title="Interaction Trends (Last 30 Days)" className="bg-surface-elevated h-80">
           {data.trends.some(t => t.conflicts > 0 || t.intimacy > 0) ? (
@@ -206,7 +330,10 @@ const Analytics = () => {
             </div>
 
             {data.cycle_correlation.some(c => c > 0) ? (
-              <div className="grid grid-cols-30 gap-1 h-12">
+              <div
+                className="grid gap-1 h-12"
+                style={{ gridTemplateColumns: 'repeat(30, minmax(0, 1fr))' }}
+              >
                 {data.cycle_correlation.map((count, i) => {
                   // Calculate intensity based on count (0-5 scale)
                   const hasData = count > 0;
@@ -214,8 +341,7 @@ const Analytics = () => {
                   return (
                     <div key={i} className="flex flex-col items-center group relative">
                       <div
-                        className={`w-full h-full rounded-sm transition-all ${hasData ? `bg-accent opacity-[${Math.min(0.2 + (count * 0.15), 1)}]` : 'bg-surface-hover'
-                          } hover:scale-125 hover:z-10`}
+                        className={`w-full h-full rounded-sm transition-all ${hasData ? 'bg-accent' : 'bg-surface-hover'} hover:scale-125 hover:z-10`}
                         style={hasData ? { opacity: Math.min(0.2 + (count * 0.15), 1) } : {}}
                       />
                       {/* Tooltip */}

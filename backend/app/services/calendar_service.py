@@ -4,11 +4,13 @@ Provides chronological data from PostgreSQL + semantic insights via RAG.
 """
 import logging
 import time
+import json
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from decimal import Decimal
 from statistics import mean, stdev
 from app.services.db_service import db_service, DEFAULT_RELATIONSHIP_ID
+from app.services.llm_service import llm_service
 
 logger = logging.getLogger(__name__)
 
@@ -626,7 +628,7 @@ class CalendarService:
                             "type": "conflict",
                             "event_type": "conflict",
                             "event_date": row[1].date().isoformat() if row[1] else None,
-                            "title": "⚠️ Conflict",
+                            "title": (row[4] or {}).get("title", "⚠️ Conflict"),
                             "started_at": row[1].isoformat() if row[1] else None,
                             "ended_at": row[2].isoformat() if row[2] else None,
                             "status": row[3],
@@ -638,6 +640,73 @@ class CalendarService:
             
         except Exception as e:
             logger.error(f"❌ Error getting conflict events: {e}")
+            return []
+
+    def extract_and_store_conflict_topics(self, conflict_id: str) -> List[str]:
+        """
+        Extract topics from a conflict's mediator session and store in metadata.
+        Returns the extracted topics.
+        """
+        try:
+            # 1. Get mediator transcript
+            transcript = ""
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Get session ID and content
+                    cursor.execute("""
+                        SELECT mm.content
+                        FROM mediator_sessions ms
+                        JOIN mediator_messages mm ON ms.id = mm.session_id
+                        WHERE ms.conflict_id = %s
+                        ORDER BY ms.session_started_at DESC
+                        LIMIT 1
+                    """, (conflict_id,))
+                    
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        messages = row[0] # JSONB list
+                        # Format transcript
+                        transcript_lines = []
+                        for msg in messages:
+                            role = msg.get("role", "unknown")
+                            content = msg.get("content", "")
+                            transcript_lines.append(f"{role}: {content}")
+                        transcript = "\n".join(transcript_lines)
+            
+            if not transcript:
+                logger.warning(f"⚠️ No transcript found for conflict {conflict_id}")
+                return []
+
+            # 2. Extract topics and generate title using LLM
+            # Run in parallel if possible, but sequential is fine for now
+            topics = llm_service.extract_topics(transcript)
+            title = llm_service.generate_conflict_title(transcript)
+            
+            # 3. Update conflict metadata
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Fetch existing metadata first
+                    cursor.execute("SELECT metadata FROM conflicts WHERE id = %s", (conflict_id,))
+                    row = cursor.fetchone()
+                    metadata = row[0] if row and row[0] else {}
+                    
+                    # Update metadata
+                    metadata["topics"] = topics
+                    metadata["title"] = title
+                    
+                    # Save back
+                    cursor.execute("""
+                        UPDATE conflicts 
+                        SET metadata = %s 
+                        WHERE id = %s
+                    """, (json.dumps(metadata), conflict_id))
+                    conn.commit()
+            
+            logger.info(f"✅ Analyzed conflict {conflict_id}: Title='{title}', Topics={topics}")
+            return topics
+            
+        except Exception as e:
+            logger.error(f"❌ Error extracting topics for conflict {conflict_id}: {e}")
             return []
     
     # =========================================================================
@@ -741,21 +810,27 @@ class CalendarService:
     def get_conflict_cycle_correlation(
         self,
         relationship_id: str = DEFAULT_RELATIONSHIP_ID,
-        lookback_days: int = 180
+        lookback_days: int = 180,
+        prefetched_conflicts: Optional[List[Dict]] = None,
+        prefetched_cycle_events: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """
         Analyze correlation between conflicts and cycle phases.
+        OPTIMIZED: Accepts prefetched data to avoid N+1 queries.
         
         Returns:
             Dict with correlation stats and insights
         """
         try:
-            # Get conflicts from last N days
-            conflicts = self.get_conflict_events(
-                date.today() - timedelta(days=lookback_days),
-                date.today(),
-                relationship_id
-            )
+            # Use prefetched conflicts if available, otherwise fetch
+            if prefetched_conflicts is not None:
+                conflicts = prefetched_conflicts
+            else:
+                conflicts = self.get_conflict_events(
+                    date.today() - timedelta(days=lookback_days),
+                    date.today(),
+                    relationship_id
+                )
             
             if not conflicts:
                 return {
@@ -763,6 +838,42 @@ class CalendarService:
                     "message": "Not enough conflict data for analysis"
                 }
             
+            # Helper to get phase from prefetched events (avoiding DB calls)
+            def get_phase_for_date(target_date: date, cycle_evts: List[Dict]) -> str:
+                # Simple approximation based on last period
+                # Find the most recent period_start before target_date
+                last_period = None
+                for evt in sorted(cycle_evts, key=lambda x: x['event_date'], reverse=True):
+                    if evt['event_type'] == 'period_start':
+                        evt_date = date.fromisoformat(evt['event_date'])
+                        if evt_date <= target_date:
+                            last_period = evt_date
+                            break
+                
+                if not last_period:
+                    return "Unknown"
+                
+                day_of_cycle = (target_date - last_period).days + 1
+                
+                if day_of_cycle <= DEFAULT_PERIOD_LENGTH: return "Menstruation"
+                if day_of_cycle <= DEFAULT_FERTILE_WINDOW_START: return "Follicular"
+                if day_of_cycle <= DEFAULT_FERTILE_WINDOW_END: return "Ovulation"
+                if day_of_cycle <= DEFAULT_PMS_START_DAY: return "Luteal (Early)"
+                return "Luteal (PMS)"
+
+            # Use prefetched cycle events if available
+            cycle_events_list = []
+            if prefetched_cycle_events is not None:
+                cycle_events_list = prefetched_cycle_events
+            else:
+                # Fallback to fetching if not provided (slower)
+                cycle_events_list = self.get_cycle_events(
+                    "partner_b", 
+                    date.today() - timedelta(days=lookback_days + 30), # Extra buffer
+                    date.today(), 
+                    relationship_id
+                )
+
             # For each conflict, determine what cycle phase Elara was in
             phase_counts = {
                 "Menstruation": 0,
@@ -777,8 +888,15 @@ class CalendarService:
                 conflict_date_str = conflict.get("event_date")
                 if conflict_date_str:
                     conflict_date = date.fromisoformat(conflict_date_str)
-                    phase = self.get_current_cycle_phase("partner_b", conflict_date, relationship_id)
-                    phase_name = phase.get("phase_name", "Unknown")
+                    
+                    # Use in-memory lookup if we have cycle events
+                    if cycle_events_list:
+                        phase_name = get_phase_for_date(conflict_date, cycle_events_list)
+                    else:
+                        # Fallback to slow DB call (should be avoided)
+                        phase = self.get_current_cycle_phase("partner_b", conflict_date, relationship_id)
+                        phase_name = phase.get("phase_name", "Unknown")
+                        
                     if phase_name in phase_counts:
                         phase_counts[phase_name] += 1
                     else:
@@ -1108,8 +1226,11 @@ class CalendarService:
             
             # Conflict penalty
             conflict_count = len(conflicts)
-            unresolved_count = len([c for c in conflicts if c.get("status") != "resolved"])
-            resolved_count = conflict_count - unresolved_count
+            
+            # FIX: Treat 'completed' as 'resolved' along with 'resolved'
+            resolved_conflicts = [c for c in conflicts if c.get("status") in ["resolved", "completed"]]
+            resolved_count = len(resolved_conflicts)
+            unresolved_count = conflict_count - resolved_count
             
             # Cap max penalty to avoid 0 score for active users
             penalty = (unresolved_count * 5) + (resolved_count * 2)
@@ -1161,19 +1282,65 @@ class CalendarService:
                 })
             
             # 4. Cycle Correlation (Heatmap Data)
-            # Map conflicts to cycle days (1-28)
-            # We need more history for this to be meaningful, say 90 days
-            history_conflicts = self.get_conflict_events(today - timedelta(days=90), today, relationship_id)
-            cycle_heatmap = [0] * 30 # Days 1-30
+            # Fetch long-term history for correlation
+            history_start = today - timedelta(days=90)
+            history_conflicts = self.get_conflict_events(history_start, today, relationship_id)
             
+            # Pre-fetch cycle events for the same period to avoid N+1 queries
+            history_cycle_events = self.get_cycle_events(partner_id, history_start - timedelta(days=40), today, relationship_id)
+            
+            # Use the optimized correlation method
+            correlation_data = self.get_conflict_cycle_correlation(
+                relationship_id, 
+                lookback_days=90,
+                prefetched_conflicts=history_conflicts,
+                prefetched_cycle_events=history_cycle_events
+            )
+            
+            # Generate heatmap data (Days 1-30)
+            cycle_heatmap = [0] * 30
+            
+            # Helper to get day of cycle efficiently (with back-calculation)
+            def get_day_of_cycle(target_date: date, cycle_evts: List[Dict]) -> Optional[int]:
+                # 1. Try to find a preceding period
+                last_period = None
+                period_starts = [
+                    date.fromisoformat(e['event_date']) 
+                    for e in cycle_evts 
+                    if e['event_type'] == 'period_start'
+                ]
+                period_starts.sort()
+                
+                # Find the latest period start <= target_date
+                for p_date in reversed(period_starts):
+                    if p_date <= target_date:
+                        last_period = p_date
+                        break
+                
+                if last_period:
+                    return (target_date - last_period).days + 1
+                
+                # 2. If no preceding period, try to back-calculate from a future period
+                # (Assuming regular 28-day cycle for estimation if no history)
+                if period_starts:
+                    first_future_period = period_starts[0] # Earliest known period
+                    days_diff = (first_future_period - target_date).days
+                    
+                    # Estimate cycle length (use avg if available, else 28)
+                    # Simple estimation: 28 days
+                    cycle_len = 28 
+                    
+                    # Calculate how many cycles back
+                    cycles_back = (days_diff // cycle_len) + 1
+                    estimated_prev_period = first_future_period - timedelta(days=cycles_back * cycle_len)
+                    
+                    return (target_date - estimated_prev_period).days + 1
+                    
+                return None
+
             for c in history_conflicts:
                 c_date = date.fromisoformat(c["event_date"])
-                # Get cycle day for that date
-                # This is expensive if we call get_current_cycle_phase for every conflict
-                # For MVP, we'll approximate using the current cycle logic if available
-                # Or just skip if too complex. Let's try to get it.
-                phase_info = self.get_current_cycle_phase(partner_id, c_date, relationship_id)
-                day = phase_info.get("day_of_cycle")
+                day = get_day_of_cycle(c_date, history_cycle_events)
                 if day and 1 <= day <= 30:
                     cycle_heatmap[day-1] += 1
             
@@ -1189,6 +1356,43 @@ class CalendarService:
                 tension_level = "Medium"
                 forecast_msg = "Recent conflict frequency suggests underlying tension."
             
+            # 6. Interaction Ratio (Gottman Ratio)
+            # Ideal is 5:1 (5 positive for every 1 negative)
+            ratio_val = 0
+            if conflict_count > 0:
+                ratio_val = round(intimacy_count / conflict_count, 1)
+            else:
+                ratio_val = intimacy_count if intimacy_count > 0 else 0 # Infinite/High if no conflicts
+            
+            ratio_status = "Healthy"
+            if ratio_val >= 5: ratio_status = "Excellent"
+            elif ratio_val >= 3: ratio_status = "Good"
+            elif ratio_val >= 1: ratio_status = "Fair"
+            else: ratio_status = "Critical"
+            
+            # 7. Top Conflict Topics (Top 5 most frequent)
+            topic_counts = {}
+            for c in conflicts:
+                # Try to get AI-extracted topics from metadata first
+                metadata = c.get("metadata", {})
+                ai_topics = metadata.get("topics")
+                
+                if ai_topics and isinstance(ai_topics, list) and len(ai_topics) > 0:
+                    for topic in ai_topics:
+                        topic = topic.strip()
+                        if topic:
+                            topic_counts[topic] = topic_counts.get(topic, 0) + 1
+                else:
+                    # Fallback to summary/title
+                    topic = c.get("summary", "Conflict Session").strip()
+                    if not topic:
+                        topic = "Conflict Session"
+                    topic_counts[topic] = topic_counts.get(topic, 0) + 1
+            
+            # Sort by count and take top 5
+            top_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+            top_topics_list = [{"topic": topic, "count": count} for topic, count in top_topics]
+
             return {
                 "health_score": {
                     "value": health_score,
@@ -1206,7 +1410,19 @@ class CalendarService:
                     "conflicts_30d": conflict_count,
                     "intimacy_30d": intimacy_count,
                     "unresolved": unresolved_count
-                }
+                },
+                "resolution_stats": {
+                    "resolved": resolved_count,
+                    "unresolved": unresolved_count,
+                    "total": conflict_count,
+                    "rate": round((resolved_count / conflict_count * 100) if conflict_count > 0 else 100)
+                },
+                "interaction_ratio": {
+                    "value": ratio_val,
+                    "target": 5.0,
+                    "status": ratio_status
+                },
+                "top_topics": top_topics_list
             }
             
         except Exception as e:

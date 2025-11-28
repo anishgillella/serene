@@ -47,7 +47,10 @@ async def analyze_conflict_transcript(
         
         # Use LLM to extract structured analysis with partner profiles, personalized from partner's POV
         llm_start = time.time()
-        analysis = llm_service.analyze_conflict(
+        # Run synchronous LLM call in a separate thread to avoid blocking the event loop
+        import asyncio
+        analysis = await asyncio.to_thread(
+            llm_service.analyze_conflict,
             transcript_text=transcript_text,
             conflict_id=conflict_id,
             response_model=ConflictAnalysis,

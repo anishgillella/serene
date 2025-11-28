@@ -99,7 +99,8 @@ async def generate_repair_plan(
                     calendar_context = ""
         
         # Generate repair plan using LLM with partner profiles and calendar context
-        repair_plan = llm_service.generate_repair_plan(
+        repair_plan = await asyncio.to_thread(
+            llm_service.generate_repair_plan,
             transcript_text=transcript_text,
             conflict_id=conflict_id,
             partner_requesting=partner_name,

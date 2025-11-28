@@ -443,6 +443,45 @@ TITLE REQUIREMENTS:
             logger.error(f"❌ Error generating conflict title: {e}")
             return "Untitled Conflict"
 
+    def extract_topics(self, transcript_text: str) -> list[str]:
+        """Extract 1-3 specific topics from a conflict transcript"""
+        try:
+            class TopicResponse(BaseModel):
+                topics: list[str]
+
+            prompt = f"""Analyze this relationship conflict conversation and extract 1-3 specific topics/themes.
+            
+Examples of good topics:
+- "Household Chores Distribution"
+- "Quality Time Together"
+- "Communication During Arguments"
+- "Financial Planning"
+- "Jealousy & Trust"
+
+TRANSCRIPT:
+{transcript_text[:5000]}... (truncated if too long)
+
+REQUIREMENTS:
+- Return ONLY a JSON array of topics
+- 1-3 topics maximum
+- Be specific but concise (2-5 words per topic)
+- Focus on the underlying issues, not just surface arguments
+"""
+
+            messages = [{"role": "user", "content": prompt}]
+            
+            result = self.structured_output(
+                messages=messages,
+                response_model=TopicResponse,
+                temperature=0.5,
+                max_tokens=100
+            )
+            
+            return result.topics
+        except Exception as e:
+            logger.error(f"❌ Error extracting topics: {e}")
+            return ["Conflict Session"]
+
 # Singleton instance
 llm_service = LLMService()
 
