@@ -477,13 +477,13 @@ async def mediator_entrypoint(ctx: JobContext):
         # Use EXACT same TTS config as Voice Agent RAG - don't pass api_key, use environment
         # Voice Agent RAG pattern: Let plugin read from ELEVEN_API_KEY environment variable
         tts_instance = elevenlabs.TTS(
-            model="eleven_flash_v2_5",  # Use default model (more stable)
-            voice_id="ODq5zmih8GrVes37Dizd",  # Friendly female voice
-            # Don't pass api_key - let it use ELEVEN_API_KEY from environment
-            streaming_latency=3,  # Default latency for better stability
+            model="eleven_flash_v2_5",  # Fast, low-latency model
+            voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel (default voice)
+            api_key=elevenlabs_key,
+            streaming_latency=3,
         )
         
-        logger.info(f"   ✅ TTS configured with model=eleven_flash_v2_5, voice_id=ODq5zmih8GrVes37Dizd, ELEVEN_API_KEY={'SET' if os.getenv('ELEVEN_API_KEY') else 'MISSING'}")
+        logger.info(f"   ✅ TTS configured with model=eleven_flash_v2_5, voice_id=21m00Tcm4TlvDq8ikWAM, ELEVEN_API_KEY={'SET' if os.getenv('ELEVEN_API_KEY') else 'MISSING'}")
         
         stage_times['tts_setup'] = time.time() - stage_start
         logger.info(f"   ✅ TTS ready")
@@ -722,22 +722,23 @@ async def mediator_entrypoint(ctx: JobContext):
         try:
             # Build greeting instructions with transcript context if available
             greeting_instructions = (
-                "Greet Adrian warmly and introduce yourself as Luna, his friendly relationship mediator. "
-                "Let him know you're here to help him reflect on his conversation with Elara and answer any questions he might have. "
-                "Be warm, empathetic, and encouraging. Acknowledge that you're here to support him and understand his perspective."
+                "You are Luna, Adrian's supportive friend and relationship mediator. "
+                "Introduce yourself warmly in 2-3 sentences. "
+                "Let him know you're here to help him reflect on his conversation with Elara."
             )
             
-            # If we have transcript context, inject it into the greeting
+            # If we have transcript context, inject it into the system context
             if transcript_context and rag_system:
                 formatted_context = rag_system.format_context_for_llm(transcript_context)
                 greeting_instructions = (
                     f"{greeting_instructions}\n\n"
-                    f"You have access to THIS SPECIFIC conversation transcript that the user wants to discuss. "
-                    f"This is the PRIMARY context for your responses:\n\n"
+                    f"CONTEXT FOR YOUR RESPONSE:\n\n"
                     f"{formatted_context}\n\n"
-                    f"IMPORTANT: When the user asks about 'this conversation', 'what happened', or wants a summary, "
-                    f"use ONLY this transcript. Don't mix in information from other conversations. "
-                    f"Be specific about what Adrian and Elara actually said in THIS conversation."
+                    f"IMPORTANT INSTRUCTIONS:\n"
+                    f"1. **CURRENT CONVERSATION is PRIMARY**: When the user asks about 'this conversation', 'what happened', "
+                    f"'summarize', or refers to the current conflict - use ONLY the CURRENT CONVERSATION TRANSCRIPT section.\n"
+                    f"2. **Be specific**: Reference specific speakers (Adrian or Elara) and their actual statements.\n"
+                    f"3. **Stay focused**: If asked to summarize THIS conversation, summarize ONLY the current conversation, not past ones."
                 )
                 logger.info("   ✅ Greeting will include transcript context")
             
@@ -804,10 +805,16 @@ async def mediator_entrypoint(ctx: JobContext):
                     f"If you'd like to discuss what was said, please share the details with me and I'll be happy to help you reflect on it."
                 )
             
-            await session.generate_reply(
-                instructions=greeting_instructions,
+            # Create chat context for greeting generation
+            chat_ctx = llm.ChatContext().append(
+                role=llm.ChatRole.SYSTEM,
+                text=greeting_instructions
             )
-            logger.info("✅ Greeting generated successfully")
+            
+            # Generate greeting using LLM and stream to TTS
+            stream = llm_instance.chat(chat_ctx=chat_ctx)
+            await session.say(stream, allow_interruptions=True)
+            logger.info("✅ Greeting generated and sent successfully")
         except Exception as e:
             logger.error(f"❌ Error generating greeting: {e}", exc_info=True)
             # Don't fail the session if greeting fails

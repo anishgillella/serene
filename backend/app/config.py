@@ -20,10 +20,7 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     S3_BUCKET_NAME: str = "serene-relationship-mediator"  # S3 bucket name
     
-    # Neo4j Configuration
-    NEO4J_URI: str = "bolt://localhost:7687"
-    NEO4J_USERNAME: str = "neo4j"
-    NEO4J_PASSWORD: str = "password"
+
     
     class Config:
         env_file = ".env"

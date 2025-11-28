@@ -32,7 +32,8 @@ class TranscriptRAGSystem:
         self,
         k: int = 7,  # Number of chunks from secondary sources
         include_profiles: bool = True,
-        include_calendar: bool = True,  # NEW: Include calendar insights
+        include_calendar: bool = True,
+        include_books: bool = True,  # NEW: Include reference books for relationship advice
     ):
         """
         Initialize transcript RAG system.
@@ -41,12 +42,14 @@ class TranscriptRAGSystem:
             k: Number of additional chunks from secondary sources (profiles, past conflicts)
             include_profiles: Whether to also query profile PDFs (Adrian/Elara profiles)
             include_calendar: Whether to include calendar insights (cycle phase, upcoming events)
+            include_books: Whether to query reference books (romance/relationship books) for advice
         """
         self.k = k
         self.include_profiles = include_profiles
         self.include_calendar = include_calendar
+        self.include_books = include_books
         self._profile_cache = {}  # Cache for profile chunks
-        logger.info(f"Initialized TranscriptRAGSystem with k={k}, include_profiles={include_profiles}, include_calendar={include_calendar}")
+        logger.info(f"Initialized TranscriptRAGSystem with k={k}, include_profiles={include_profiles}, include_calendar={include_calendar}, include_books={include_books}")
     
     async def rag_lookup(
         self,
@@ -222,6 +225,43 @@ class TranscriptRAGSystem:
                     logger.warning(f"   ⚠️ Error querying past conflicts: {e}")
                     return []
 
+            async def fetch_book_references():
+                """Fetch relevant chunks from reference books (romance/relationship books)"""
+                if not self.include_books:
+                    return []
+                
+                t_start = time.perf_counter()
+                try:
+                    results = await asyncio.to_thread(
+                        pinecone_service.index.query,
+                        vector=query_embedding,
+                        top_k=5,  # Get top 5 book chunks
+                        namespace="books",
+                        include_metadata=True,
+                    )
+                    
+                    chunks = []
+                    if results and hasattr(results, 'matches') and results.matches:
+                        for match in results.matches:
+                            metadata = match.metadata if hasattr(match, 'metadata') else {}
+                            text = metadata.get("text", "")
+                            if text:
+                                chunks.append({
+                                    'text': text,
+                                    'match': match,
+                                    'type': 'book_reference',
+                                    'is_current_conflict': False,
+                                    'book_title': metadata.get("book_title", "Unknown Book"),
+                                    'chapter_number': metadata.get("chapter_number", 0),
+                                    'chapter_title': metadata.get("chapter_title", "Unknown Chapter"),
+                                })
+                    
+                    logger.info(f"   ✅ Book references: {len(chunks)} chunks ({time.perf_counter() - t_start:.3f}s)")
+                    return chunks
+                except Exception as e:
+                    logger.warning(f"   ⚠️ Error querying books: {e}")
+                    return []
+
             async def fetch_calendar_insights():
                 """Fetch calendar insights"""
                 if not self.include_calendar or not calendar_service:
@@ -252,6 +292,7 @@ class TranscriptRAGSystem:
                 fetch_primary_context(),
                 fetch_profiles(),
                 fetch_past_conflicts(),
+                fetch_book_references(),  # NEW: Fetch book references
                 fetch_calendar_insights(),
                 return_exceptions=True
             )
@@ -262,10 +303,11 @@ class TranscriptRAGSystem:
             primary_chunks = results[0] if isinstance(results[0], list) else []
             profile_chunks = results[1] if isinstance(results[1], list) else []
             past_conflict_chunks = results[2] if isinstance(results[2], list) else []
-            calendar_context = results[3] if isinstance(results[3], str) else ""
+            book_chunks = results[3] if isinstance(results[3], list) else []  # NEW: Book chunks
+            calendar_context = results[4] if isinstance(results[4], str) else ""
             
             # Combine secondary candidates
-            secondary_candidates = profile_chunks + past_conflict_chunks
+            secondary_candidates = profile_chunks + past_conflict_chunks + book_chunks
             
             # =====================================================================
             # STEP 3: RERANK SECONDARY CONTEXT (if any)
@@ -355,6 +397,17 @@ class TranscriptRAGSystem:
                         if len(text) > max_profile_chars:
                             text = text[:max_profile_chars] + "... [truncated]"
                         context_parts.append(f"[{speaker}'s Profile - Background & Personality]:")
+                        context_parts.append(text)
+                        context_parts.append("")
+                    elif chunk_type == 'book_reference':
+                        # Book reference with chapter info
+                        book_title = chunk_data.get('book_title', 'Unknown Book')
+                        chapter_num = chunk_data.get('chapter_number', 0)
+                        chapter_title = chunk_data.get('chapter_title', 'Unknown Chapter')
+                        if chapter_num > 0:
+                            context_parts.append(f"[Reference: {book_title} - Chapter {chapter_num}: {chapter_title}]:")
+                        else:
+                            context_parts.append(f"[Reference: {book_title}]:")
                         context_parts.append(text)
                         context_parts.append("")
                     else:

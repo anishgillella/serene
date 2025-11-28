@@ -2,8 +2,8 @@
 PDF upload and OCR endpoints
 """
 import logging
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from typing import Optional
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, BackgroundTasks
+from typing import Optional, List, Dict
 from app.services.ocr_service import ocr_service
 from app.services.embeddings_service import embeddings_service
 from app.services.pinecone_service import pinecone_service
@@ -11,174 +11,358 @@ from app.services.db_service import db_service
 from app.services.s3_service import s3_service
 from app.config import settings
 import uuid
+import asyncio
+from datetime import datetime
+import traceback
+import re
 
 logger = logging.getLogger(__name__)
 
+# Store logs for active uploads: {pdf_id: [log_messages]}
+upload_logs: Dict[str, List[str]] = {}
+
 router = APIRouter(prefix="/api/pdfs", tags=["pdfs"])
 
-@router.post("/upload")
-async def upload_pdf(
-    file: UploadFile = File(...),
-    relationship_id: str = Form(...),
-    pdf_type: str = Form(...),  # "boyfriend_profile", "girlfriend_profile", "handbook"
-    partner_id: Optional[str] = Form(None)
+async def process_pdf_task(
+    pdf_bytes: bytes,
+    filename: str,
+    relationship_id: str,
+    pdf_type: str,
+    partner_id: Optional[str],
+    pdf_id: str,
+    profile_id: Optional[str]
 ):
-    """
-    Upload PDF, extract text via OCR, and store in Pinecone
+    def log(msg):
+        logger.info(msg)
+        if pdf_id not in upload_logs:
+            upload_logs[pdf_id] = []
+        upload_logs[pdf_id].append(f"{datetime.now().strftime('%H:%M:%S')} - {msg}")
     
-    Request:
-    - file: PDF file
-    - relationship_id: Relationship identifier
-    - pdf_type: Type of PDF (boyfriend_profile, girlfriend_profile, handbook)
-    - partner_id: Optional partner ID for profile PDFs
-    """
     try:
-        # Read PDF file
-        pdf_bytes = await file.read()
-        logger.info(f"📄 Received PDF: {file.filename}, size: {len(pdf_bytes)} bytes, type: {pdf_type}")
+        log(f"🚀 Starting background processing for {filename}...")
         
         # Extract text using Mistral OCR
-        logger.info("🔍 Extracting text from PDF using Mistral OCR...")
-        extracted_text = await ocr_service.extract_text_from_pdf(pdf_bytes, filename=file.filename)
-        logger.info(f"✅ Extracted {len(extracted_text)} characters from PDF")
+        log("🔍 Extracting text from PDF using Mistral OCR...")
+        extracted_text = await ocr_service.extract_text_from_pdf(pdf_bytes, filename=filename)
+        log(f"✅ Extracted {len(extracted_text)} characters from PDF")
         
         # Generate embedding
+        log("🧠 Generating embeddings...")
         embedding = embeddings_service.embed_text(extracted_text)
         
         # Determine namespace based on PDF type
         namespace_map = {
             "boyfriend_profile": "profiles",
             "girlfriend_profile": "profiles",
-            "handbook": "handbooks"
+            "handbook": "handbooks",
+            "reference_book": "books"
         }
         namespace = namespace_map.get(pdf_type)
         
         if not namespace:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid pdf_type: {pdf_type}. Must be one of: boyfriend_profile, girlfriend_profile, handbook"
-            )
-        
-        # Create unique ID
-        pdf_id = str(uuid.uuid4())
-        
+            log(f"❌ Invalid pdf_type: {pdf_type}")
+            return
+
         # 1. Upload PDF to AWS S3
         file_path = None
         s3_url = None
         try:
-            # Determine folder based on PDF type (single bucket with folders)
-            folder = "profiles" if pdf_type in ["boyfriend_profile", "girlfriend_profile"] else "handbooks"
+            if pdf_type in ["boyfriend_profile", "girlfriend_profile"]:
+                folder = "profiles"
+            elif pdf_type == "reference_book":
+                folder = "books"
+            else:
+                folder = "handbooks"
             file_path = f"{folder}/{relationship_id}/{pdf_id}.pdf"
             
-            # Upload PDF file to S3
+            log(f"☁️ Uploading to S3: {file_path}")
             s3_url = s3_service.upload_file(
                 file_path=file_path,
                 file_content=pdf_bytes,
                 content_type="application/pdf"
             )
             if s3_url:
-                logger.info(f"✅ Stored PDF in S3: {file_path} (URL: {s3_url})")
+                log(f"✅ Stored PDF in S3: {s3_url}")
             else:
-                logger.error(f"❌ Failed to upload PDF to S3: {file_path}")
+                log(f"❌ Failed to upload PDF to S3")
         except Exception as e:
-            logger.error(f"❌ Error storing PDF in S3: {e}")
-            import traceback
+            log(f"❌ Error storing PDF in S3: {e}")
             logger.error(traceback.format_exc())
-            # Continue even if S3 fails - Pinecone storage is primary
         
-        # 2. Store in Pinecone (vector embeddings for semantic search)
-        # Note: Pinecone metadata has size limits, so we store full text in a separate field
-        # For profile PDFs, we'll store the full text since it's needed for personalization
+        # 2. Store in Pinecone
         metadata = {
             "pdf_id": pdf_id,
             "relationship_id": relationship_id,
             "pdf_type": pdf_type,
-            "filename": file.filename,
+            "filename": filename,
             "text_length": len(extracted_text),
         }
         
         if partner_id:
             metadata["partner_id"] = partner_id
         
-        # For profiles, store full text in metadata (they're usually small)
-        # For larger documents, we might need chunking
-        if pdf_type in ["boyfriend_profile", "girlfriend_profile"]:
-            # Store full text for profiles (usually small enough)
-            if len(extracted_text) <= 40000:  # Pinecone metadata limit is ~40KB
+        # Handle chunking based on PDF type
+        chunk_vectors = []
+        
+        if pdf_type == "reference_book":
+            # SMART CHUNKING for reference books (with chapter detection)
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+            
+            log("📖 Using chapter-aware chunking for reference book...")
+            
+            # Detect chapters using regex patterns
+            chapter_patterns = [
+                r'^Chapter\s+(\d+|[IVXLCDM]+)[\s:.-]+(.+?)$',
+                r'^CHAPTER\s+(\d+|[IVXLCDM]+)[\s:.-]+(.+?)$',
+                r'^(\d+)\.\s+(.+?)$',
+            ]
+            
+            chapters = []
+            lines = extracted_text.split('\n')
+            for i, line in enumerate(lines):
+                line_stripped = line.strip()
+                if not line_stripped:
+                    continue
+                for pattern in chapter_patterns:
+                    match = re.match(pattern, line_stripped)
+                    if match:
+                        chapter_num = match.group(1)
+                        chapter_title = match.group(2).strip()
+                        try:
+                            chapter_num_int = int(chapter_num)
+                        except ValueError:
+                            chapter_num_int = 0  # Unknown chapter
+                        text_pos = extracted_text.find('\n'.join(lines[:i]))
+                        chapters.append({
+                            'number': chapter_num_int,
+                            'title': chapter_title,
+                            'start_pos': text_pos,
+                        })
+                        break
+            
+            # Set end positions for chapters
+            for i in range(len(chapters)):
+                if i < len(chapters) - 1:
+                    chapters[i]['end_pos'] = chapters[i + 1]['start_pos']
+                else:
+                    chapters[i]['end_pos'] = len(extracted_text)
+            
+            log(f"   📚 Detected {len(chapters)} chapters")
+            
+            # Create text splitter (smart chunking)
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=1000,
+                chunk_overlap=200,
+                separators=["\n\n", "\n", ". ", " ", ""]
+            )
+            
+            # Chunk with chapter metadata
+            chunk_global_index = 0
+            if chapters:
+                # Chunk per chapter
+                for chapter in chapters:
+                    chapter_text = extracted_text[chapter['start_pos']:chapter['end_pos']]
+                    chapter_chunks = splitter.split_text(chapter_text)
+                    
+                    for local_idx, chunk_text in enumerate(chapter_chunks):
+                        chunk_embedding = embeddings_service.embed_text(chunk_text)
+                        chunk_metadata = {
+                            'pdf_id': pdf_id,
+                            'relationship_id': relationship_id,
+                            'pdf_type': pdf_type,
+                            'filename': filename,
+                            'book_title': filename.replace('.pdf', ''),
+                            'chapter_number': chapter['number'],
+                            'chapter_title': chapter['title'],
+                            'chunk_index': chunk_global_index,
+                            'chapter_chunk_index': local_idx,
+                            'total_chapter_chunks': len(chapter_chunks),
+                            'text': chunk_text,
+                            'text_length': len(chunk_text),
+                        }
+                        chunk_vectors.append({
+                            'id': f"book_{pdf_id}_chunk_{chunk_global_index}",
+                            'values': chunk_embedding,
+                            'metadata': chunk_metadata
+                        })
+                        chunk_global_index += 1
+                log(f"   ✅ Created {len(chunk_vectors)} chapter-aware chunks")
+            else:
+                # No chapters detected - chunk entire book
+                log("   ⚠️ No chapters detected, using standard chunking")
+                all_chunks = splitter.split_text(extracted_text)
+                for idx, chunk_text in enumerate(all_chunks):
+                    chunk_embedding = embeddings_service.embed_text(chunk_text)
+                    chunk_metadata = {
+                        'pdf_id': pdf_id,
+                        'relationship_id': relationship_id,
+                        'pdf_type': pdf_type,
+                        'filename': filename,
+                        'book_title': filename.replace('.pdf', ''),
+                        'chapter_number': 0,
+                        'chapter_title': 'Unknown Section',
+                        'chunk_index': idx,
+                        'text': chunk_text,
+                        'text_length': len(chunk_text),
+                    }
+                    chunk_vectors.append({
+                        'id': f"book_{pdf_id}_chunk_{idx}",
+                        'values': chunk_embedding,
+                        'metadata': chunk_metadata
+                    })
+                log(f"   ✅ Created {len(chunk_vectors)} standard chunks")
+            
+            # Upload chunks in batches
+            batch_size = 100
+            total_batches = (len(chunk_vectors) + batch_size - 1) // batch_size
+            for i in range(0, len(chunk_vectors), batch_size):
+                batch = chunk_vectors[i:i + batch_size]
+                pinecone_service.index.upsert(vectors=batch, namespace=namespace)
+                log(f"   📤 Uploaded batch {i//batch_size + 1}/{total_batches} to Pinecone")
+            
+        elif pdf_type in ["boyfriend_profile", "girlfriend_profile"]:
+            # Profiles: store full text if small, otherwise chunk simply
+            if len(extracted_text) <= 40000:
                 metadata["extracted_text"] = extracted_text
             else:
-                # Store first part and note that full text is available
                 metadata["extracted_text"] = extracted_text[:35000]
                 metadata["text_truncated"] = True
+            
+            # Upload main profile vector
+            pinecone_service.index.upsert(
+                vectors=[{
+                    "id": f"{pdf_type}_{pdf_id}",
+                    "values": embedding,
+                    "metadata": metadata
+                }],
+                namespace=namespace
+            )
+            
+            # If truncated, create chunks
+            if metadata.get("text_truncated"):
+                chunk_size = 10000
+                chunks = [extracted_text[i:i+chunk_size] for i in range(0, len(extracted_text), chunk_size)]
+                for i, chunk in enumerate(chunks):
+                    chunk_embedding = embeddings_service.embed_text(chunk)
+                    chunk_metadata = metadata.copy()
+                    chunk_metadata["chunk_index"] = i
+                    chunk_metadata["total_chunks"] = len(chunks)
+                    chunk_metadata["extracted_text"] = chunk
+                    chunk_vectors.append({
+                        "id": f"{pdf_type}_{pdf_id}_chunk_{i}",
+                        "values": chunk_embedding,
+                        "metadata": chunk_metadata
+                    })
+                if chunk_vectors:
+                    pinecone_service.index.upsert(vectors=chunk_vectors, namespace=namespace)
+                    log(f"   ✅ Created and uploaded {len(chunk_vectors)} profile chunks")
         
-        pinecone_service.index.upsert(
-            vectors=[{
-                "id": f"{pdf_type}_{pdf_id}",
-                "values": embedding,
-                "metadata": metadata
-            }],
-            namespace=namespace
-        )
+        else:
+            # Other types (handbook): simple upload with basic chunking if large
+            pinecone_service.index.upsert(
+                vectors=[{
+                    "id": f"{pdf_type}_{pdf_id}",
+                    "values": embedding,
+                    "metadata": metadata
+                }],
+                namespace=namespace
+            )
+            
+            if len(extracted_text) > 40000:
+                chunk_size = 10000
+                chunks = [extracted_text[i:i+chunk_size] for i in range(0, len(extracted_text), chunk_size)]
+                for i, chunk in enumerate(chunks):
+                    chunk_embedding = embeddings_service.embed_text(chunk)
+                    chunk_metadata = metadata.copy()
+                    chunk_metadata["chunk_index"] = i
+                    chunk_metadata["total_chunks"] = len(chunks)
+                    chunk_metadata["extracted_text"] = chunk
+                    chunk_vectors.append({
+                        "id": f"{pdf_type}_{pdf_id}_chunk_{i}",
+                        "values": chunk_embedding,
+                        "metadata": chunk_metadata
+                    })
+                if chunk_vectors:
+                    pinecone_service.index.upsert(vectors=chunk_vectors, namespace=namespace)
+                    log(f"   ✅ Created and uploaded {len(chunk_vectors)} chunks")
         
-        # Also store full text in a separate vector for better retrieval
-        # Split into chunks if needed for large documents
-        if len(extracted_text) > 40000:
-            # For large documents, create multiple vectors with chunks
-            chunk_size = 10000
-            chunks = [extracted_text[i:i+chunk_size] for i in range(0, len(extracted_text), chunk_size)]
-            chunk_vectors = []
-            for i, chunk in enumerate(chunks):
-                chunk_embedding = embeddings_service.embed_text(chunk)
-                chunk_metadata = metadata.copy()
-                chunk_metadata["chunk_index"] = i
-                chunk_metadata["total_chunks"] = len(chunks)
-                chunk_metadata["extracted_text"] = chunk
-                chunk_vectors.append({
-                    "id": f"{pdf_type}_{pdf_id}_chunk_{i}",
-                    "values": chunk_embedding,
-                    "metadata": chunk_metadata
-                })
-            if chunk_vectors:
-                pinecone_service.index.upsert(
-                    vectors=chunk_vectors,
-                    namespace=namespace
-                )
+        log(f"✅ Stored PDF in Pinecone: {pdf_id}, namespace: {namespace}")
         
-        logger.info(f"✅ Stored PDF in Pinecone: {pdf_id}, namespace: {namespace}")
+        # 3. Update metadata in database
+        if db_service and profile_id:
+            db_service.update_profile(
+                profile_id=profile_id,
+                extracted_text_length=len(extracted_text),
+                file_path=s3_url or file_path
+            )
+            log(f"✅ Updated profile metadata in database: {profile_id}")
         
-        # 3. Store metadata in database (with S3 path)
+        log("🎉 Processing complete!")
+        
+    except Exception as e:
+        log(f"❌ Error in background processing: {e}")
+        logger.error(traceback.format_exc())
+
+@router.post("/upload")
+async def upload_pdf(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    relationship_id: str = Form(...),
+    pdf_type: str = Form(...),  # "boyfriend_profile", "girlfriend_profile", "handbook", "reference_book"
+    partner_id: Optional[str] = Form(None)
+):
+    """
+    Upload PDF, extract text via OCR, and store in Pinecone (Background Task)
+    """
+    try:
+        # Read PDF file
+        pdf_bytes = await file.read()
+        filename = file.filename
+        logger.info(f"📄 Received PDF: {filename}, size: {len(pdf_bytes)} bytes, type: {pdf_type}")
+        
+        # Create unique ID
+        pdf_id = str(uuid.uuid4())
+        
+        # Create DB record immediately (status=processing via length=0)
         profile_id = None
-        if db_service and file_path:
+        if db_service:
             try:
                 profile_id = db_service.create_profile(
                     relationship_id=relationship_id,
                     pdf_type=pdf_type,
                     partner_id=partner_id,
-                    filename=file.filename,
-                    file_path=s3_url or file_path,  # Store S3 URL or path
+                    filename=filename,
+                    file_path="", # Will update later
                     pdf_id=pdf_id,
-                    extracted_text_length=len(extracted_text)
+                    extracted_text_length=0 # Indicates processing
                 )
-                logger.info(f"✅ Stored profile metadata in database: {profile_id}")
+                logger.info(f"✅ Created initial profile record: {profile_id}")
             except Exception as e:
-                logger.error(f"❌ Error storing profile metadata in database: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                # Continue even if database fails
+                logger.error(f"❌ Error creating profile record: {e}")
+                # Continue even if DB fails, but we won't be able to update it later
+        
+        # Start background task
+        background_tasks.add_task(
+            process_pdf_task,
+            pdf_bytes,
+            filename,
+            relationship_id,
+            pdf_type,
+            partner_id,
+            pdf_id,
+            profile_id
+        )
         
         return {
             "success": True,
             "pdf_id": pdf_id,
             "profile_id": profile_id,
-            "extracted_text_length": len(extracted_text),
-            "namespace": namespace,
-            "file_path": s3_url or file_path,
-            "s3_url": s3_url,
-            "message": "PDF uploaded and processed successfully"
+            "message": "Upload started in background",
+            "status": "processing"
         }
         
     except Exception as e:
-        logger.error(f"❌ Error uploading PDF: {e}")
+        logger.error(f"❌ Error starting upload: {e}")
         import traceback
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
@@ -279,3 +463,31 @@ async def get_partner_profiles(relationship_id: str):
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/list/{relationship_id}")
+async def list_pdfs(relationship_id: str):
+    """
+    List all uploaded PDFs for a relationship
+    """
+    try:
+        if not db_service:
+            # Fallback if DB service not available (e.g. using mock)
+            return {"success": True, "files": []}
+            
+        profiles = db_service.get_profiles(relationship_id)
+        return {
+            "success": True, 
+            "files": profiles
+        }
+    except Exception as e:
+        logger.error(f"❌ Error listing PDFs: {e}")
+        return {"success": False, "error": str(e), "files": []}
+
+
+@router.get("/logs/{pdf_id}")
+async def get_upload_logs(pdf_id: str):
+    """
+    Get real-time logs for a PDF upload
+    """
+    logs = upload_logs.get(pdf_id, [])
+    return {"logs": logs}

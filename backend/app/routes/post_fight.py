@@ -13,7 +13,7 @@ from app.services.pinecone_service import pinecone_service
 from app.services.embeddings_service import embeddings_service
 from app.services.reranker_service import reranker_service
 from app.services.s3_service import s3_service
-from app.services.neo4j_service import neo4j_service
+
 from app.services.llm_service import llm_service
 from app.services.transcript_chunker import TranscriptChunker
 from app.tools.conflict_analysis import analyze_conflict_transcript
@@ -584,19 +584,7 @@ async def generate_all_analysis_and_repair(
                     if db_service:
                         tasks.append(loop.run_in_executor(None, lambda: db_service.create_repair_plan(conflict_id, relationship_id, "partner_b", s3_url_plan_gf)))
                 
-                # Neo4j
-                try:
-                    all_root_causes = list(set(analysis_boyfriend.root_causes + analysis_girlfriend.root_causes))
-                    combined_summary = f"BF POV: {analysis_boyfriend.fight_summary[:100]}... GF POV: {analysis_girlfriend.fight_summary[:100]}..."
-                    tasks.append(loop.run_in_executor(None, lambda: neo4j_service.create_conflict_node({
-                        "conflict_id": conflict_id,
-                        "summary": combined_summary,
-                        "date": datetime.now().isoformat(),
-                        "root_causes": all_root_causes,
-                        "intensity": 5
-                    })))
-                except Exception as e:
-                    logger.error(f"❌ Error preparing Neo4j task: {e}")
+
 
                 # Execute all DB/Pinecone/Neo4j tasks
                 if tasks:
@@ -631,14 +619,9 @@ async def generate_all_analysis_and_repair(
 @router.get("/conflicts/{conflict_id}/related")
 async def get_related_conflicts(conflict_id: str):
     """
-    Get related conflicts from the Neo4j graph (Sagas and Shared Topics).
+    Get related conflicts (Placeholder - Neo4j removed)
     """
-    try:
-        related = neo4j_service.find_related_conflicts(conflict_id)
-        return {"related_conflicts": related}
-    except Exception as e:
-        logger.error(f"❌ Error fetching related conflicts: {e}")
-        return {"related_conflicts": []}
+    return {"related_conflicts": []}
 
 @router.post("/conflicts/{conflict_id}/generate-analysis")
 async def generate_analysis_only(
