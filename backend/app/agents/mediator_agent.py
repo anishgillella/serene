@@ -14,6 +14,10 @@ from livekit import agents, rtc
 from livekit.agents import AgentServer, AgentSession, Agent, room_io, RunContext, llm, voice, JobContext
 from livekit.plugins import deepgram, elevenlabs, openai, silero
 from livekit.plugins import noise_cancellation
+try:
+    from langfuse import Langfuse
+except ImportError:
+    Langfuse = None
 
 # Load environment variables
 load_dotenv(".env.local")
@@ -44,6 +48,20 @@ try:
 except ImportError:
     logger.warning("Could not import db_service, logging will be disabled")
     db_service = None
+
+# Import calendar_service optionally
+try:
+    from app.services.calendar_service import calendar_service
+except ImportError:
+    logger.warning("Could not import calendar_service, calendar insights will be disabled")
+    calendar_service = None
+
+# Import MediatorTools
+try:
+    from app.agents.tools.mediator_tools import MediatorTools
+except ImportError:
+    logger.warning("Could not import MediatorTools")
+    MediatorTools = None
 
 from typing import AsyncIterator
 
@@ -105,7 +123,7 @@ class LoggingLLMStream(llm.LLMStream):
 class SimpleMediator(voice.Agent):
     """Luna - A simple, friendly relationship mediator"""
     
-    def __init__(self, session_id: str = None):
+    def __init__(self, session_id: str = None, tools: list = None):
         instructions = """
 You are Luna, Adrian's buddy who helps him think through relationship stuff.
 
@@ -134,7 +152,7 @@ Your role:
 
 Remember: You're his friend, not his therapist. Talk naturally like you're having a conversation over coffee or beer, not using the same bro-phrases every sentence.
 """
-        super().__init__(instructions=instructions)
+        super().__init__(instructions=instructions, tools=tools or [])
         self.session_id = session_id
 
     async def on_user_turn_completed(
@@ -178,6 +196,7 @@ class RAGMediator(voice.Agent):
         relationship_id: str = None,
         session_id: str = None,
         instructions: str = "",
+        tools: list = None,
     ):
         """
         Initialize RAG mediator agent.
@@ -242,7 +261,7 @@ When answering questions:
 Remember: You're his friend, not his therapist. Talk naturally like you're having a conversation over coffee or beer, not using the same phrases every sentence.
 """
         
-        super().__init__(instructions=instructions)
+        super().__init__(instructions=instructions, tools=tools or [])
     
     async def on_user_turn_completed(
         self,
@@ -362,6 +381,17 @@ async def mediator_entrypoint(ctx: JobContext):
     
     # Create DB session
     session_id = None
+    
+    # Initialize Langfuse if available
+    if Langfuse and os.getenv("LANGFUSE_PUBLIC_KEY"):
+        try:
+            # Just initializing it is enough to verify keys and start background worker
+            # The decorators will use the singleton
+            langfuse_client = Langfuse()
+            logger.info("   ✅ Langfuse initialized for telemetry")
+        except Exception as e:
+            logger.warning(f"   ⚠️ Failed to initialize Langfuse: {e}")
+
     if db_service:
         try:
             # We don't have partner_id easily available here, so we'll leave it NULL for now
@@ -520,6 +550,24 @@ async def mediator_entrypoint(ctx: JobContext):
             # Fallback to SimpleMediator if RAG fails
             rag_system = None
         
+        # Initialize tools
+        tool_list = []
+        if MediatorTools:
+            logger.info("🛠️  Initializing MediatorTools...")
+            tools_instance = MediatorTools(conflict_id=conflict_id, relationship_id=relationship_id)
+            
+            # Create wrapper functions to avoid AttributeError on bound methods
+            @llm.function_tool(description="Find similar past conflicts to see patterns. Returns a summary of what happened before.")
+            async def find_similar_conflicts(topic_keywords: str) -> str:
+                return await tools_instance.find_similar_conflicts(topic_keywords)
+
+            @llm.function_tool(description="Get Elara's likely perspective on the current situation based on her profile.")
+            async def get_elara_perspective(situation_description: str) -> str:
+                return await tools_instance.get_elara_perspective(situation_description)
+            
+            tool_list = [find_similar_conflicts, get_elara_perspective]
+            logger.info("   ✅ Tools registered: find_similar_conflicts, get_elara_perspective")
+
         # Create agent (RAGMediator if RAG available, otherwise SimpleMediator)
         if rag_system:
             agent = RAGMediator(
@@ -527,10 +575,11 @@ async def mediator_entrypoint(ctx: JobContext):
                 conflict_id=conflict_id,
                 relationship_id=relationship_id,
                 session_id=session_id,
+                tools=tool_list,
             )
             logger.info(f"   ✅ RAGMediator created with conflict_id={conflict_id}")
         else:
-            agent = SimpleMediator(session_id=session_id)
+            agent = SimpleMediator(session_id=session_id, tools=tool_list)
             logger.info(f"   ✅ SimpleMediator created (RAG unavailable)")
         
         stage_times['agent_create'] = time.time() - stage_start
@@ -633,7 +682,6 @@ async def mediator_entrypoint(ctx: JobContext):
         async def fetch_calendar_context():
             c_context = None
             try:
-                from app.services.calendar_service import calendar_service
                 if calendar_service:
                     logger.info(f"📅 Fetching calendar insights (async)...")
                     try:

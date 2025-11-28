@@ -25,3 +25,5 @@ pinecone
 httpx
 pydub
 boto3
+
+langfuse
