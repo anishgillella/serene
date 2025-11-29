@@ -1,174 +1,95 @@
-# HeartSync Agent Deployment Guide
+# 🚀 Deployment Guide (AWS EC2)
+
+This guide explains how to deploy the **Luna Mediator Agent** to a single AWS EC2 instance.
 
 ## Prerequisites
 
-1. **Install LiveKit CLI**
-   ```bash
-   # Install via npm (if available)
-   npm install -g @livekit/cli
-   
-   # OR download binary from:
-   # https://github.com/livekit/livekit-cli/releases
-   ```
+1.  **AWS Account**
+2.  **Domain Name** (Optional, but recommended for SSL)
+3.  **Environment Variables** (See `.env.example`)
 
-2. **Authenticate with LiveKit Cloud**
-   ```bash
-   lk cloud auth
-   ```
-   This will open a browser to link your LiveKit Cloud account.
+## Step 1: Launch EC2 Instance
 
-3. **Set Default Project** (optional)
-   ```bash
-   lk project set-default "rag-q8jnl16x"
-   ```
+1.  Go to AWS Console > EC2 > Launch Instance.
+2.  **Name**: `serene-mediator`
+3.  **OS**: Ubuntu 22.04 LTS (x86)
+4.  **Instance Type**: `t3.medium` (2 vCPU, 4GB RAM) - *Required for AI/ML libs*
+5.  **Key Pair**: Create or select an existing key pair (e.g., `serene-key.pem`).
+6.  **Network Settings**:
+    *   Allow SSH traffic from Anywhere (0.0.0.0/0)
+    *   Allow HTTP traffic from the internet
+    *   Allow HTTPS traffic from the internet
+7.  **Storage**: 30GB gp3 (Default is 8GB, which is too small for Docker images)
 
----
+## Step 2: Server Setup
 
-## Deployment Steps
-
-### Step 1: Navigate to Backend Directory
+SSH into your instance:
 ```bash
-cd backend
+ssh -i serene-key.pem ubuntu@3.236.8.180
 ```
 
-### Step 2: Create Agent (First Time Only)
-```bash
-lk agent create \
-  --region us-east \
-  --secrets-file .env \
-  .
-```
-
-This will:
-- Create `livekit.toml` with agent ID
-- Create `Dockerfile` if it doesn't exist
-- Build and deploy the agent
-
-**Note:** Make sure `.env` contains all required secrets:
-- `LIVEKIT_URL`
-- `LIVEKIT_API_KEY`
-- `LIVEKIT_API_SECRET`
-- `DEEPGRAM_API_KEY`
-- `ELEVENLABS_API_KEY`
-- `VOYAGE_API_KEY`
-- `OPENROUTER_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_KEY`
-- `DATABASE_URL`
-
-### Step 3: Deploy Updates
-```bash
-lk agent deploy
-```
-
-This builds a new version and deploys it.
-
-### Step 4: Check Status
-```bash
-lk agent status
-```
-
-### Step 5: View Logs
-```bash
-lk agent logs --log-type deploy
-```
-
----
-
-## Files Created
-
-- ✅ `Dockerfile` - Container definition
-- ✅ `.dockerignore` - Files to exclude from build
-- ✅ `start_agent.py` - Agent startup script
-- ✅ `livekit.toml` - Agent configuration (created on first deploy)
-
----
-
-## Troubleshooting
-
-### "Agent not responding"
-- Check logs: `lk agent logs`
-- Verify secrets: `lk agent secrets`
-- Check status: `lk agent status`
-
-### "Build failed"
-- Check Dockerfile syntax
-- Verify all dependencies in `requirements.txt`
-- Check build logs: `lk agent logs --log-type build`
-
-### "Agent not joining rooms"
-- Verify agent is deployed and running: `lk agent status`
-- Check that `entrypoint` function is correct
-- Verify LiveKit URL and credentials
-
----
-
-## Environment Variables
-
-The agent needs these environment variables (set via `--secrets-file .env`):
+Run the following commands to install Docker & Git:
 
 ```bash
-LIVEKIT_URL=wss://rag-q8jnl16x.livekit.cloud
-LIVEKIT_API_KEY=...
-LIVEKIT_API_SECRET=...
-DEEPGRAM_API_KEY=...
-ELEVENLABS_API_KEY=...
-VOYAGE_API_KEY=...
-OPENROUTER_API_KEY=...
-SUPABASE_URL=...
-SUPABASE_KEY=...
-DATABASE_URL=...
+# Update system
+sudo apt-get update && sudo apt-get upgrade -y
+
+# Install Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker ubuntu
+
+# Install Docker Compose
+sudo apt-get install -y docker-compose-plugin
+
+# Logout and log back in to apply group changes
+exit
 ```
 
----
+## Step 3: Deploy Application
 
-## Quick Commands Reference
+1.  **Clone Repository**:
+    ```bash
+    git clone https://github.com/YOUR_USERNAME/serene.git
+    cd serene/backend
+    ```
 
+2.  **Configure Environment**:
+    Create the `.env` file with your production keys:
+    ```bash
+    nano .env
+    ```
+    Paste your keys:
+    ```env
+    LIVEKIT_URL=wss://...
+    LIVEKIT_API_KEY=...
+    LIVEKIT_API_SECRET=...
+    OPENAI_API_KEY=...
+    DEEPGRAM_API_KEY=...
+    ELEVENLABS_API_KEY=...
+    SUPABASE_URL=...
+    SUPABASE_KEY=...
+    ```
+
+3.  **Start Services**:
+    ```bash
+    docker compose up -d --build
+    ```
+
+## Step 4: Verify Deployment
+
+1.  **Check Logs**:
+    ```bash
+    docker compose logs -f agent
+    ```
+    You should see: `🚀 Starting Luna Mediator Agent`
+
+2.  **Test API**:
+    Visit `http://<EC2_PUBLIC_IP>:8000` in your browser. You should see `{"message": "HeartSync API is running"}`.
+
+## Updating the App
+
+To deploy new changes, simply run:
 ```bash
-# Create new agent
-lk agent create --region us-east --secrets-file .env .
-
-# Deploy updates
-lk agent deploy
-
-# Check status
-lk agent status
-
-# View logs
-lk agent logs
-
-# Update secrets
-lk agent update-secrets --secrets-file .env
-
-# Restart agent
-lk agent restart
-
-# Rollback to previous version
-lk agent rollback
-
-# Delete agent
-lk agent delete
+./deploy.sh
 ```
-
----
-
-## After Deployment
-
-Once deployed, your agent will:
-1. ✅ Automatically join LiveKit rooms when created
-2. ✅ Capture audio from participants
-3. ✅ Transcribe via Deepgram WebSocket
-4. ✅ Send transcripts to frontend via data channel
-5. ✅ Save transcripts to Supabase
-
-**Test it:**
-1. Open frontend: http://localhost:5175
-2. Click "Start Fight Capture"
-3. Speak into microphone
-4. See transcripts appear in real-time!
-
-
-
-
-
-

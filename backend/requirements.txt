@@ -27,3 +27,4 @@ pydub
 boto3
 
 langfuse
+python-multipart

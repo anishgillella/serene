@@ -25,3 +25,16 @@ services:
     depends_on:
       - api
     # No ports needed for the agent as it connects OUT to LiveKit Cloud
+
+    # The React Frontend
+  frontend:
+    build: ../frontend
+    container_name: serene-frontend
+    ports:
+      - "80:80"
+    restart: always
+    environment:
+      - VITE_API_URL=http://3.236.8.180:8000
+      - VITE_LIVEKIT_URL=wss://rag-q8jnl16x.livekit.cloud
+      - VITE_AUTH0_DOMAIN=dev-bqdnlxk68cmc4623.us.auth0.com
+      - VITE_AUTH0_CLIENT_ID=PKpb3rwcO5Qds3ZmFXtzycXX9vja9D6I
