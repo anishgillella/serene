@@ -4,7 +4,7 @@ Welcome to **Serene**, your AI-powered relationship companion designed to help y
 
 ---
 
-## 🌟 What is Serene?
+##  What is Serene?
 
 Serene uses AI to help couples communicate better during disagreements. Think of it as having a smart, empathetic mediator available 24/7 to help you:
 - **Capture and analyze conflicts** in real-time
@@ -15,7 +15,7 @@ Serene uses AI to help couples communicate better during disagreements. Think of
 
 ---
 
-## 📱 Application Components
+##  Application Components
 
 ### 1. **Home Dashboard** 
 *Your starting point*
@@ -197,16 +197,16 @@ Upload personality profiles to help Luna understand each partner better.
 
 ---
 
-## 🎤 Luna - Your AI Mediator
+##  Luna - Your AI Mediator
 
 Luna is an advanced voice AI agent (powered by LiveKit, Deepgram, and ElevenLabs) who:
 
 ### What Luna Remembers:
-✅ **All past conversations** (across all conflicts)  
-✅ **Both partners' profiles** (uploaded PDFs)  
-✅ **Menstrual cycle patterns** (for timing awareness)  
-✅ **Relationship history** (patterns, recurring themes)  
-✅ **Current conflict context** (what just happened)  
+ **All past conversations** (across all conflicts)  
+ **Both partners' profiles** (uploaded PDFs)  
+ **Menstrual cycle patterns** (for timing awareness)  
+ **Relationship history** (patterns, recurring themes)  
+ **Current conflict context** (what just happened)  
 
 ### How to Talk to Luna:
 1. Click the **voice button** on Post-Fight Session page
@@ -223,7 +223,7 @@ Luna is an advanced voice AI agent (powered by LiveKit, Deepgram, and ElevenLabs
 
 ---
 
-## 🧠 Key Technologies
+##  Key Technologies
 
 - **Voice AI**: Deepgram (STT) + ElevenLabs (TTS) + LiveKit (Real-time)
 - **LLM**: OpenAI GPT-4o-mini via OpenRouter
@@ -234,7 +234,7 @@ Luna is an advanced voice AI agent (powered by LiveKit, Deepgram, and ElevenLabs
 
 ---
 
-## 💡 Tips for Best Results
+##  Tips for Best Results
 
 1. **Upload Profiles First**: The more Luna knows about you both, the better her advice
 2. **Record Longer Conflicts**: More context = better analysis
@@ -246,7 +246,7 @@ Luna is an advanced voice AI agent (powered by LiveKit, Deepgram, and ElevenLabs
 
 ---
 
-## 🚀 Quick Start Workflow
+##  Quick Start Workflow
 
 **For a new conflict:**
 1. Go to **Fight Capture** → Start Recording
@@ -264,7 +264,7 @@ Luna is an advanced voice AI agent (powered by LiveKit, Deepgram, and ElevenLabs
 
 ---
 
-## 🎯 Navigation Guide
+##  Navigation Guide
 
 - **Home** (`/`) - Dashboard and quick actions
 - **Fight Capture** (`/fight-capture`) - Record new conflicts
@@ -276,7 +276,7 @@ Luna is an advanced voice AI agent (powered by LiveKit, Deepgram, and ElevenLabs
 
 ---
 
-## 🌙 About the Name "Serene"
+##  About the Name "Serene"
 
 Serene represents the calm, peace, and understanding we hope to bring to your relationship. Even in moments of conflict, the goal is to find serenity through communication, empathy, and growth.
 

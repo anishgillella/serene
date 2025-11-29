@@ -4,7 +4,7 @@ A comprehensive log of all technical challenges encountered during the developme
 
 ---
 
-## 🎤 Voice Agent Challenges
+##  Voice Agent Challenges
 
 ### 1. **LiveKit Agent Not Joining Rooms**
 
@@ -74,10 +74,10 @@ LiveKit's LLM interface changed - `chat()` signature expects `chat_ctx` as keywo
 
 **Solution:**
 ```python
-# ❌ Old way (positional)
+#  Old way (positional)
 stream = llm_instance.chat(chat_ctx, model="...", temperature=0.7)
 
-# ✅ New way (keyword)
+#  New way (keyword)
 stream = llm_instance.chat(chat_ctx=chat_ctx, model="...", temperature=0.7)
 ```
 
@@ -96,10 +96,10 @@ Deepgram plugin doesn't support `endpointing` parameter in newer versions.
 **Solution:**  
 Remove `endpointing` parameter from STT initialization:
 ```python
-# ❌ Before
+#  Before
 stt=deepgram.STT(model="nova-3", endpointing=300)
 
-# ✅ After
+#  After
 stt=deepgram.STT(
     model="nova-3",
     language="en",
@@ -175,7 +175,7 @@ vad=silero.VAD.load(
 
 ---
 
-## 🧠 RAG System Challenges
+##  RAG System Challenges
 
 ### 8. **Pinecone Connection Timeouts**
 
@@ -295,7 +295,7 @@ profile_results = pinecone_service.query(
 
 ---
 
-## 🗄️ Database & Storage Challenges
+## 🗄 Database & Storage Challenges
 
 ### 13. **Supabase RLS Blocking Direct Access**
 
@@ -384,10 +384,10 @@ def upload_file(self, file_path, file_content, content_type):
             ContentType=content_type
         )
         url = f"s3://{self.bucket_name}/{file_path}"
-        logger.info(f"✅ Uploaded to S3: {url}")
+        logger.info(f" Uploaded to S3: {url}")
         return url
     except Exception as e:
-        logger.error(f"❌ S3 upload failed: {e}")
+        logger.error(f" S3 upload failed: {e}")
         return None  # Explicit failure
 ```
 
@@ -404,17 +404,17 @@ Wrong PostgreSQL operator - `||` concatenates but doesn't handle arrays correctl
 **Solution:**  
 Fixed JSONB array concatenation:
 ```sql
--- ❌ Before
+--  Before
 content = mediator_messages.content || %s::jsonb
 
--- ✅ After
+--  After
 content = mediator_messages.content || %s::jsonb
 -- Works correctly with proper JSONB array casting
 ```
 
 ---
 
-## 📅 Calendar & Cycle Tracking Challenges
+##  Calendar & Cycle Tracking Challenges
 
 ### 18. **Calendar Service Hanging (5+ second queries)**
 
@@ -456,7 +456,7 @@ Off-by-one error in day calculation from last period start.
 
 **Solution:**
 ```python
-# ✅ Correct calculation
+#  Correct calculation
 days_since_period = (today - last_period_date).days
 
 # Phase logic
@@ -474,7 +474,7 @@ else:
 
 ---
 
-## 🎨 Frontend Challenges
+##  Frontend Challenges
 
 ### 20. **404 Errors on History & Fight Capture Pages**
 
@@ -568,7 +568,7 @@ setTranscript(data.transcript);  // From backend, not Supabase
 
 ---
 
-## 🔧 LLM & Prompt Engineering Challenges
+##  LLM & Prompt Engineering Challenges
 
 ### 24. **Luna's Repetitive Language**
 
@@ -647,7 +647,7 @@ Generate a repair plan that considers:
 
 ---
 
-## ⚡ Performance Challenges
+##  Performance Challenges
 
 ### 27. **Background Task Generation Slow (30+ seconds)**
 
@@ -697,7 +697,7 @@ def embed_batch(texts, max_retries=3):
 
 ---
 
-## 🐛 Debugging & Development Challenges
+##  Debugging & Development Challenges
 
 ### 29. **Silent Failures in Background Tasks**
 
@@ -711,7 +711,7 @@ async def generate_all_background(...):
     try:
         # ... task logic
     except Exception as e:
-        logger.error(f"❌ Background task failed: {e}")
+        logger.error(f" Background task failed: {e}")
         import traceback
         logger.error(traceback.format_exc())  # Full stack trace
 ```
@@ -754,7 +754,7 @@ load_dotenv(".env")        # Load second (overrides)
 
 ---
 
-## 🎯 Architecture Decisions & Trade-offs
+##  Architecture Decisions & Trade-offs
 
 ### 32. **Removed Neo4j Graph Database**
 
@@ -798,7 +798,7 @@ load_dotenv(".env")        # Load second (overrides)
 
 ---
 
-## 📚 Book Reference RAG Challenges
+##  Book Reference RAG Challenges
 
 ### 35. **Book RAG Retrieving Irrelevant Content**
 
@@ -826,7 +826,7 @@ def is_likely_junk(text: str) -> bool:
 
 # During ingestion
 if is_likely_junk(chunk_text):
-    logger.info(f"🗑️ Skipping junk chunk: {chunk_text[:50]}...")
+    logger.info(f" Skipping junk chunk: {chunk_text[:50]}...")
     continue
 ```
 
@@ -848,7 +848,7 @@ from app.services.pinecone_service import pinecone_service
 def clear_books_namespace():
     index = pinecone_service.index
     index.delete(namespace="books", delete_all=True)
-    logger.info("✅ Cleared all vectors from 'books' namespace")
+    logger.info(" Cleared all vectors from 'books' namespace")
 ```
 
 **Lesson:** Always plan for data cleanup when iterating on RAG ingestion logic.
@@ -898,14 +898,14 @@ TypeError: update_profile() got an unexpected keyword argument 'profile_id'
 **Solution:**  
 Updated call site to match new signature:
 ```python
-# ❌ Before
+#  Before
 db_service.update_profile(
     profile_id=pdf_id,
     extracted_text_length=len(extracted_text),
     file_path=s3_url
 )
 
-# ✅ After
+#  After
 db_service.update_profile(
     pdf_id=pdf_id,
     updates={
@@ -919,7 +919,7 @@ db_service.update_profile(
 
 ---
 
-## 🎨 Upload UI Challenges
+##  Upload UI Challenges
 
 ### 39. **Upload Page Log Overflow**
 
@@ -932,10 +932,10 @@ CSS used `whitespace-nowrap` which prevented text wrapping, causing horizontal o
 **Solution:**  
 Changed CSS to allow text wrapping:
 ```tsx
-// ❌ Before
+//  Before
 <div className="whitespace-nowrap">{log}</div>
 
-// ✅ After
+//  After
 <div className="whitespace-pre-wrap break-words border-b border-gray-800/50 last:border-0 py-0.5">
   {cleanLog}
 </div>
@@ -997,12 +997,12 @@ profiles = db_service.get_profiles(relationship_id=RELATIONSHIP_ID)
 for p in profiles:
     if p.get("pdf_type") == "boyfriend_profile" and p.get("extracted_text_length", 0) == 0:
         db_service.delete_profile(p["pdf_id"])
-        logger.info(f"✅ Deleted empty profile: {p.get('filename')}")
+        logger.info(f" Deleted empty profile: {p.get('filename')}")
 ```
 
 ---
 
-## 🎤 Voice Agent Tuning Challenges
+##  Voice Agent Tuning Challenges
 
 ### 43. **VAD Interruption Not Working**
 
@@ -1034,7 +1034,7 @@ super().__init__(
 
 ---
 
-## 🔊 ElevenLabs TTS Challenges
+##  ElevenLabs TTS Challenges
 
 ### 44. **ElevenLabs WebSocket Closed Unexpectedly**
 
@@ -1052,7 +1052,7 @@ After `git reset --hard`, code comment indicated "don't pass api_key - let it us
 **Solution:**  
 Explicitly pass `api_key` to TTS constructor:
 ```python
-# ❌ Before (after reset)
+#  Before (after reset)
 tts_instance = elevenlabs.TTS(
     model="eleven_flash_v2_5",
     voice_id="5ztkbGZ95SpVJ8MBMeam",
@@ -1060,7 +1060,7 @@ tts_instance = elevenlabs.TTS(
     streaming_latency=3,
 )
 
-# ✅ After
+#  After
 tts_instance = elevenlabs.TTS(
     model="eleven_flash_v2_5",
     voice_id="5ztkbGZ95SpVJ8MBMeam",
@@ -1073,7 +1073,7 @@ tts_instance = elevenlabs.TTS(
 
 ---
 
-## 🐛 Process Management Challenges
+##  Process Management Challenges
 
 ### 45. **Port 8081 Already in Use**
 
@@ -1102,37 +1102,37 @@ pkill -9 -f "python start_agent.py"
 
 ---
 
-## 📚 Key Learnings
+##  Key Learnings
 
 ### What Worked Well
-✅ RAG with reranking dramatically reduced hallucinations  
-✅ Parallel async execution cut latency by 60%+  
-✅ Direct PostgreSQL access solved RLS headaches  
-✅ Context managers prevented connection leaks  
-✅ Caching calendar data improved UX significantly  
-✅ Heuristic-based filtering for book ingestion cleaned RAG results  
-✅ Explicit API parameter passing > environment variable reliance  
+ RAG with reranking dramatically reduced hallucinations  
+ Parallel async execution cut latency by 60%+  
+ Direct PostgreSQL access solved RLS headaches  
+ Context managers prevented connection leaks  
+ Caching calendar data improved UX significantly  
+ Heuristic-based filtering for book ingestion cleaned RAG results  
+ Explicit API parameter passing > environment variable reliance  
 
 ### What We'd Do Differently
-⚠️ Start with simpler architecture (no Neo4j from day 1)  
-⚠️ Add comprehensive logging earlier in development  
-⚠️ Use feature flags for expensive operations (embedding, LLM calls)  
-⚠️ Implement circuit breakers for external APIs  
-⚠️ Add monitoring/observability from start (not retrofit)  
-⚠️ Plan for data cleanup scripts when building RAG ingestion pipelines  
-⚠️ Update all call sites when refactoring method signatures  
+ Start with simpler architecture (no Neo4j from day 1)  
+ Add comprehensive logging earlier in development  
+ Use feature flags for expensive operations (embedding, LLM calls)  
+ Implement circuit breakers for external APIs  
+ Add monitoring/observability from start (not retrofit)  
+ Plan for data cleanup scripts when building RAG ingestion pipelines  
+ Update all call sites when refactoring method signatures  
 
 ### Tools That Saved Us
-🛠️ `asyncio.gather()` for parallelization  
-🛠️ `asyncio.wait_for()` for timeouts  
-🛠️ Context managers (`@contextmanager`) for cleanup  
-🛠️ LiveKit's plugin ecosystem  
-🛠️ Voyage AI's reranker for precision  
-🛠️ `lsof` and `pkill` for process debugging  
+ `asyncio.gather()` for parallelization  
+ `asyncio.wait_for()` for timeouts  
+ Context managers (`@contextmanager`) for cleanup  
+ LiveKit's plugin ecosystem  
+ Voyage AI's reranker for precision  
+ `lsof` and `pkill` for process debugging  
 
 ---
 
-## 🚀 Future Improvements
+##  Future Improvements
 
 1. **Circuit Breakers** - Prevent cascading failures from external APIs
 2. **Distributed Tracing** - OpenTelemetry for request lifecycle visibility

@@ -4,19 +4,19 @@ A sophisticated voice-enabled AI system that helps couples navigate conflicts th
 
 ---
 
-## 🌟 Overview
+##  Overview
 
 **Serene** is an AI relationship companion that provides:
-- 🎤 **Real-time Voice Mediation** with Luna, your empathetic AI coach
-- 📊 **Conflict Analysis & Insights** powered by GPT-4o-mini
-- 🧠 **RAG-Enabled Memory** that remembers all conversations and partner profiles
-- 📅 **Cycle-Aware Timing** integrated with menstrual cycle tracking
-- 🎯 **Personalized Repair Plans** with actionable steps
-- 📈 **Analytics Dashboard** to track relationship health and patterns
+-  **Real-time Voice Mediation** with Luna, your empathetic AI coach
+-  **Conflict Analysis & Insights** powered by GPT-4o-mini
+-  **RAG-Enabled Memory** that remembers all conversations and partner profiles
+-  **Cycle-Aware Timing** integrated with menstrual cycle tracking
+-  **Personalized Repair Plans** with actionable steps
+-  **Analytics Dashboard** to track relationship health and patterns
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 To run the application locally, you need **3 separate terminal windows**:
 
@@ -46,7 +46,7 @@ python start_agent.py start
 
 ---
 
-## 🏗️ System Architecture
+##  System Architecture
 
 ### High-Level Flow
 ```
@@ -121,7 +121,7 @@ Fight Capture (Browser) → FastAPI /store-transcript
 
 ---
 
-## 🗂️ Project Structure
+##  Project Structure
 
 ```
 serene/
@@ -199,7 +199,7 @@ serene/
 
 ---
 
-## 🧠 RAG System Design
+##  RAG System Design
 
 ### Pinecone Namespaces
 1. **`transcript_chunks`** - Chunked conversation transcripts
@@ -253,7 +253,7 @@ serene/
 
 ---
 
-## 🚀 Setup & Installation
+##  Setup & Installation
 
 ### Prerequisites
 - **Python 3.11+**
@@ -359,7 +359,7 @@ npm run dev
 
 ---
 
-## 🎯 Key Features
+##  Key Features
 
 ### 1. **Real-Time Voice Mediation**
 - Sub-500ms latency for voice responses
@@ -394,7 +394,7 @@ npm run dev
 
 ---
 
-## 📊 Database Schema
+##  Database Schema
 
 **Key Tables:**
 - `relationships` - Partner metadata
@@ -412,7 +412,7 @@ npm run dev
 
 ---
 
-## 🔧 Design Decisions
+##  Design Decisions
 
 ### Why These Technologies?
 
@@ -438,7 +438,7 @@ npm run dev
 
 ---
 
-## 🛠️ Development Commands
+##  Development Commands
 
 ```bash
 # Backend
@@ -459,7 +459,7 @@ npm run preview                       # Preview build
 
 ---
 
-## 🌐 Deployment
+##  Deployment
 
 The application is designed for:
 - **Frontend**: Vercel / Netlify
@@ -473,7 +473,7 @@ The application is designed for:
 
 ---
 
-## 📝 API Endpoints
+##  API Endpoints
 
 Key routes:
 - `POST /api/conflicts/create` - Create new conflict
@@ -502,4 +502,4 @@ Private project - All rights reserved
 
 ---
 
-**Built with ❤️ to help couples communicate better through AI-powered mediation**
+**Built with ❤ to help couples communicate better through AI-powered mediation**
