@@ -37,6 +37,8 @@ from .routes import analytics
 app.include_router(analytics.router)
 from .routes import user_routes
 app.include_router(user_routes.router)
+from .routes import onboarding
+app.include_router(onboarding.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)

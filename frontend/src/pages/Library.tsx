@@ -23,7 +23,7 @@ interface ExistingFile {
   extracted_text_length: number;
 }
 
-const Upload = () => {
+const Library = () => {
   const navigate = useNavigate();
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [existingFiles, setExistingFiles] = useState<ExistingFile[]>([]);
@@ -244,9 +244,8 @@ const Upload = () => {
   };
 
   const pdfTypeOptions = [
-    { value: 'boyfriend_profile', label: 'Boyfriend Profile', description: 'Character description for boyfriend' },
-    { value: 'girlfriend_profile', label: 'Girlfriend Profile', description: 'Character description for girlfriend' },
-    { value: 'reference_book', label: 'Relationship Book', description: 'Romance/relationship book (e.g. "Attached", "The Seven Principles")' }
+    { value: 'reference_book', label: 'Relationship Book', description: 'Romance/relationship book (e.g. "Attached", "The Seven Principles")' },
+    { value: 'handbook', label: 'Therapy Handbook', description: 'Therapy worksheets or guides' }
   ];
 
   return (
@@ -264,10 +263,10 @@ const Upload = () => {
 
       <div className="text-center mb-8">
         <h2 className="text-h2 text-text-primary mb-2">
-          Upload PDFs for RAG Pipeline
+          Relationship Library
         </h2>
         <p className="text-body text-text-secondary">
-          Upload PDFs to extract text via OCR and store in vector database
+          Upload books and resources to build your relationship knowledge base
         </p>
       </div>
 
@@ -522,4 +521,4 @@ const Upload = () => {
   );
 };
 
-export default Upload;
+export default Library;

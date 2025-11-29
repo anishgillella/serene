@@ -32,11 +32,94 @@ class DatabaseService:
                 conn.close()
 
     def get_connection(self):
-        """Get raw database connection (internal use)"""
-        return psycopg2.connect(
-            settings.DATABASE_URL,
-            connect_timeout=5
-        )
+        """Get raw database connection (internal use)
+        
+        For Vercel/Render: Automatically converts to Supabase Connection Pooler (port 6543)
+        to avoid IPv6 issues. Falls back to direct connection if pooler fails.
+        """
+        import logging
+        import urllib.parse
+        logger = logging.getLogger(__name__)
+        
+        db_url = settings.DATABASE_URL
+        
+        # CRITICAL FIX: Convert direct PostgreSQL connection to Supabase Session Pooler
+        # This avoids IPv6 "Network is unreachable" errors on Render/Vercel
+        # Session Pooler uses IPv4 and works reliably on serverless platforms
+        # Format: postgresql://postgres.PROJECT_REF:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres
+        if 'db.bwhvbmlzccmmfnrmctyk.supabase.co' in db_url and 'pooler' not in db_url.lower():
+            try:
+                parsed = urllib.parse.urlparse(db_url)
+                # Extract password from URL
+                password = parsed.password or ''
+                # URL decode password if needed
+                password_decoded = urllib.parse.unquote(password)
+                
+                # Convert to Session Pooler format
+                # Format: postgresql://postgres.PROJECT_REF:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres
+                pooler_url = f"postgresql://postgres.bwhvbmlzccmmfnrmctyk:{urllib.parse.quote(password_decoded)}@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
+                
+                logger.info("🔄 Converting direct PostgreSQL connection to Supabase Session Pooler")
+                logger.info(f"   Original: {parsed.hostname}:{parsed.port}")
+                logger.info(f"   Pooler: aws-0-us-east-1.pooler.supabase.com:5432")
+                db_url = pooler_url
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to convert to pooler URL, using original: {e}")
+        
+        # Try connection with retry logic for network issues
+        max_retries = 3
+        retry_count = 0
+        last_error = None
+        
+        while retry_count < max_retries:
+            try:
+                # Increase timeout for remote connections (Vercel/Render)
+                # Use 15 seconds instead of 5 for cloud platforms
+                # Force IPv4 by using hostname resolution (psycopg2 handles this)
+                conn = psycopg2.connect(
+                    db_url,
+                    connect_timeout=15,
+                    sslmode='require'  # Force SSL for remote connections
+                )
+                logger.info(f"✅ Database connection established (attempt {retry_count + 1})")
+                return conn
+                
+            except psycopg2.OperationalError as e:
+                error_str = str(e)
+                retry_count += 1
+                last_error = error_str
+                
+                # If IPv6 error and we haven't tried pooler yet, try Session Pooler
+                if 'Network is unreachable' in error_str and 'pooler' not in db_url.lower() and retry_count == 1:
+                    logger.warning(f"⚠️  IPv6 connection failed, retrying with Session Pooler...")
+                    try:
+                        parsed = urllib.parse.urlparse(db_url)
+                        password = urllib.parse.unquote(parsed.password or '')
+                        # Convert to Session Pooler format
+                        db_url = f"postgresql://postgres.bwhvbmlzccmmfnrmctyk:{urllib.parse.quote(password)}@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
+                        logger.info(f"   Retrying with Session Pooler URL")
+                        continue
+                    except Exception as e:
+                        logger.error(f"   Failed to convert to pooler: {e}")
+                
+                if retry_count < max_retries:
+                    import time
+                    wait_time = 2 ** retry_count  # Exponential backoff: 2s, 4s, 8s
+                    logger.warning(f"⚠️  Connection attempt {retry_count} failed: {e}")
+                    logger.info(f"   Retrying in {wait_time} seconds... (attempt {retry_count + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                else:
+                    logger.error(f"❌ Failed to connect after {max_retries} attempts: {e}")
+                    logger.error(f"   💡 TIP: Ensure DATABASE_URL uses Supabase Session Pooler format:")
+                    logger.error(f"   postgresql://postgres.PROJECT_REF:[PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres")
+                    raise
+            
+            except Exception as e:
+                logger.error(f"❌ Unexpected connection error: {e}")
+                raise
+        
+        # Should never reach here
+        raise psycopg2.OperationalError(f"Failed to connect after {max_retries} retries: {last_error}")
     
     def save_rant_message(self, conflict_id: str, partner_id: str, role: str, content: str) -> Optional[str]:
         """Save a rant message"""
@@ -921,6 +1004,133 @@ class DatabaseService:
                         "messages": transcript["messages"] if transcript else [],
                         "message_count": transcript["message_count"] if transcript else 0
                     }
+        except Exception as e:
+            raise e
+
+    def upsert_partner_profile(
+        self,
+        relationship_id: str,
+        partner_id: str,
+        profile_data: Dict[str, Any]
+    ) -> str:
+        """Upsert partner profile"""
+        try:
+            # Extract core fields
+            core_fields = [
+                "name", "role", "age", "communication_style", 
+                "stress_triggers", "soothing_mechanisms", "background_story"
+            ]
+            
+            # Everything else goes into metadata
+            metadata = {k: v for k, v in profile_data.items() if k not in core_fields}
+            import json
+
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO partner_profiles (
+                            relationship_id, partner_id, name, role, age, 
+                            communication_style, stress_triggers, soothing_mechanisms, 
+                            background_story, metadata, updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT (relationship_id, partner_id) 
+                        DO UPDATE SET 
+                            name = EXCLUDED.name,
+                            role = EXCLUDED.role,
+                            age = EXCLUDED.age,
+                            communication_style = EXCLUDED.communication_style,
+                            stress_triggers = EXCLUDED.stress_triggers,
+                            soothing_mechanisms = EXCLUDED.soothing_mechanisms,
+                            background_story = EXCLUDED.background_story,
+                            metadata = EXCLUDED.metadata,
+                            updated_at = NOW()
+                        RETURNING id;
+                    """, (
+                        relationship_id,
+                        partner_id,
+                        profile_data.get("name"),
+                        profile_data.get("role"),
+                        profile_data.get("age"),
+                        profile_data.get("communication_style"),
+                        profile_data.get("stress_triggers", []),
+                        profile_data.get("soothing_mechanisms", []),
+                        profile_data.get("background_story"),
+                        json.dumps(metadata)
+                    ))
+                    
+                    profile_id = cursor.fetchone()[0]
+                    conn.commit()
+                    return str(profile_id)
+        except Exception as e:
+            raise e
+
+    def upsert_relationship_profile(
+        self,
+        relationship_id: str,
+        profile_data: Dict[str, Any]
+    ) -> str:
+        """Upsert relationship profile"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO relationship_profiles (
+                            relationship_id, recurring_arguments, shared_goals, 
+                            relationship_dynamic, updated_at
+                        )
+                        VALUES (%s, %s, %s, %s, NOW())
+                        ON CONFLICT (relationship_id) 
+                        DO UPDATE SET 
+                            recurring_arguments = EXCLUDED.recurring_arguments,
+                            shared_goals = EXCLUDED.shared_goals,
+                            relationship_dynamic = EXCLUDED.relationship_dynamic,
+                            updated_at = NOW()
+                        RETURNING id;
+                    """, (
+                        relationship_id,
+                        profile_data.get("recurring_arguments", []),
+                        profile_data.get("shared_goals", []),
+                        profile_data.get("relationship_dynamic")
+                    ))
+                    
+                    profile_id = cursor.fetchone()[0]
+                    conn.commit()
+                    return str(profile_id)
+        except Exception as e:
+            raise e
+
+    def get_partner_profile(self, relationship_id: str, partner_id: str) -> Optional[Dict[str, Any]]:
+        """Get partner profile"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM partner_profiles
+                        WHERE relationship_id = %s AND partner_id = %s;
+                    """, (relationship_id, partner_id))
+                    
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+                    return None
+        except Exception as e:
+            raise e
+
+    def get_relationship_profile(self, relationship_id: str) -> Optional[Dict[str, Any]]:
+        """Get relationship profile"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM relationship_profiles
+                        WHERE relationship_id = %s;
+                    """, (relationship_id,))
+                    
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+                    return None
         except Exception as e:
             raise e
 

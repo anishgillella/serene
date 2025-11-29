@@ -59,7 +59,7 @@ const MONTH_NAMES = [
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Event type icons - Sleek emoji-based system
-const getEventIcon = (eventType: string) => {
+const getEventIcon = (eventType: string, className: string = "text-sm") => {
   const iconMap: Record<string, string> = {
     // Cycle events
     'period_start': '🌸',
@@ -94,7 +94,7 @@ const getEventIcon = (eventType: string) => {
   };
 
   const emoji = iconMap[eventType] || '📌';
-  return <span className="text-sm">{emoji}</span>;
+  return <span className={className}>{emoji}</span>;
 };
 
 // Risk level badge
@@ -195,7 +195,7 @@ const Calendar: React.FC = () => {
 
   const getEventsForDay = (day: number): CalendarEvent[] => {
     if (!calendarData) return [];
-    const dateStr = `${currentYear} -${String(currentMonth).padStart(2, '0')} -${String(day).padStart(2, '0')} `;
+    const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     return calendarData.events_by_date[dateStr] || [];
   };
 
@@ -419,7 +419,7 @@ const Calendar: React.FC = () => {
                     {hasConflict && <span className="text-red-500 text-xs">!</span>}
                   </div>
 
-                  {/* Event indicators - sleek emoji badges with counts */}
+                  {/* Event indicators - Symbol & Frequency */}
                   <div className="flex flex-wrap gap-1 mb-1 min-h-[16px]">
                     {eventGroups.slice(0, 3).map((group, idx) => {
                       const firstEvent = group[0];
@@ -428,22 +428,16 @@ const Calendar: React.FC = () => {
                       return (
                         <div
                           key={idx}
-                          className="relative group/badge"
+                          className="flex items-center gap-1 px-1.5 py-0.5 bg-white rounded-md border border-border-subtle shadow-sm"
                           title={`${count} ${firstEvent.event_type.replace('_', ' ')} event${count > 1 ? 's' : ''}`}
                         >
-                          <div className="w-5 h-5 flex items-center justify-center text-[10px] bg-white rounded-full shadow-sm border border-border-subtle">
-                            {getEventIcon(firstEvent.event_type)}
-                          </div>
-                          {count > 1 && (
-                            <div className="absolute -top-1 -right-1 w-3 h-3 bg-accent text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold">
-                              {count}
-                            </div>
-                          )}
+                          {getEventIcon(firstEvent.event_type, "text-[10px]")}
+                          <span className="text-[9px] font-bold text-text-secondary">{count}</span>
                         </div>
                       );
                     })}
                     {eventGroups.length > 3 && (
-                      <div className="w-5 h-5 flex items-center justify-center text-[9px] font-medium bg-accent/10 text-accent rounded-full border border-accent/20">
+                      <div className="px-1.5 py-0.5 flex items-center justify-center text-[9px] font-medium bg-accent/10 text-accent rounded-md border border-accent/20">
                         +{eventGroups.length - 3}
                       </div>
                     )}

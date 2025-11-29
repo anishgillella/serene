@@ -6,9 +6,10 @@ import {
     Mic,
     History,
     BarChart2,
-    Upload,
     Settings,
-    Moon
+    Moon,
+    Book,
+    HeartHandshake
 } from 'lucide-react';
 
 const Sidebar = () => {
@@ -20,7 +21,8 @@ const Sidebar = () => {
         { icon: Calendar, label: 'Calendar', path: '/calendar' },
         { icon: History, label: 'History', path: '/history' },
         { icon: BarChart2, label: 'Analytics', path: '/analytics' },
-        { icon: Upload, label: 'Upload', path: '/upload' },
+        { icon: Book, label: 'Library', path: '/library' },
+        { icon: HeartHandshake, label: 'Onboarding', path: '/onboarding' },
     ];
 
     return (
