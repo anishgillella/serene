@@ -86,7 +86,7 @@ const PostFightSession = () => {
       if (!conflictId) {
         console.log('🆔 No conflict ID found, generating new one...');
         try {
-          const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
           const response = await fetch(`${apiUrl}/api/conflicts/create`, {
             method: 'POST',
             headers: {
@@ -171,7 +171,7 @@ const PostFightSession = () => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState('');
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   // Initialize messages with transcript (merge consecutive messages from same speaker)
   const [messages, setMessages] = useState<Message[]>(() => {

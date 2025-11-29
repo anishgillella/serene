@@ -7,7 +7,7 @@ import AnalyticsCard from '../components/AnalyticsCard';
 import VoiceButton from '../components/VoiceButton';
 import { Heart, Activity, Zap, TrendingUp, AlertTriangle } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 interface AnalyticsData {
   health_score: {
