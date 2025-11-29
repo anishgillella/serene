@@ -10,17 +10,39 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_KEY
-        sync: false
-      - key: OPENAI_API_KEY
+      - key: LIVEKIT_URL
         sync: false
       - key: LIVEKIT_API_KEY
         sync: false
       - key: LIVEKIT_API_SECRET
         sync: false
-      - key: LIVEKIT_URL
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: S3_BUCKET_NAME
         sync: false
 
   # 2. LiveKit Agent (Background Worker)
@@ -43,7 +65,29 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
       - key: DEEPGRAM_API_KEY
         sync: false
-      - key: ELEVEN_API_KEY
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: S3_BUCKET_NAME
         sync: false
