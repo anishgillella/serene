@@ -7,6 +7,19 @@ COPY package*.json ./
 RUN npm install
 
 COPY . .
+
+# Accept build arguments
+ARG VITE_API_URL
+ARG VITE_LIVEKIT_URL
+ARG VITE_AUTH0_DOMAIN
+ARG VITE_AUTH0_CLIENT_ID
+
+# Set environment variables for build
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_LIVEKIT_URL=$VITE_LIVEKIT_URL
+ENV VITE_AUTH0_DOMAIN=$VITE_AUTH0_DOMAIN
+ENV VITE_AUTH0_CLIENT_ID=$VITE_AUTH0_CLIENT_ID
+
 RUN npm run build
 
 # Production Stage
