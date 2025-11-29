@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     
     class Config:
-        env_file = ".env"
+        env_file = "../.env"  # Load from root directory
         extra = "ignore"
 
 settings = Settings()
