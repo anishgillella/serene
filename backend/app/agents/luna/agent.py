@@ -45,12 +45,30 @@ class SimpleMediator(voice.Agent):
         super().__init__(instructions=DEFAULT_INSTRUCTIONS, tools=tools or [])
         self.session_id = session_id
 
+    async def on_user_started_speaking(self):
+        """Debug hook for VAD start"""
+        with open('/app/debug.log', 'a') as f:
+            f.write(f"DEBUG: User STARTED speaking at {time.time()}\n")
+        print("PRINT DEBUG: User STARTED speaking", flush=True)
+        await super().on_user_started_speaking()
+
+    async def on_user_stopped_speaking(self):
+        """Debug hook for VAD stop"""
+        with open('/app/debug.log', 'a') as f:
+            f.write(f"DEBUG: User STOPPED speaking at {time.time()}\n")
+        print("PRINT DEBUG: User STOPPED speaking", flush=True)
+        await super().on_user_stopped_speaking()
+
     async def on_user_turn_completed(
         self,
         turn_ctx: llm.ChatContext,
         new_message: llm.ChatMessage,
     ) -> None:
         """Log user message when turn completes"""
+        with open('/app/debug.log', 'a') as f:
+            f.write(f"DEBUG: User turn COMPLETED at {time.time()}\n")
+        print("PRINT DEBUG: User turn COMPLETED", flush=True)
+
         if self.session_id and db_service:
             try:
                 content = self._extract_text(new_message)
