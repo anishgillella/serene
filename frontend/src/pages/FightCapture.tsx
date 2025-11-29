@@ -56,7 +56,10 @@ const FightCapture = () => {
             const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
             const response = await fetch(`${apiUrl}/api/conflicts/create`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' }
+              headers: {
+                'Content-Type': 'application/json',
+                'ngrok-skip-browser-warning': 'true'
+              },
             });
             if (response.ok) {
               const data = await response.json();
@@ -221,6 +224,9 @@ const FightCapture = () => {
 
           console.log('🔄 Sending audio to REST API for accurate diarization...');
           const response = await fetch(`${apiUrl}/api/transcription/transcribe`, {
+            headers: {
+              'ngrok-skip-browser-warning': 'true'
+            },
             method: 'POST',
             body: formData,
           });
@@ -266,7 +272,10 @@ const FightCapture = () => {
         // Store transcript in Pinecone
         const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/store-transcript`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'ngrok-skip-browser-warning': 'true'
+          },
           body: JSON.stringify({
             transcript: transcriptStrings,
             relationship_id: "00000000-0000-0000-0000-000000000000", // Default for MVP
@@ -284,8 +293,11 @@ const FightCapture = () => {
           // This will cache the results so they're ready when user clicks buttons
           console.log('🔄 Triggering background analysis and repair plan generation...');
           fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-all`, {
+            headers: {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true'
+            },
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               relationship_id: "00000000-0000-0000-0000-000000000000",
               partner_a_id: "partner_a",

@@ -22,7 +22,11 @@ const History = () => {
     const fetchConflicts = async () => {
       try {
         const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
-        const response = await fetch(`${apiUrl}/api/conflicts`);
+        const response = await fetch(`${apiUrl}/api/conflicts`, {
+          headers: {
+            'ngrok-skip-browser-warning': 'true'
+          }
+        });
         if (response.ok) {
           const data = await response.json();
           // Transform data to match Conflict interface if needed

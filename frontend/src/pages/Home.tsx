@@ -23,7 +23,11 @@ const RecentConflicts = () => {
   useEffect(() => {
     const fetchConflicts = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/conflicts`);
+        const res = await fetch(`${API_BASE}/api/conflicts`, {
+          headers: {
+            'ngrok-skip-browser-warning': 'true'
+          }
+        });
         if (res.ok) {
           const data = await res.json();
           // Get last 3 conflicts

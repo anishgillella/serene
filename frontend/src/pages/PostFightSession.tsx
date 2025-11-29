@@ -89,7 +89,10 @@ const PostFightSession = () => {
           const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
           const response = await fetch(`${apiUrl}/api/conflicts/create`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true'
+            },
           });
 
           if (response.ok) {
@@ -228,7 +231,11 @@ const PostFightSession = () => {
       if (conflictId && (!state?.transcript || state.transcript.length === 0)) {
         try {
           console.log(`📖 Loading transcript for conflict ${conflictId}...`);
-          const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`);
+          const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`, {
+            headers: {
+              'ngrok-skip-browser-warning': 'true'
+            }
+          });
 
           if (response.ok) {
             const data = await response.json();
@@ -371,7 +378,10 @@ const PostFightSession = () => {
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-analysis`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
         body: JSON.stringify({
           relationship_id: "00000000-0000-0000-0000-000000000000",
           partner_a_id: "partner_a",
@@ -427,7 +437,10 @@ const PostFightSession = () => {
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-repair-plans`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
         body: JSON.stringify({
           relationship_id: "00000000-0000-0000-0000-000000000000",
           partner_a_id: "partner_a",
@@ -483,7 +496,10 @@ const PostFightSession = () => {
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-all`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
         body: JSON.stringify({})
       });
 
@@ -559,7 +575,11 @@ const PostFightSession = () => {
     const fetchTitle = async () => {
       if (!conflictId) return;
       try {
-        const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`);
+        const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`, {
+          headers: {
+            'ngrok-skip-browser-warning': 'true'
+          }
+        });
         if (response.ok) {
           const data = await response.json();
           if (data.conflict && data.conflict.title) {
@@ -591,7 +611,10 @@ const PostFightSession = () => {
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/title`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
         body: JSON.stringify({ title: editedTitle })
       });
 

@@ -21,7 +21,11 @@ export function RelatedConflicts({ conflictId, apiBase }: RelatedConflictsProps)
     useEffect(() => {
         const fetchRelated = async () => {
             try {
-                const res = await fetch(`${apiBase}/api/post-fight/conflicts/${conflictId}/related`);
+                const res = await fetch(`${apiBase}/api/post-fight/conflicts/${conflictId}/related`, {
+                    headers: {
+                        'ngrok-skip-browser-warning': 'true'
+                    }
+                });
                 if (res.ok) {
                     const data = await res.json();
                     setRelated(data.related_conflicts || []);

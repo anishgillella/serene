@@ -144,8 +144,12 @@ const Calendar: React.FC = () => {
           .join(',');
 
         const [calendarRes, phaseRes] = await Promise.all([
-          fetch(`${API_BASE}/api/calendar/events?year=${currentYear}&month=${currentMonth}&filters=${activeFilters}`),
-          fetch(`${API_BASE}/api/calendar/cycle-phase?partner_id=partner_b`)
+          fetch(`${API_BASE}/api/calendar/events?year=${currentYear}&month=${currentMonth}&filters=${activeFilters}`, {
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+          }),
+          fetch(`${API_BASE}/api/calendar/cycle-phase?partner_id=partner_b`, {
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+          })
         ]);
 
         if (calendarRes.ok) {
@@ -255,8 +259,11 @@ const Calendar: React.FC = () => {
       }
 
       const res = await fetch(`${API_BASE}${endpoint}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       });
 

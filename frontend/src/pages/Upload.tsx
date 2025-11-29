@@ -40,7 +40,11 @@ const Upload = () => {
 
   const fetchExistingFiles = async () => {
     try {
-      const response = await fetch(`${apiUrl}/api/pdfs/list/${relationshipId}`);
+      const response = await fetch(`${apiUrl}/api/pdfs/list/${relationshipId}`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
@@ -55,7 +59,11 @@ const Upload = () => {
   const pollLogs = async (fileId: string, pdfId: string) => {
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`${apiUrl}/api/pdfs/logs/${pdfId}`);
+        const res = await fetch(`${apiUrl}/api/pdfs/logs/${pdfId}`, {
+          headers: {
+            'ngrok-skip-browser-warning': 'true'
+          }
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.logs && data.logs.length > 0) {
@@ -171,6 +179,9 @@ const Upload = () => {
       formData.append('pdf_type', fileInfo.pdfType);
 
       const response = await fetch(`${apiUrl}/api/pdfs/upload`, {
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        },
         method: 'POST',
         body: formData,
         signal: abortController.signal

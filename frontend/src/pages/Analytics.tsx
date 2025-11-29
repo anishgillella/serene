@@ -57,7 +57,11 @@ const Analytics = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/analytics/dashboard?partner_id=partner_b`);
+        const res = await fetch(`${API_BASE}/api/analytics/dashboard?partner_id=partner_b`, {
+          headers: {
+            'ngrok-skip-browser-warning': 'true'
+          }
+        });
         if (res.ok) {
           setData(await res.json());
         }

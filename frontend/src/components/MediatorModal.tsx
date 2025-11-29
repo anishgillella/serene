@@ -47,6 +47,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
         },
         body: JSON.stringify(requestBody)
       });
@@ -388,8 +389,8 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
           {/* Status badges */}
           <div className="flex flex-wrap items-center gap-2">
             <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-tiny font-medium transition-all ${isConnected
-                ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
-                : 'bg-surface-hover text-text-tertiary border border-border-subtle'
+              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20'
+              : 'bg-surface-hover text-text-tertiary border border-border-subtle'
               }`}>
               <div className={`w-2 h-2 rounded-full mr-2 ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-text-tertiary'}`}></div>
               {isConnected ? 'Connected' : 'Disconnected'}
@@ -438,10 +439,10 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
                 <div
                   key={index}
                   className={`p-4 rounded-2xl transition-all ${entry.speaker === 'agent'
-                      ? 'bg-accent/5 border border-accent/10 ml-0 mr-8'
-                      : entry.speaker === 'user'
-                        ? 'bg-surface-hover border border-border-subtle ml-8 mr-0'
-                        : 'bg-white/40 border border-border-subtle mx-8'
+                    ? 'bg-accent/5 border border-accent/10 ml-0 mr-8'
+                    : entry.speaker === 'user'
+                      ? 'bg-surface-hover border border-border-subtle ml-8 mr-0'
+                      : 'bg-white/40 border border-border-subtle mx-8'
                     }`}
                 >
                   <div className="flex items-start justify-between gap-3">
