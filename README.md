@@ -476,7 +476,6 @@ To further reduce voice agent latency (currently ~500ms):
 
 3. **UX Perception**
    - **Backchanneling**: Emit immediate acknowledgement sounds ("Hmm", "Right") upon VAD silence detection
-   - **Optimistic VAD**: Use semantic end-of-turn detection to predict speech completion before silence occurs
 
 ---
 
