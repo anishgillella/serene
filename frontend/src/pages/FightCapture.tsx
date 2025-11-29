@@ -36,7 +36,7 @@ const FightCapture = () => {
         setConnectionStatus('connecting');
         setError('');
 
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
         const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://');
         const fullWsUrl = `${wsUrl}/api/realtime/transcribe`;
 
@@ -53,7 +53,7 @@ const FightCapture = () => {
 
           // Create conflict and get conflict_id
           try {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
             const response = await fetch(`${apiUrl}/api/conflicts/create`, {
               method: 'POST',
               headers: {
@@ -218,7 +218,7 @@ const FightCapture = () => {
 
         // Send to REST API for accurate diarization
         try {
-          const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
           const formData = new FormData();
           formData.append('audio_file', audioBlob, 'recording.webm');
 
@@ -263,7 +263,7 @@ const FightCapture = () => {
     // Store transcript in Pinecone via backend if we have conflict_id
     if (conflictId && transcript.length > 0) {
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
         const transcriptStrings = transcript.map(item => `${item.speaker}: ${item.text}`);
 
         // Calculate duration (rough estimate: ~3 seconds per message)
