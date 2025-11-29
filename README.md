@@ -14,6 +14,32 @@ A sophisticated voice-enabled AI system that helps couples navigate conflicts th
 -  **Personalized Repair Plans** with actionable steps
 -  **Analytics Dashboard** to track relationship health and patterns
 
+**MVP Scope:** Currently configured for a single couple (Adrian & Elara). Multi-tenant support planned for future releases.
+
+---
+
+## Agent Tools
+
+Luna has access to intelligent tools that enhance her mediation capabilities:
+
+### 1. **find_similar_conflicts**
+- Searches past conflict history using semantic similarity
+- Identifies patterns and recurring themes
+- Returns summaries of similar past discussions
+- Uses Pinecone vector search with relationship filtering
+
+### 2. **get_elara_perspective**
+- Analyzes situations from Elara's viewpoint based on her profile
+- Uses partner personality data from uploaded PDFs
+- Provides empathetic explanations of likely thoughts/feelings
+- Powered by GPT-4o-mini with profile-aware prompting
+
+**Tool Features:**
+- In-memory caching (5-minute TTL) for performance
+- Langfuse observability integration
+- Graceful degradation on errors
+- Async execution for non-blocking responses
+
 ---
 
 ##  Quick Start
