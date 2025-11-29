@@ -453,7 +453,7 @@ npm run dev
 | **PostgreSQL** | ACID compliance for critical relationship data |
 | **S3** | Durable storage for transcripts & analysis |
 
-### Key Optimizations
+### Key Optimizations (Implemented)
 
 1. **Parallel Retrieval** - Fetch transcript + profiles + calendar simultaneously
 2. **Reranking** - Reduce context from 20 chunks → 7 high-relevance chunks
@@ -461,6 +461,22 @@ npm run dev
 4. **Timeouts** - All RAG queries timeout after 3-5 seconds
 5. **Chunking Strategy** - 1000 chars with 200 char overlap for coherence
 6. **Background Tasks** - Analysis generation runs async to not block UI
+
+### Future Latency Optimizations
+
+To further reduce voice agent latency (currently ~500ms):
+
+1. **Model Swaps (Speed of Light)**
+   - **LLM**: Switch to **Groq** (Llama-3.1-70B) for <100ms Time-to-First-Token
+   - **TTS**: Switch to **Cartesia Sonic** for <100ms audio generation
+
+2. **RAG Optimization**
+   - **Context Caching**: Pre-load relevant conflict chunks into agent memory at session start (avoids per-turn vector search)
+   - **Speculative RAG**: Start generating filler audio ("I see...") immediately while fetching RAG context in background
+
+3. **UX Perception**
+   - **Backchanneling**: Emit immediate acknowledgement sounds ("Hmm", "Right") upon VAD silence detection
+   - **Optimistic VAD**: Use semantic end-of-turn detection to predict speech completion before silence occurs
 
 ---
 
