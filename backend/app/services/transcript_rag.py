@@ -159,18 +159,43 @@ class TranscriptRAGSystem:
                     if results and hasattr(results, 'matches') and results.matches:
                         for match in results.matches:
                             metadata = match.metadata if hasattr(match, 'metadata') else {}
-                            text = metadata.get("extracted_text", "")
-                            pdf_type = metadata.get("pdf_type", "")
-                            if text:
-                                speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
-                                chunks.append({
-                                    'text': text,
-                                    'match': match,
-                                    'type': 'profile',
-                                    'is_current_conflict': False,
-                                    'profile_type': pdf_type,
-                                    'speaker': speaker,
-                                })
+                            
+                            # Handle NEW Onboarding Profiles
+                            if metadata.get("type") in ["partner_profile", "relationship_profile"]:
+                                text = metadata.get("text", "")
+                                if text:
+                                    # Determine speaker/source
+                                    if metadata.get("type") == "partner_profile":
+                                        p_id = metadata.get("partner_id", "")
+                                        # Try to extract name from text if possible, or use ID
+                                        speaker = "Partner A" if "partner_a" in p_id else "Partner B"
+                                        # If structured data exists, we could parse it, but text is pre-formatted
+                                    else:
+                                        speaker = "Relationship Context"
+                                        
+                                    chunks.append({
+                                        'text': text,
+                                        'match': match,
+                                        'type': 'profile',
+                                        'is_current_conflict': False,
+                                        'profile_type': metadata.get("type"),
+                                        'speaker': speaker,
+                                    })
+                                    
+                            # Handle OLD PDF Profiles (Legacy support)
+                            elif metadata.get("extracted_text"):
+                                text = metadata.get("extracted_text", "")
+                                pdf_type = metadata.get("pdf_type", "")
+                                if text:
+                                    speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
+                                    chunks.append({
+                                        'text': text,
+                                        'match': match,
+                                        'type': 'profile',
+                                        'is_current_conflict': False,
+                                        'profile_type': pdf_type,
+                                        'speaker': speaker,
+                                    })
                     
                     # Cache the results (profiles don't change often during a session)
                     # Note: This caches based on the query, which isn't quite right for general profiles,
