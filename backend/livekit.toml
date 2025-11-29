@@ -1,6 +1,0 @@
-[project]
-  subdomain = "voice-agent-qnma0l98"
-
-[agent]
-  id = "CA_serene_mediator"
-  entrypoint = "app.agents.mediator_agent:mediator_entrypoint"
