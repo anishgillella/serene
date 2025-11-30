@@ -5,6 +5,7 @@ import os
 from livekit import agents, rtc
 from livekit.agents import AgentSession, room_io, JobContext
 from livekit.plugins import deepgram, elevenlabs, openai, silero
+import livekit.plugins.cartesia as cartesia
 from livekit.plugins import noise_cancellation
 
 from .config import settings
@@ -19,6 +20,15 @@ except ImportError:
     Langfuse = None
 
 logger = logging.getLogger("luna-entrypoint")
+
+# Pre-load VAD model to reduce latency per connection
+logger.info("⏳ Pre-loading VAD model...")
+try:
+    _vad_model = silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.3)
+    logger.info("✅ VAD model pre-loaded")
+except Exception as e:
+    logger.error(f"❌ Failed to pre-load VAD model: {e}")
+    _vad_model = None
 
 async def mediator_entrypoint(ctx: JobContext):
     """Main mediator agent entry point"""
@@ -35,25 +45,58 @@ async def mediator_entrypoint(ctx: JobContext):
     conflict_id = room_name.replace("mediator-", "").split("?")[0]
     logger.info(f"   ✅ Extracted Conflict ID: {conflict_id}")
     
-    # Create DB session
+    # Initialize variables
     session_id = None
-    if db_service:
+    rag_system = None
+    relationship_id = None
+    
+    # Define async tasks for parallel execution
+    async def init_db_session():
+        if not db_service:
+            return None, None
         try:
-            session_id = await asyncio.to_thread(
+            # Create session
+            sid = await asyncio.to_thread(
                 db_service.create_mediator_session,
                 conflict_id=conflict_id
             )
-            logger.info(f"   ✅ Created DB session: {session_id}")
+            logger.info(f"   ✅ Created DB session: {sid}")
+            
+            # Get relationship ID for RAG
+            rid = None
+            try:
+                conflict_data = await asyncio.to_thread(db_service.get_conflict_by_id, conflict_id=conflict_id)
+                if conflict_data:
+                    rid = str(conflict_data.get("relationship_id"))
+            except Exception:
+                pass
+                
+            return sid, rid
         except Exception as e:
             logger.error(f"   ❌ Failed to create DB session: {e}")
-            
+            return None, None
+
+    async def init_rag():
+        try:
+            from app.services.transcript_rag import TranscriptRAGSystem
+            # Initialize RAG (lightweight, but good to parallelize if it grows)
+            return TranscriptRAGSystem(k=5, include_profiles=True, include_calendar=False)
+        except ImportError:
+            logger.warning("RAG system not available")
+            return None
+
+    # Start parallel tasks
+    t_start = time.perf_counter()
+    db_task = asyncio.create_task(init_db_session())
+    rag_task = asyncio.create_task(init_rag())
+    
+    # Initialize AI Services (Lightweight client creation)
     try:
-        # Setup AI Services
-        elevenlabs_key = settings.ELEVENLABS_API_KEY
+        cartesia_key = settings.CARTESIA_API_KEY
         openrouter_key = settings.OPENROUTER_API_KEY
         
-        if not elevenlabs_key or not openrouter_key:
-            raise ValueError("ELEVENLABS_API_KEY and OPENROUTER_API_KEY required")
+        if not cartesia_key or not openrouter_key:
+            raise ValueError("CARTESIA_API_KEY and OPENROUTER_API_KEY required")
             
         # LLM
         os.environ["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1"
@@ -62,39 +105,28 @@ async def mediator_entrypoint(ctx: JobContext):
             model="openai/gpt-4o-mini",
         )
         
-        # TTS
-        tts_instance = elevenlabs.TTS(
-            model="eleven_flash_v2_5",
-            voice_id="21m00Tcm4TlvDq8ikWAM", # Rachel
-            api_key=elevenlabs_key,
-            streaming_latency=3,
+        # TTS - Cartesia Sonic
+        logger.info("   🎤 Initializing Cartesia TTS...")
+        tts_instance = cartesia.TTS(
+            model="sonic-english",
+            voice="a01c369f-6d2d-4185-bc20-b32c225eab70", # British Lady
+            api_key=cartesia_key,
         )
+        
+        # Await parallel tasks
+        session_id, relationship_id = await db_task
+        rag_system = await rag_task
+        
+        logger.info(f"⚡ Initialization completed in {time.perf_counter() - t_start:.3f}s")
         
         # Agent Session
         session = AgentSession(
             stt=deepgram.STT(model="nova-3", smart_format=True),
             llm=llm_instance,
             tts=tts_instance,
-            vad=silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.3),
+            vad=_vad_model or silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.3),
         )
         
-        # Initialize RAG & Tools
-        relationship_id = None
-        if conflict_id and db_service:
-            try:
-                conflict_data = await asyncio.to_thread(db_service.get_conflict_by_id, conflict_id=conflict_id)
-                if conflict_data:
-                    relationship_id = str(conflict_data.get("relationship_id"))
-            except Exception:
-                pass
-
-        rag_system = None
-        try:
-            from app.services.transcript_rag import TranscriptRAGSystem
-            rag_system = TranscriptRAGSystem(k=5, include_profiles=True, include_calendar=False)
-        except ImportError:
-            logger.warning("RAG system not available")
-
         tools = get_tools(conflict_id, relationship_id)
         
         # Create Agent
@@ -118,8 +150,7 @@ async def mediator_entrypoint(ctx: JobContext):
             ),
         )
         
-        # Initial Greeting Logic (Simplified for brevity, but crucial for UX)
-        # ... (We can port the greeting logic here or keep it simple)
+        # Initial Greeting Logic
         greeting = "Hey Adrian, I'm here. What's on your mind?"
         await session.say(greeting, allow_interruptions=True)
         

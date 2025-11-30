@@ -5,6 +5,12 @@ Simple and efficient voice-based relationship mediator
 Uses AgentServer pattern like Voice Agent RAG
 """
 import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from root .env
+load_dotenv(dotenv_path="../.env")
+
 from livekit import agents
 from app.agents.luna import mediator_entrypoint
 
@@ -23,4 +29,8 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         sys.argv.append("start")
     
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=mediator_entrypoint))
+    agents.cli.run_app(agents.WorkerOptions(
+        entrypoint_fnc=mediator_entrypoint,
+        agent_name="Luna",
+        job_memory_warn_mb=1024, # Increase warning threshold to 1GB
+    ))
