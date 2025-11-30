@@ -184,20 +184,7 @@ class TranscriptRAGSystem:
                                         'speaker': speaker,
                                     })
                                     
-                            # Handle OLD PDF Profiles (Legacy support)
-                            elif metadata.get("extracted_text"):
-                                text = metadata.get("extracted_text", "")
-                                pdf_type = metadata.get("pdf_type", "")
-                                if text:
-                                    speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
-                                    chunks.append({
-                                        'text': text,
-                                        'match': match,
-                                        'type': 'profile',
-                                        'is_current_conflict': False,
-                                        'profile_type': pdf_type,
-                                        'speaker': speaker,
-                                    })
+
                     
                     logger.info(f"   ✅ Profiles (Vector Search): {len(chunks)} chunks ({time.perf_counter() - t_start:.3f}s)")
                     return chunks

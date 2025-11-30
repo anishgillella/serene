@@ -155,9 +155,15 @@ async def process_onboarding_background(submission: OnboardingSubmission):
     except Exception as e:
         logger.error(f"❌ Error in onboarding background task: {e}")
 
-@router.post("/submit", response_model=OnboardingResponse)
-async def submit_onboarding(submission: OnboardingSubmission, background_tasks: BackgroundTasks):
+async def handle_onboarding_submission(submission: OnboardingSubmission):
+    """
+    Background task to handle the entire onboarding submission process:
+    1. Save structured data to PostgreSQL
+    2. Generate embeddings and save to Pinecone
+    """
     try:
+        logger.info(f"🔄 Starting background processing for {submission.relationship_id}")
+        
         # 1. Save to Postgres
         db_service.upsert_partner_profile(
             submission.relationship_id,
@@ -169,13 +175,23 @@ async def submit_onboarding(submission: OnboardingSubmission, background_tasks: 
             submission.relationship_id,
             submission.relationship_profile.model_dump()
         )
+        logger.info(f"✅ Saved profiles to PostgreSQL for {submission.relationship_id}")
         
-        # 2. Trigger Background Processing (Embeddings)
-        background_tasks.add_task(process_onboarding_background, submission)
+        # 2. Process Embeddings (Pinecone)
+        await process_onboarding_background(submission)
+        
+    except Exception as e:
+        logger.error(f"❌ Error in onboarding background task: {e}")
+
+@router.post("/submit", response_model=OnboardingResponse)
+async def submit_onboarding(submission: OnboardingSubmission, background_tasks: BackgroundTasks):
+    try:
+        # Trigger Background Processing (DB + Embeddings)
+        background_tasks.add_task(handle_onboarding_submission, submission)
         
         return OnboardingResponse(
             success=True,
-            message="Profile saved successfully",
+            message="Profile submission received. Processing in background.",
             profile_id=f"{submission.relationship_id}_{submission.partner_id}"
         )
         

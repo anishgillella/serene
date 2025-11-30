@@ -38,7 +38,8 @@ const HybridInput = ({
     placeholder,
     multiline = false,
     isList = false,
-    autoFocus = false
+    autoFocus = false,
+    onEnter
 }: {
     value: string | string[];
     onChange: (val: string | string[]) => void;
@@ -46,36 +47,98 @@ const HybridInput = ({
     multiline?: boolean;
     isList?: boolean;
     autoFocus?: boolean;
+    onEnter?: () => void;
 }) => {
     const [isListening, setIsListening] = useState(false);
     const [recognition, setRecognition] = useState<any>(null);
 
+    // Ref to keep track of current value without restarting effect
+    const valueRef = React.useRef(value);
+    useEffect(() => {
+        valueRef.current = value;
+    }, [value]);
+
     useEffect(() => {
         if ('webkitSpeechRecognition' in window) {
             const r = new (window as any).webkitSpeechRecognition();
-            r.continuous = false;
+            r.continuous = true; // Enable continuous listening
             r.interimResults = false;
             r.lang = 'en-US';
+
             r.onresult = (event: any) => {
-                const text = event.results[0][0].transcript;
-                if (isList && Array.isArray(value)) {
-                    const items = text.split(/,| and /).map((s: string) => s.trim()).filter(Boolean);
-                    onChange([...value, ...items]);
-                } else {
-                    onChange(multiline ? (value ? value + ' ' + text : text) : text);
+                // Get the latest result
+                const resultIndex = event.results.length - 1;
+                const latestResult = event.results[resultIndex];
+
+                // Only process if it's a new result we haven't handled yet
+                if (latestResult.isFinal) {
+                    const text = latestResult[0].transcript.trim();
+
+                    if (isList && Array.isArray(valueRef.current)) {
+                        const items = text.split(/,| and /).map((s: string) => s.trim()).filter(Boolean);
+                        onChange([...valueRef.current, ...items]);
+                    } else {
+                        // Use functional update pattern indirectly by referencing current value
+                        // Since we can't access the *latest* state inside this closure easily without refs,
+                        // we rely on the fact that 'value' is in the dependency array.
+                        // However, with continuous listening, the effect might re-run and reset recognition.
+                        // To fix this, we need to NOT re-create recognition on every value change.
+                        // But we need the current value to append.
+
+                        // BETTER APPROACH: Use a ref for the current value so we don't need to re-bind
+                        // But for now, let's just fix the appending logic.
+
+                        // The issue is likely that 'value' is stale or we are re-appending the whole transcript.
+                        // With continuous=true, event.results accumulates.
+                        // We should only append the NEWEST result.
+
+                        // We are already doing that by taking event.results[length-1].
+                        // The problem is likely that 'value' inside this callback is stale because
+                        // the effect doesn't re-run (or if it does, it restarts recognition).
+
+                        // If we put 'value' in deps, recognition restarts on every word. Bad.
+                        // We need to remove 'value' from deps and use a functional update or ref.
+                        // Since onChange is passed from parent, we can just call onChange(prev => ...)? 
+                        // No, onChange expects a value, not a function usually.
+
+                        // Let's use a ref to track the current value without re-triggering the effect.
+                        // See below for the ref implementation.
+
+                        // Using the ref value:
+                        const currentValue = valueRef.current as string;
+                        const newValue = currentValue ? currentValue + ' ' + text : text;
+                        onChange(newValue);
+                    }
                 }
+            };
+
+            r.onerror = (event: any) => {
+                console.error("Speech recognition error", event.error);
                 setIsListening(false);
             };
-            r.onerror = () => setIsListening(false);
-            r.onend = () => setIsListening(false);
+
+            // Don't stop on end for continuous, unless manually stopped
+            // r.onend = () => setIsListening(false); 
+
             setRecognition(r);
+
+            // Cleanup function
+            return () => {
+                if (r) {
+                    r.stop();
+                    r.onresult = null;
+                    r.onerror = null;
+                    r.onend = null;
+                }
+            };
         }
-    }, [value, onChange, multiline, isList]);
+    }, [isList]); // Remove 'value' and 'onChange' from deps to prevent restarting
 
     const toggleListening = () => {
         if (!recognition) return;
         if (isListening) {
             recognition.stop();
+            setIsListening(false);
         } else {
             recognition.start();
             setIsListening(true);
@@ -84,32 +147,46 @@ const HybridInput = ({
 
     const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         if (isList) {
-            onChange(e.target.value.split(',').map(s => s.trim()));
+            // Split by comma or newline
+            onChange(e.target.value.split(/[\n,]+/).map(s => s.trim()).filter(Boolean));
         } else {
             onChange(e.target.value);
+        }
+    };
+
+    // Handle Enter key
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter') {
+            if (multiline && !e.shiftKey) {
+                return; // Allow new lines in textarea
+            }
+            e.preventDefault();
+            if (onEnter) onEnter();
         }
     };
 
     const displayValue = isList && Array.isArray(value) ? value.join(', ') : value as string;
 
     return (
-        <div className="relative w-full">
+        <div className={`relative ${multiline ? 'w-full' : 'w-full max-w-2xl mx-auto'}`}>
             {multiline ? (
                 <textarea
                     value={displayValue}
                     onChange={handleTextChange}
+                    onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     autoFocus={autoFocus}
-                    className="w-full px-6 py-4 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-2xl transition-all outline-none min-h-[160px] resize-y text-lg"
+                    className="w-full pl-6 pr-20 py-4 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-2xl transition-all outline-none min-h-[200px] resize-y text-lg"
                 />
             ) : (
                 <input
                     type="text"
                     value={displayValue}
                     onChange={handleTextChange}
+                    onKeyDown={handleKeyDown}
                     placeholder={placeholder}
                     autoFocus={autoFocus}
-                    className="w-full px-6 py-4 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-2xl transition-all outline-none text-lg"
+                    className="w-full pl-6 pr-20 py-4 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-2xl transition-all outline-none text-lg"
                 />
             )}
             {recognition && (
@@ -186,18 +263,18 @@ const Onboarding = () => {
         { type: 'chapter_start', chapter: 2, title: "Your Story", description: "Tell us about your background and interests." },
         { type: 'partner', field: 'background_story', label: "Tell us your story.", sublabel: "Where did you grow up? What was your childhood like?", placeholder: "I grew up in...", multiline: true, icon: BookOpenIcon, chapter: 2 },
         { type: 'partner', field: 'key_life_experiences', label: "Key Life Experiences", sublabel: "Any major events that shaped who you are?", placeholder: "Moving abroad, career change...", multiline: true, icon: StarIcon, chapter: 2 },
-        { type: 'partner', field: 'hobbies', label: "Hobbies & Interests", sublabel: "What do you do for fun? (Comma separated)", placeholder: "Hiking, Gaming, Painting", isList: true, icon: TrophyIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_food', label: "Favorite Food", placeholder: "Pizza, Sushi...", icon: UtensilsIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_cuisine', label: "Favorite Cuisine", placeholder: "Italian, Mexican...", icon: UtensilsIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_books', label: "Favorite Books", sublabel: "Comma separated", placeholder: "The Alchemist, Harry Potter...", isList: true, icon: BookOpenIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_sports', label: "Favorite Sports", sublabel: "Comma separated", placeholder: "Basketball, Soccer...", isList: true, icon: TrophyIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_celebrities', label: "Favorite Celebrities", sublabel: "Comma separated", placeholder: "Actors, Musicians...", isList: true, icon: StarIcon, chapter: 2 },
+        { type: 'partner', field: 'hobbies', label: "Hobbies & Interests", sublabel: "What do you do for fun?", placeholder: "Hiking\nGaming\nPainting", isList: true, multiline: true, icon: TrophyIcon, chapter: 2 },
+        { type: 'partner', field: 'favorite_food', label: "Favorite Food", placeholder: "Pizza, Sushi...", multiline: true, icon: UtensilsIcon, chapter: 2 },
+        { type: 'partner', field: 'favorite_cuisine', label: "Favorite Cuisine", placeholder: "Italian, Mexican...", multiline: true, icon: UtensilsIcon, chapter: 2 },
+        { type: 'partner', field: 'favorite_books', label: "Favorite Books", placeholder: "The Alchemist\nHarry Potter...", isList: true, multiline: true, icon: BookOpenIcon, chapter: 2 },
+        { type: 'partner', field: 'favorite_sports', label: "Favorite Sports", placeholder: "Basketball\nSoccer...", isList: true, multiline: true, icon: TrophyIcon, chapter: 2 },
+        { type: 'partner', field: 'favorite_celebrities', label: "Favorite Celebrities", placeholder: "Actors\nMusicians...", isList: true, multiline: true, icon: StarIcon, chapter: 2 },
 
         // --- CHAPTER 3: INNER WORLD ---
         { type: 'chapter_start', chapter: 3, title: "Inner World", description: "Let's go a bit deeper into how you tick." },
         { type: 'partner', field: 'communication_style', label: "Communication Style", sublabel: "How do you express yourself, especially in conflict?", placeholder: "I tend to shut down when overwhelmed...", multiline: true, icon: SparklesIcon, chapter: 3 },
-        { type: 'partner', field: 'stress_triggers', label: "Stress Triggers", sublabel: "What sets you off? (Comma separated)", placeholder: "Yelling, Being interrupted, Messy house", isList: true, icon: AlertCircleIcon, chapter: 3 },
-        { type: 'partner', field: 'soothing_mechanisms', label: "Soothing Mechanisms", sublabel: "What calms you down? (Comma separated)", placeholder: "Taking a walk, Deep breathing, A hug", isList: true, icon: HeartIcon, chapter: 3 },
+        { type: 'partner', field: 'stress_triggers', label: "Stress Triggers", sublabel: "What sets you off?", placeholder: "Yelling\nBeing interrupted\nMessy house", isList: true, multiline: true, icon: AlertCircleIcon, chapter: 3 },
+        { type: 'partner', field: 'soothing_mechanisms', label: "Soothing Mechanisms", sublabel: "What calms you down?", placeholder: "Taking a walk\nDeep breathing\nA hug", isList: true, multiline: true, icon: HeartIcon, chapter: 3 },
         { type: 'partner', field: 'traumatic_experiences', label: "Traumatic Experiences", sublabel: "Optional: Share only what you're comfortable with.", placeholder: "Loss of a loved one...", multiline: true, icon: AlertCircleIcon, optional: true, chapter: 3 },
 
         // --- CHAPTER 4: YOUR PARTNER ---
@@ -209,8 +286,8 @@ const Onboarding = () => {
         // --- CHAPTER 5: US ---
         { type: 'chapter_start', chapter: 5, title: "Us", description: "Finally, let's talk about your relationship." },
         { type: 'relationship', field: 'relationship_dynamic', label: "Relationship Dynamic", sublabel: "How would you describe your relationship?", placeholder: "We love each other but...", multiline: true, icon: HeartIcon, chapter: 5 },
-        { type: 'relationship', field: 'recurring_arguments', label: "Recurring Arguments", sublabel: "What do you fight about most? (Comma separated)", placeholder: "Money, Chores, In-laws", isList: true, icon: AlertCircleIcon, chapter: 5 },
-        { type: 'relationship', field: 'shared_goals', label: "Shared Goals", sublabel: "What are you building together? (Comma separated)", placeholder: "Buying a house, Better communication", isList: true, icon: TrophyIcon, chapter: 5 },
+        { type: 'relationship', field: 'recurring_arguments', label: "Recurring Arguments", sublabel: "What do you fight about most?", placeholder: "Money\nChores\nIn-laws", isList: true, multiline: true, icon: AlertCircleIcon, chapter: 5 },
+        { type: 'relationship', field: 'shared_goals', label: "Shared Goals", sublabel: "What are you building together?", placeholder: "Buying a house\nBetter communication", isList: true, multiline: true, icon: TrophyIcon, chapter: 5 },
 
         // --- SUCCESS ---
         { type: 'success', chapter: 6 }
@@ -338,7 +415,7 @@ const Onboarding = () => {
         const isLast = currentStepIndex === steps.length - 2; // -2 because last is success
 
         return (
-            <div className="max-w-2xl mx-auto animate-fade-in">
+            <div className="max-w-3xl mx-auto animate-fade-in">
                 <div className="mb-8 text-center">
                     <div className="w-16 h-16 bg-surface-hover rounded-2xl flex items-center justify-center mx-auto mb-6 text-accent">
                         <Icon size={32} />
@@ -351,6 +428,7 @@ const Onboarding = () => {
 
                 <div className="mb-12">
                     <HybridInput
+                        key={currentStep.field} // Force re-render on step change
                         value={
                             currentStep.type === 'partner'
                                 ? (partnerProfile as any)[currentStep.field!]
@@ -367,6 +445,7 @@ const Onboarding = () => {
                         multiline={currentStep.multiline}
                         isList={currentStep.isList}
                         autoFocus
+                        onEnter={isLast ? handleSubmit : handleNext}
                     />
                 </div>
 
@@ -406,7 +485,7 @@ const Onboarding = () => {
             </div>
             <h2 className="text-h2 text-text-primary mb-4">All Set!</h2>
             <p className="text-body text-text-secondary mb-10">
-                Your comprehensive profile has been created. The AI Mediator now has a deep understanding of you.
+                Your comprehensive profile has been created. Luna now has a deep understanding of you.
             </p>
             <div className="flex justify-center space-x-4">
                 <button

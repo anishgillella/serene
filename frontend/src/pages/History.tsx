@@ -147,7 +147,8 @@ const History = () => {
         </div>
 
         {/* Filters & Search */}
-        <div className="flex flex-col md:flex-row gap-4 mb-8 sticky top-4 z-20 bg-surface-base/80 backdrop-blur-md p-2 rounded-2xl border border-border-subtle shadow-sm">
+        {/* Filters & Search */}
+        <div className="flex flex-col md:flex-row gap-4 mb-8 p-2 rounded-2xl border border-border-subtle shadow-sm bg-surface-base">
           <div className="relative flex-1">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-text-tertiary" size={20} />
             <input
@@ -158,7 +159,7 @@ const History = () => {
               className="w-full pl-12 pr-4 py-3 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-xl outline-none transition-all"
             />
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
+          <div className="flex gap-2 flex-wrap pb-2 md:pb-0">
             {['all', 'active', 'resolved'].map((filter) => (
               <button
                 key={filter}
