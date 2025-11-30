@@ -23,4 +23,8 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         sys.argv.append("start")
     
-    agents.cli.run_app(agents.WorkerOptions(entrypoint_fnc=mediator_entrypoint))
+    agents.cli.run_app(agents.WorkerOptions(
+        entrypoint_fnc=mediator_entrypoint,
+        num_idle_processes=1,    # Only keep 1 idle process ready (saves memory)
+        job_memory_warn_mb=1024, # Increase warning threshold to 1GB
+    ))
