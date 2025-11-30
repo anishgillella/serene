@@ -102,6 +102,22 @@ class CalendarService:
             logger.error(f"❌ Error creating cycle event: {e}")
             return None
     
+    def delete_event(self, event_id: str, event_type: str) -> bool:
+        """Delete an event based on its type"""
+        try:
+            if event_type == "cycle":
+                return self.db.delete_cycle_event(event_id)
+            elif event_type == "memorable":
+                return self.db.delete_memorable_date(event_id)
+            elif event_type == "intimacy":
+                return self.db.delete_intimacy_event(event_id)
+            else:
+                logger.warning(f"Unknown event type for deletion: {event_type}")
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting event: {e}")
+            return False
+    
     def get_cycle_events(
         self,
         partner_id: str,
@@ -1436,3 +1452,6 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CalendarService: {e}")
     calendar_service = None
+
+
+

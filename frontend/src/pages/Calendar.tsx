@@ -228,52 +228,66 @@ const Calendar: React.FC = () => {
       let endpoint = '';
       let body = {};
 
-      switch (addEventType) {
-        case 'cycle':
-          endpoint = '/api/calendar/cycle-events';
-          body = {
-            partner_id: 'partner_b',
-            event_type: eventData.cycleType,
-            event_date: eventData.date,
-            notes: eventData.notes,
-            symptoms: eventData.symptoms || []
-          };
-          break;
-        case 'intimacy':
-          endpoint = '/api/calendar/intimacy-events';
-          body = {
-            event_date: eventData.date,
-            notes: eventData.notes
-          };
-          break;
-        case 'memorable':
-          endpoint = '/api/calendar/memorable-dates';
-          body = {
-            title: eventData.title,
-            event_date: eventData.date,
-            event_type: eventData.memorableType,
-            description: eventData.notes,
-            is_recurring: eventData.isRecurring
-          };
-          break;
+      if (addEventType === 'cycle') {
+        endpoint = '/api/calendar/cycle-events';
+        body = {
+          partner_id: 'partner_b',
+          event_type: eventData.cycleType,
+          event_date: eventData.date,
+          notes: eventData.notes,
+          symptoms: eventData.symptoms
+        };
+      } else if (addEventType === 'intimacy') {
+        endpoint = '/api/calendar/intimacy-events';
+        body = {
+          event_date: eventData.date,
+          notes: eventData.notes
+        };
+      } else if (addEventType === 'memorable') {
+        endpoint = '/api/calendar/memorable-dates';
+        body = {
+          title: eventData.title,
+          event_date: eventData.date,
+          event_type: eventData.memorableType,
+          is_recurring: eventData.isRecurring,
+          description: eventData.notes
+        };
       }
 
-      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true'
         },
-        method: 'POST',
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
       });
 
-      if (res.ok) {
-        // Refresh calendar data
-        setFilters({ ...filters });
+      if (response.ok) {
         setShowAddModal(false);
+        setFilters({ ...filters });
       }
     } catch (error) {
       console.error('Error adding event:', error);
+    }
+  };
+
+  const handleDeleteEvent = async (eventId: string, eventType: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/calendar/events/${eventId}?event_type=${eventType}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        // Refresh calendar data
+        setFilters({ ...filters });
+        // Close the panel if it was the last event? No, let user see it's gone.
+      } else {
+        console.error('Failed to delete event');
+        alert('Failed to delete event. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error deleting event:', error);
+      alert('An error occurred while deleting the event.');
     }
   };
 
@@ -545,6 +559,22 @@ const Calendar: React.FC = () => {
                       </div>
                     )}
                   </div>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm('Are you sure you want to delete this event?')) {
+                        handleDeleteEvent(event.id, event.type);
+                      }
+                    }}
+                    className="p-2 text-text-tertiary hover:text-red-500 transition-colors"
+                    title="Delete event"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 6h18"></path>
+                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                    </svg>
+                  </button>
                 </div>
               ))}
             </div>

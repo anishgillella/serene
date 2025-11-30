@@ -12,15 +12,24 @@ interface Conflict {
 
 interface ConflictCardProps {
     conflict: Conflict;
+    onStatusChange?: (id: string, status: string) => void;
 }
 
-const ConflictCard: React.FC<ConflictCardProps> = ({ conflict }) => {
+const ConflictCard: React.FC<ConflictCardProps> = ({ conflict, onStatusChange }) => {
     const navigate = useNavigate();
     const dateObj = new Date(conflict.date);
     const formattedDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const formattedTime = dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
     const isActive = conflict.status.toLowerCase() === 'active';
+
+    const handleStatusClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (onStatusChange) {
+            const newStatus = isActive ? 'resolved' : 'active';
+            onStatusChange(conflict.id, newStatus);
+        }
+    };
 
     return (
         <div
@@ -47,10 +56,14 @@ const ConflictCard: React.FC<ConflictCardProps> = ({ conflict }) => {
                 {/* Details */}
                 <div className="mt-auto flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className={`flex items-center gap-1.5 text-tiny px-2 py-0.5 rounded-full border ${isActive
+                        <div
+                            onClick={handleStatusClick}
+                            className={`flex items-center gap-1.5 text-tiny px-2 py-0.5 rounded-full border cursor-pointer hover:opacity-80 transition-opacity ${isActive
                                 ? 'bg-amber-50 text-amber-700 border-amber-100'
                                 : 'bg-green-50 text-green-700 border-green-100'
-                            }`}>
+                                }`}
+                            title="Click to toggle status"
+                        >
                             {isActive ? <AlertCircle size={12} /> : <CheckCircle2 size={12} />}
                             <span className="font-medium capitalize">{conflict.status}</span>
                         </div>

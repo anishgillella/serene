@@ -800,16 +800,77 @@ class DatabaseService:
         try:
             with self.get_db_context() as conn:
                 with conn.cursor() as cursor:
+                    # Fetch existing metadata first
+                    cursor.execute("SELECT metadata FROM conflicts WHERE id = %s", (conflict_id,))
+                    row = cursor.fetchone()
+                    metadata = row[0] if row and row[0] else {}
+                    
+                    # Update title in metadata
+                    metadata["title"] = title
+                    
                     cursor.execute("""
-                        UPDATE conflicts
-                        SET title = %s
+                        UPDATE conflicts 
+                        SET metadata = %s 
                         WHERE id = %s
-                    """, (title, conflict_id))
+                    """, (json.dumps(metadata), conflict_id))
                     conn.commit()
                     return True
         except Exception as e:
             print(f"Error updating conflict title: {e}")
             return False
+
+    def update_conflict_status(self, conflict_id: str, status: str) -> bool:
+        """Update the status of a conflict"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE conflicts 
+                        SET status = %s 
+                        WHERE id = %s
+                    """, (status, conflict_id))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error updating conflict status: {e}")
+            return False
+
+    def delete_cycle_event(self, event_id: str) -> bool:
+        """Delete a cycle event"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM cycle_events WHERE id = %s", (event_id,))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error deleting cycle event: {e}")
+            return False
+
+    def delete_memorable_date(self, event_id: str) -> bool:
+        """Delete a memorable date"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM memorable_dates WHERE id = %s", (event_id,))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error deleting memorable date: {e}")
+            return False
+
+    def delete_intimacy_event(self, event_id: str) -> bool:
+        """Delete an intimacy event"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM intimacy_events WHERE id = %s", (event_id,))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error deleting intimacy event: {e}")
+            return False
+
     
     def update_conflict(
         self,

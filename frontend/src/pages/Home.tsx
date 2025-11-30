@@ -181,7 +181,7 @@ const Home = () => {
             <div className="w-12 h-12 rounded-2xl bg-accent/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform duration-300">
               <Moon size={24} className="text-accent fill-accent" />
             </div>
-            <h3 className="text-h2 text-text-primary mb-2">Start Session</h3>
+            <h3 className="text-h2 text-text-primary mb-2">Talk to Luna</h3>
             <p className="text-body text-text-secondary mb-6">
               Having a disagreement? Let Luna mediate and help you understand each other.
             </p>

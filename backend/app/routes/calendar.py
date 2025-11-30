@@ -307,6 +307,23 @@ async def get_upcoming_events(
     return {"events": events, "count": len(events), "days_ahead": days_ahead}
 
 
+@router.delete("/events/{event_id}", summary="Delete a calendar event")
+async def delete_event(
+    event_id: str,
+    event_type: str = Query(..., description="Type of event: cycle, memorable, intimacy")
+):
+    """Delete a calendar event."""
+    if not calendar_service:
+        raise HTTPException(status_code=500, detail="Calendar service not available")
+    
+    success = calendar_service.delete_event(event_id, event_type)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Event not found or failed to delete")
+    
+    return {"success": True, "message": "Event deleted successfully"}
+
+
 # =========================================================================
 # INSIGHTS ENDPOINTS
 # =========================================================================

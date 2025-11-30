@@ -351,3 +351,19 @@ async def create_conflict(relationship_id: str = None):
         logger = logging.getLogger(__name__)
         logger.error(f"❌ Error creating conflict: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/conflicts/{conflict_id}/status")
+async def update_conflict_status(conflict_id: str, body: dict = Body(...)):
+    """Update conflict status"""
+    status = body.get("status")
+    if not status:
+        raise HTTPException(status_code=400, detail="Status is required")
+    
+    try:
+        from app.services.db_service import db_service
+        success = db_service.update_conflict_status(conflict_id, status)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conflict not found or update failed")
+        return {"success": True, "status": status}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

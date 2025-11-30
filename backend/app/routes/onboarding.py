@@ -62,47 +62,95 @@ def generate_relationship_narrative(data) -> str:
 
 async def process_onboarding_background(submission: OnboardingSubmission):
     try:
-        # 1. Generate Narratives
-        partner_text = generate_partner_narrative(submission.partner_profile)
-        relationship_text = generate_relationship_narrative(submission.relationship_profile)
+        # Define chunks for Partner Profile
+        partner_data = submission.partner_profile
         
-        # 2. Generate Embeddings
-        partner_embedding = embeddings_service.embed_text(partner_text)
-        relationship_embedding = embeddings_service.embed_text(relationship_text)
+        chunks = []
         
-        # 3. Store in Pinecone (Namespace: profiles)
-        # Partner Vector
-        pinecone_service.index.upsert(
-            vectors=[{
-                "id": f"profile_{submission.relationship_id}_{submission.partner_id}",
-                "values": partner_embedding,
+        # 1. Basic Info Chunk
+        basic_text = (
+            f"Partner Basic Info: {partner_data.name} is a {partner_data.age or 'unknown'} year old {partner_data.role}. "
+            f"Communication style: {partner_data.communication_style}. "
+            f"Stress triggers: {', '.join(partner_data.stress_triggers)}. "
+            f"Soothing mechanisms: {', '.join(partner_data.soothing_mechanisms)}."
+        )
+        chunks.append(("basic_info", basic_text))
+        
+        # 2. Background & History Chunk
+        if partner_data.background_story or partner_data.traumatic_experiences or partner_data.key_life_experiences:
+            background_text = (
+                f"Partner Background & History: {partner_data.background_story or ''}. "
+                f"Traumatic Experiences: {partner_data.traumatic_experiences or 'None'}. "
+                f"Key Life Experiences: {partner_data.key_life_experiences or 'None'}."
+            )
+            chunks.append(("background", background_text))
+            
+        # 3. Preferences & Interests Chunk
+        hobbies = ", ".join(partner_data.hobbies)
+        sports = ", ".join(partner_data.favorite_sports)
+        books = ", ".join(partner_data.favorite_books)
+        celebs = ", ".join(partner_data.favorite_celebrities)
+        
+        if hobbies or sports or books or celebs or partner_data.favorite_food:
+            prefs_text = (
+                f"Partner Preferences & Interests: Hobbies: {hobbies}. "
+                f"Favorite Food: {partner_data.favorite_food}. "
+                f"Favorite Cuisine: {partner_data.favorite_cuisine}. "
+                f"Favorite Sports: {sports}. "
+                f"Favorite Books: {books}. "
+                f"Favorite Celebrities: {celebs}."
+            )
+            chunks.append(("preferences", prefs_text))
+            
+        # 4. Partner Perspective Chunk
+        if partner_data.partner_description or partner_data.what_i_admire or partner_data.what_frustrates_me:
+            perspective_text = (
+                f"Perspective on Partner: Description: {partner_data.partner_description}. "
+                f"Admires: {partner_data.what_i_admire}. "
+                f"Frustrations: {partner_data.what_frustrates_me}."
+            )
+            chunks.append(("perspective", perspective_text))
+            
+        # Process Partner Chunks
+        vectors_to_upsert = []
+        
+        for chunk_type, text in chunks:
+            embedding = embeddings_service.embed_text(text)
+            vectors_to_upsert.append({
+                "id": f"profile_{submission.relationship_id}_{submission.partner_id}_{chunk_type}",
+                "values": embedding,
                 "metadata": {
                     "type": "partner_profile",
+                    "subtype": chunk_type,
                     "relationship_id": submission.relationship_id,
                     "partner_id": submission.partner_id,
-                    "text": partner_text,
-                    "structured_data": submission.partner_profile.model_dump_json()
+                    "text": text
                 }
-            }],
-            namespace="profiles"
-        )
+            })
+            
+        # Process Relationship Profile (Keep as one chunk for now, usually smaller)
+        rel_data = submission.relationship_profile
+        rel_text = generate_relationship_narrative(rel_data)
+        rel_embedding = embeddings_service.embed_text(rel_text)
         
-        # Relationship Vector (Overwrite is fine, or merge? For now overwrite)
+        vectors_to_upsert.append({
+            "id": f"relationship_{submission.relationship_id}",
+            "values": rel_embedding,
+            "metadata": {
+                "type": "relationship_profile",
+                "relationship_id": submission.relationship_id,
+                "text": rel_text,
+                "structured_data": rel_data.model_dump_json()
+            }
+        })
+        
+        # Upsert all
         pinecone_service.index.upsert(
-            vectors=[{
-                "id": f"relationship_{submission.relationship_id}",
-                "values": relationship_embedding,
-                "metadata": {
-                    "type": "relationship_profile",
-                    "relationship_id": submission.relationship_id,
-                    "text": relationship_text,
-                    "structured_data": submission.relationship_profile.model_dump_json()
-                }
-            }],
+            vectors=vectors_to_upsert,
             namespace="profiles"
         )
         
-        logger.info(f"✅ Processed onboarding embeddings for {submission.relationship_id}")
+        logger.info(f"✅ Processed onboarding embeddings for {submission.relationship_id} ({len(vectors_to_upsert)} chunks)")
         
     except Exception as e:
         logger.error(f"❌ Error in onboarding background task: {e}")
