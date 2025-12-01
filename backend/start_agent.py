@@ -27,4 +27,5 @@ if __name__ == "__main__":
         entrypoint_fnc=mediator_entrypoint,
         num_idle_processes=1,    # Only keep 1 idle process ready (saves memory)
         job_memory_warn_mb=1024, # Increase warning threshold to 1GB
+        initialization_timeout=15.0, # Give more time for VAD/model loading
     ))
