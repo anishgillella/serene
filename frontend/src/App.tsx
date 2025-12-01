@@ -7,23 +7,27 @@ import Analytics from './pages/Analytics';
 import Upload from './pages/Upload';
 import History from './pages/History';
 import Calendar from './pages/Calendar';
+import Onboarding from './pages/Onboarding';
+import Profile from './pages/Profile';
 import Layout from './components/Layout';
 export function App() {
   return <Router>
-      <Routes>
-        <Route path="/*" element={
-          <Layout>
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/fight-capture" element={<FightCapture />} />
-              <Route path="/post-fight" element={<PostFightSession />} />
-              <Route path="/analytics" element={<Analytics />} />
-              <Route path="/upload" element={<Upload />} />
-              <Route path="/history" element={<History />} />
-              <Route path="/calendar" element={<Calendar />} />
-            </Routes>
-          </Layout>
-        } />
-      </Routes>
-    </Router>;
+    <Routes>
+      <Route path="/*" element={
+        <Layout>
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/fight-capture" element={<FightCapture />} />
+            <Route path="/post-fight" element={<PostFightSession />} />
+            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/upload" element={<Upload />} />
+            <Route path="/history" element={<History />} />
+            <Route path="/calendar" element={<Calendar />} />
+            <Route path="/onboarding" element={<Onboarding />} />
+            <Route path="/profile" element={<Profile />} />
+          </Routes>
+        </Layout>
+      } />
+    </Routes>
+  </Router>;
 }
