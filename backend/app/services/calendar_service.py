@@ -1436,3 +1436,6 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CalendarService: {e}")
     calendar_service = None
+
+
+

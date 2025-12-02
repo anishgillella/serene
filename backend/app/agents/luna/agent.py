@@ -106,6 +106,8 @@ When answering questions:
 - Connect current situations to past conversations naturally
 - Talk about Adrian and Elara by name
 - Show you really understand the full picture
+
+IMPORTANT: If asked about personal details (favorites, hobbies, background), ALWAYS check the profile context first. Do not say you don't know if the information is in the profile.
 """
         super().__init__(instructions=full_instructions, tools=tools or [])
     

@@ -134,22 +134,16 @@ class TranscriptRAGSystem:
                     return []
 
             async def fetch_profiles():
-                """Fetch profile chunks (with caching)"""
+                """Fetch profile chunks"""
                 if not self.include_profiles or not relationship_id:
                     return []
                 
-                # Check cache first (simple in-memory cache)
-                cache_key = f"profiles_{relationship_id}"
-                if cache_key in self._profile_cache:
-                    logger.info(f"   ✅ Profiles (Cached): {len(self._profile_cache[cache_key])} chunks")
-                    return self._profile_cache[cache_key]
-
                 t_start = time.perf_counter()
                 try:
                     results = await asyncio.to_thread(
                         pinecone_service.index.query,
                         vector=query_embedding,
-                        top_k=3,  # Get top 3 profile chunks
+                        top_k=10,  # Increased from 3 to 10 to capture more profile details
                         namespace="profiles",
                         filter={"relationship_id": {"$eq": relationship_id}},
                         include_metadata=True
@@ -162,7 +156,13 @@ class TranscriptRAGSystem:
                             text = metadata.get("extracted_text", "")
                             pdf_type = metadata.get("pdf_type", "")
                             if text:
-                                speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
+                                # Try to get speaker from name metadata first, then fall back to pdf_type logic
+                                name = metadata.get("name")
+                                if name:
+                                    speaker = name
+                                else:
+                                    speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
+                                
                                 chunks.append({
                                     'text': text,
                                     'match': match,
@@ -171,15 +171,6 @@ class TranscriptRAGSystem:
                                     'profile_type': pdf_type,
                                     'speaker': speaker,
                                 })
-                    
-                    # Cache the results (profiles don't change often during a session)
-                    # Note: This caches based on the query, which isn't quite right for general profiles,
-                    # but for RAG it's okay if we cache the *result* of a generic query. 
-                    # Actually, we are querying with the specific user query.
-                    # So we CANNOT cache the result of this query globally.
-                    # BUT, we could cache the *content* if we fetched all profiles.
-                    # For now, let's NOT cache the query result, but just return it.
-                    # Reverting cache logic for query-specific results.
                     
                     logger.info(f"   ✅ Profiles: {len(chunks)} chunks ({time.perf_counter() - t_start:.3f}s)")
                     return chunks
@@ -393,7 +384,7 @@ class TranscriptRAGSystem:
                     if chunk_type == 'profile':
                         speaker = chunk_data.get('speaker', 'Unknown')
                         # Limit profile text
-                        max_profile_chars = 800
+                        max_profile_chars = 10000  # Increased from 800 to ensure full profile (including shared goals) is visible
                         if len(text) > max_profile_chars:
                             text = text[:max_profile_chars] + "... [truncated]"
                         context_parts.append(f"[{speaker}'s Profile - Background & Personality]:")

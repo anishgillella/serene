@@ -32,6 +32,7 @@ interface RelationshipProfile {
 }
 
 // Hybrid Input Component
+// Hybrid Input Component
 const HybridInput = ({
     value,
     onChange,
@@ -52,62 +53,77 @@ const HybridInput = ({
     const [isListening, setIsListening] = useState(false);
     const [recognition, setRecognition] = useState<any>(null);
 
-    // Ref to keep track of current value without restarting effect
-    const valueRef = React.useRef(value);
+    // Local state to handle typing without immediate re-formatting
+    const [localValue, setLocalValue] = useState<string>('');
+
+    // Sync local state when prop changes externally (but avoid overriding user typing)
     useEffect(() => {
-        valueRef.current = value;
-    }, [value]);
+        if (isList && Array.isArray(value)) {
+            // Only update if the parsed local value doesn't match the new prop value
+            // This is a bit tricky, so we'll use a simple heuristic:
+            // If the prop value is significantly different (e.g. from a reset or initial load), update local.
+            // For now, we'll just initialize and update if it's empty or completely different.
+            // A better way is to only update localValue if the parent value changes and it's NOT due to our own change.
+            // But since we can't easily know that, we'll just initialize it and rely on local state for driving changes.
+
+            // Actually, let's just sync on mount or if value changes length significantly?
+            // Let's try: Update local value only if it's empty (initial load)
+            if (localValue === '' && value.length > 0) {
+                setLocalValue(value.join(', '));
+            }
+        } else if (!isList && typeof value === 'string') {
+            if (localValue === '' && value) {
+                setLocalValue(value);
+            } else if (value !== localValue) {
+                // If parent updates it (e.g. from speech recognition or reset)
+                // We need to be careful not to overwrite typing.
+                // For now, we will trust the parent if it changes.
+                setLocalValue(value);
+            }
+        }
+    }, [value, isList]);
+
+    // Initialize local value on mount
+    useEffect(() => {
+        if (isList && Array.isArray(value)) {
+            setLocalValue(value.join(', '));
+        } else if (!isList) {
+            setLocalValue(value as string);
+        }
+    }, []); // Run once on mount
 
     useEffect(() => {
         if ('webkitSpeechRecognition' in window) {
             const r = new (window as any).webkitSpeechRecognition();
-            r.continuous = true; // Enable continuous listening
+            r.continuous = true;
             r.interimResults = false;
             r.lang = 'en-US';
 
             r.onresult = (event: any) => {
-                // Get the latest result
                 const resultIndex = event.results.length - 1;
                 const latestResult = event.results[resultIndex];
 
-                // Only process if it's a new result we haven't handled yet
                 if (latestResult.isFinal) {
                     const text = latestResult[0].transcript.trim();
 
-                    if (isList && Array.isArray(valueRef.current)) {
-                        const items = text.split(/,| and /).map((s: string) => s.trim()).filter(Boolean);
-                        onChange([...valueRef.current, ...items]);
+                    if (isList) {
+                        // For lists, we append intelligently
+                        setLocalValue(prev => {
+                            const separator = prev.trim().endsWith(',') ? ' ' : ', ';
+                            const newValue = prev ? prev + separator + text : text;
+
+                            // Update parent
+                            const items = newValue.split(/[,;\n]+| and /).map((s: string) => s.trim()).filter(Boolean);
+                            onChange(items);
+
+                            return newValue;
+                        });
                     } else {
-                        // Use functional update pattern indirectly by referencing current value
-                        // Since we can't access the *latest* state inside this closure easily without refs,
-                        // we rely on the fact that 'value' is in the dependency array.
-                        // However, with continuous listening, the effect might re-run and reset recognition.
-                        // To fix this, we need to NOT re-create recognition on every value change.
-                        // But we need the current value to append.
-
-                        // BETTER APPROACH: Use a ref for the current value so we don't need to re-bind
-                        // But for now, let's just fix the appending logic.
-
-                        // The issue is likely that 'value' is stale or we are re-appending the whole transcript.
-                        // With continuous=true, event.results accumulates.
-                        // We should only append the NEWEST result.
-
-                        // We are already doing that by taking event.results[length-1].
-                        // The problem is likely that 'value' inside this callback is stale because
-                        // the effect doesn't re-run (or if it does, it restarts recognition).
-
-                        // If we put 'value' in deps, recognition restarts on every word. Bad.
-                        // We need to remove 'value' from deps and use a functional update or ref.
-                        // Since onChange is passed from parent, we can just call onChange(prev => ...)? 
-                        // No, onChange expects a value, not a function usually.
-
-                        // Let's use a ref to track the current value without re-triggering the effect.
-                        // See below for the ref implementation.
-
-                        // Using the ref value:
-                        const currentValue = valueRef.current as string;
-                        const newValue = currentValue ? currentValue + ' ' + text : text;
-                        onChange(newValue);
+                        setLocalValue(prev => {
+                            const newValue = prev ? prev + ' ' + text : text;
+                            onChange(newValue);
+                            return newValue;
+                        });
                     }
                 }
             };
@@ -117,22 +133,13 @@ const HybridInput = ({
                 setIsListening(false);
             };
 
-            // Don't stop on end for continuous, unless manually stopped
-            // r.onend = () => setIsListening(false); 
-
             setRecognition(r);
 
-            // Cleanup function
             return () => {
-                if (r) {
-                    r.stop();
-                    r.onresult = null;
-                    r.onerror = null;
-                    r.onend = null;
-                }
+                if (r) r.stop();
             };
         }
-    }, [isList]); // Remove 'value' and 'onChange' from deps to prevent restarting
+    }, [isList, onChange]);
 
     const toggleListening = () => {
         if (!recognition) return;
@@ -146,32 +153,35 @@ const HybridInput = ({
     };
 
     const handleTextChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        const newVal = e.target.value;
+        setLocalValue(newVal);
+
         if (isList) {
-            // Split by comma or newline
-            onChange(e.target.value.split(/[\n,]+/).map(s => s.trim()).filter(Boolean));
+            // Allow any separator: comma, newline, semicolon, or " and "
+            // We don't filter(Boolean) immediately to allow typing trailing spaces/commas
+            // But we need to send a clean array to the parent
+            const items = newVal.split(/[,;\n]+| and /).map((s: string) => s.trim()).filter(Boolean);
+            onChange(items);
         } else {
-            onChange(e.target.value);
+            onChange(newVal);
         }
     };
 
-    // Handle Enter key
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
             if (multiline && !e.shiftKey) {
-                return; // Allow new lines in textarea
+                return;
             }
             e.preventDefault();
             if (onEnter) onEnter();
         }
     };
 
-    const displayValue = isList && Array.isArray(value) ? value.join(', ') : value as string;
-
     return (
         <div className={`relative ${multiline ? 'w-full' : 'w-full max-w-2xl mx-auto'}`}>
             {multiline ? (
                 <textarea
-                    value={displayValue}
+                    value={localValue}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}
@@ -181,7 +191,7 @@ const HybridInput = ({
             ) : (
                 <input
                     type="text"
-                    value={displayValue}
+                    value={localValue}
                     onChange={handleTextChange}
                     onKeyDown={handleKeyDown}
                     placeholder={placeholder}

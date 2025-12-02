@@ -49,89 +49,125 @@ class OnboardingSubmission(BaseModel):
 
 # --- Helper Functions ---
 
-def generate_narrative(data: OnboardingSubmission) -> str:
+def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]:
     """
-    Convert structured onboarding data into a narrative text for RAG.
+    Convert structured onboarding data into semantic chunks for RAG.
+    Returns a list of dicts with 'section' and 'text'.
     """
     p = data.partner_profile
     r = data.relationship_profile
     
-    lines = []
-    lines.append(f"--- ONBOARDING PROFILE: {p.name} ({p.role}) ---")
-    lines.append(f"Name: {p.name}")
-    lines.append(f"Age: {p.age}")
-    lines.append(f"Role: {p.role}")
+    chunks = []
     
-    lines.append(f"\n## Background & Life Story")
-    lines.append(f"{p.background_story}")
-    lines.append(f"Key Life Experiences: {p.key_life_experiences}")
+    # Chunk 1: Identity & Basic Info
+    identity_lines = []
+    identity_lines.append(f"--- ONBOARDING PROFILE: {p.name} ({p.role}) ---")
+    identity_lines.append(f"Name: {p.name}")
+    identity_lines.append(f"Age: {p.age}")
+    identity_lines.append(f"Role: {p.role}")
+    chunks.append({"section": "identity", "text": "\n".join(identity_lines)})
+    
+    # Chunk 2: Background & Life Story
+    background_lines = []
+    background_lines.append(f"## Background & Life Story ({p.name})")
+    background_lines.append(f"{p.background_story}")
+    background_lines.append(f"Key Life Experiences: {p.key_life_experiences}")
     if p.traumatic_experiences:
-        lines.append(f"Traumatic Experiences: {p.traumatic_experiences}")
+        background_lines.append(f"Traumatic Experiences: {p.traumatic_experiences}")
+    chunks.append({"section": "background", "text": "\n".join(background_lines)})
         
-    lines.append(f"\n## Inner World & Personality")
-    lines.append(f"Communication Style: {p.communication_style}")
-    lines.append(f"Stress Triggers: {', '.join(p.stress_triggers)}")
-    lines.append(f"Soothing Mechanisms: {', '.join(p.soothing_mechanisms)}")
+    # Chunk 3: Inner World & Personality
+    personality_lines = []
+    personality_lines.append(f"## Inner World & Personality ({p.name})")
+    personality_lines.append(f"Communication Style: {p.communication_style}")
+    personality_lines.append(f"Stress Triggers: {', '.join(p.stress_triggers)}")
+    personality_lines.append(f"Soothing Mechanisms: {', '.join(p.soothing_mechanisms)}")
+    chunks.append({"section": "personality", "text": "\n".join(personality_lines)})
     
-    lines.append(f"\n## Interests & Favorites")
-    lines.append(f"Hobbies: {', '.join(p.hobbies)}")
-    lines.append(f"Favorite Food: {p.favorite_food} ({p.favorite_cuisine})")
-    lines.append(f"Favorite Books: {', '.join(p.favorite_books)}")
-    lines.append(f"Favorite Sports: {', '.join(p.favorite_sports)}")
-    lines.append(f"Favorite Celebrities: {', '.join(p.favorite_celebrities)}")
+    # Chunk 4: Interests & Favorites
+    interests_lines = []
+    interests_lines.append(f"## Interests & Favorites ({p.name})")
+    interests_lines.append(f"Hobbies: {', '.join(p.hobbies)}")
+    interests_lines.append(f"Favorite Food: {p.favorite_food} ({p.favorite_cuisine})")
+    interests_lines.append(f"Favorite Books: {', '.join(p.favorite_books)}")
+    interests_lines.append(f"Favorite Sports: {', '.join(p.favorite_sports)}")
+    interests_lines.append(f"Favorite Celebrities: {', '.join(p.favorite_celebrities)}")
+    chunks.append({"section": "interests", "text": "\n".join(interests_lines)})
     
-    lines.append(f"\n## View on Partner")
-    lines.append(f"Description of Partner: {p.partner_description}")
-    lines.append(f"Admired Qualities: {p.what_i_admire}")
-    lines.append(f"Frustrations: {p.what_frustrates_me}")
+    # Chunk 5: View on Partner
+    partner_view_lines = []
+    partner_view_lines.append(f"## View on Partner ({p.name})")
+    partner_view_lines.append(f"Description of Partner: {p.partner_description}")
+    partner_view_lines.append(f"Admired Qualities: {p.what_i_admire}")
+    partner_view_lines.append(f"Frustrations: {p.what_frustrates_me}")
+    chunks.append({"section": "partner_view", "text": "\n".join(partner_view_lines)})
     
-    lines.append(f"\n## Relationship Dynamics")
-    lines.append(f"Dynamic: {r.relationship_dynamic}")
-    lines.append(f"Recurring Arguments: {', '.join(r.recurring_arguments)}")
-    lines.append(f"Shared Goals: {', '.join(r.shared_goals)}")
+    # Chunk 6: Relationship Dynamics
+    dynamics_lines = []
+    dynamics_lines.append(f"## Relationship Dynamics ({p.name})")
+    dynamics_lines.append(f"Dynamic: {r.relationship_dynamic}")
+    dynamics_lines.append(f"Recurring Arguments: {', '.join(r.recurring_arguments)}")
+    dynamics_lines.append(f"Shared Goals: {', '.join(r.shared_goals)}")
+    chunks.append({"section": "relationship", "text": "\n".join(dynamics_lines)})
     
-    return "\n".join(lines)
+    return chunks
 
 async def process_onboarding_task(data: OnboardingSubmission, pdf_id: str):
     """
     Background task to process onboarding data:
-    1. Generate narrative text
-    2. Embed and upsert to Pinecone
+    1. Generate semantic chunks
+    2. Embed and upsert to Pinecone (multiple vectors)
     3. Upload raw JSON to S3
     4. Update DB record
     """
     try:
         logger.info(f"🚀 Processing onboarding for {data.partner_profile.name} ({data.partner_id})")
         
-        # 1. Generate Narrative
-        narrative_text = generate_narrative(data)
-        logger.info(f"📝 Generated narrative ({len(narrative_text)} chars)")
+        # 1. Generate Semantic Chunks
+        chunks = generate_semantic_chunks(data)
+        full_text_length = sum(len(c["text"]) for c in chunks)
+        logger.info(f"📝 Generated {len(chunks)} semantic chunks (total {full_text_length} chars)")
         
         # 2. Parallelize Pinecone Upsert and S3 Upload
         import asyncio
         
         async def upsert_pinecone():
-            embedding = embeddings_service.embed_text(narrative_text)
-            metadata = {
-                "pdf_id": pdf_id,
-                "relationship_id": data.relationship_id,
-                "partner_id": data.partner_id,
-                "pdf_type": "onboarding_profile",
-                "filename": "onboarding_questionnaire.json",
-                "text_length": len(narrative_text),
-                "extracted_text": narrative_text,
-                "name": data.partner_profile.name,
-                "role": data.partner_profile.role
-            }
-            pinecone_service.index.upsert(
-                vectors=[{
-                    "id": f"onboarding_{pdf_id}",
+            vectors = []
+            
+            # Embed all chunks in batch (if supported) or loop
+            # For simplicity and robustness, we'll loop here, but batching is better for perf
+            for chunk in chunks:
+                section = chunk["section"]
+                text = chunk["text"]
+                
+                embedding = embeddings_service.embed_text(text)
+                
+                metadata = {
+                    "pdf_id": pdf_id,
+                    "relationship_id": data.relationship_id,
+                    "partner_id": data.partner_id,
+                    "pdf_type": "onboarding_profile",
+                    "filename": "onboarding_questionnaire.json",
+                    "text_length": len(text),
+                    "extracted_text": text,
+                    "name": data.partner_profile.name,
+                    "role": data.partner_profile.role,
+                    "section": section # Add section to metadata
+                }
+                
+                vectors.append({
+                    "id": f"onboarding_{pdf_id}_{section}",
                     "values": embedding,
                     "metadata": metadata
-                }],
-                namespace="profiles"
-            )
-            logger.info(f"✅ Upserted to Pinecone (profiles namespace)")
+                })
+            
+            # Batch upsert
+            if vectors:
+                pinecone_service.index.upsert(
+                    vectors=vectors,
+                    namespace="profiles"
+                )
+                logger.info(f"✅ Upserted {len(vectors)} chunks to Pinecone (profiles namespace)")
 
         async def upload_s3_and_update_db():
             json_content = data.model_dump_json(indent=2).encode('utf-8')
@@ -146,7 +182,7 @@ async def process_onboarding_task(data: OnboardingSubmission, pdf_id: str):
             
             if db_service:
                 updates = {
-                    "extracted_text_length": len(narrative_text),
+                    "extracted_text_length": full_text_length,
                     "file_path": s3_url or ""
                 }
                 db_service.update_profile(pdf_id, updates)
