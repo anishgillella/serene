@@ -470,3 +470,19 @@ async def seed_sample_data():
         logger.error(f"Error seeding sample data: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to seed data: {e}")
 
+
+@router.delete("/events/{event_id}", summary="Delete a calendar event")
+async def delete_event(
+    event_id: str,
+    event_type: str = Query(..., description="Event type: cycle, intimacy, memorable, conflict")
+):
+    """Delete a calendar event by ID and type."""
+    if not calendar_service:
+        raise HTTPException(status_code=500, detail="Calendar service not available")
+    
+    success = calendar_service.delete_event(event_id, event_type)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Event not found or failed to delete")
+    
+    return {"success": True, "message": "Event deleted successfully"}

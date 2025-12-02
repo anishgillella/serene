@@ -75,11 +75,62 @@ const History = () => {
   // Actually, if last conflict was today, streak is 0. If yesterday, 1.
   const displayStreak = conflicts.length === 0 ? 0 : Math.max(0, streakDays);
 
+  const handleDelete = async (id: string) => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/conflicts/${id}`, {
+        method: 'DELETE',
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
+
+      if (response.ok) {
+        setConflicts(prev => prev.filter(c => c.id !== id));
+      } else {
+        console.error('Failed to delete conflict');
+        alert('Failed to delete conflict. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error deleting conflict:', error);
+      alert('Error deleting conflict. Please try again.');
+    }
+  };
+
+  const handleClearTestData = async () => {
+    if (!window.confirm('Are you sure you want to delete all conflicts with title "Conflict Session"? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/conflicts/cleanup?title=Conflict Session`, {
+        method: 'DELETE',
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        alert(data.message);
+        // Refresh list
+        setConflicts(prev => prev.filter(c => c.summary !== 'Conflict Session'));
+      } else {
+        console.error('Failed to clear test data');
+        alert('Failed to clear test data. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error clearing test data:', error);
+      alert('Error clearing test data. Please try again.');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-bg-primary p-4 md:p-8 font-sans text-text-primary">
       <div className="max-w-5xl mx-auto">
         {/* Header */}
-        <div className="text-center mb-12 animate-fade-in">
+        <div className="text-center mb-12 animate-fade-in relative">
           <h2 className="text-h2 text-text-primary flex items-center justify-center gap-3 mb-2">
             <HistoryIcon className="text-accent" size={28} strokeWidth={1.5} />
             Conflict History
@@ -87,6 +138,15 @@ const History = () => {
           <p className="text-body text-text-secondary">
             Your relationship journey and growth over time
           </p>
+
+          {/* Clear Test Data Button */}
+          <button
+            onClick={handleClearTestData}
+            className="absolute right-0 top-0 text-tiny text-text-tertiary hover:text-red-500 transition-colors hidden md:block"
+            title="Remove all 'Conflict Session' entries"
+          >
+            Clear Test Data
+          </button>
         </div>
 
         {loading ? (
@@ -109,7 +169,7 @@ const History = () => {
             />
 
             {filteredConflicts.length > 0 ? (
-              <Timeline conflicts={filteredConflicts} />
+              <Timeline conflicts={filteredConflicts} onDelete={handleDelete} />
             ) : (
               <div className="text-center py-12 bg-surface-elevated rounded-2xl border border-border-subtle border-dashed shadow-soft">
                 <div className="text-h3 text-text-secondary mb-2">No conflicts found</div>

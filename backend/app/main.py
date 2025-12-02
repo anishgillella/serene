@@ -351,3 +351,25 @@ async def create_conflict(relationship_id: str = None):
         logger = logging.getLogger(__name__)
         logger.error(f"❌ Error creating conflict: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/conflicts/cleanup")
+async def cleanup_conflicts(title: str = "Conflict Session"):
+    """Delete all conflicts with the given title (default: 'Conflict Session')"""
+    try:
+        from app.services.db_service import db_service
+        count = db_service.delete_conflicts_by_title(title)
+        return {"success": True, "deleted_count": count, "message": f"Deleted {count} conflicts with title '{title}'"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/conflicts/{conflict_id}")
+async def delete_conflict(conflict_id: str):
+    """Delete a specific conflict by ID"""
+    try:
+        from app.services.db_service import db_service
+        success = db_service.delete_conflict(conflict_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Conflict not found or could not be deleted")
+        return {"success": True, "message": f"Conflict {conflict_id} deleted"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

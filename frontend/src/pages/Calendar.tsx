@@ -4,7 +4,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
-  Calendar as CalendarIcon
+  Calendar as CalendarIcon,
+  Trash2
 } from 'lucide-react';
 
 // Types
@@ -62,17 +63,17 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const getEventIcon = (eventType: string) => {
   const iconMap: Record<string, string> = {
     // Cycle events
-    'period_start': '🌸',
+    'period_start': '🩸',
     'period_end': '🌸',
-    'ovulation': '✨',
-    'fertile_start': '🌺',
-    'fertile_end': '🌺',
-    'pms_start': '💫',
+    'ovulation': '🥚',
+    'fertile_start': '💕',
+    'fertile_end': '💕',
+    'pms_start': '⚠️',
     'symptom_log': '📝',
     'mood_log': '😊',
 
     // Intimacy
-    'intimacy': '💝',
+    'intimacy': '💘',
 
     // Conflicts
     'conflict': '⚡',
@@ -80,7 +81,7 @@ const getEventIcon = (eventType: string) => {
     // Memorable dates
     'anniversary': '💍',
     'birthday': '🎂',
-    'first_date': '💕',
+    'first_date': '🥂',
     'milestone': '🏆',
     'holiday': '🎉',
     'custom': '⭐',
@@ -195,7 +196,7 @@ const Calendar: React.FC = () => {
 
   const getEventsForDay = (day: number): CalendarEvent[] => {
     if (!calendarData) return [];
-    const dateStr = `${currentYear} -${String(currentMonth).padStart(2, '0')} -${String(day).padStart(2, '0')} `;
+    const dateStr = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     return calendarData.events_by_date[dateStr] || [];
   };
 
@@ -277,6 +278,33 @@ const Calendar: React.FC = () => {
     }
   };
 
+  const handleDeleteEvent = async (event: CalendarEvent, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!event.id || event.is_prediction) return;
+
+    if (!confirm('Are you sure you want to delete this event?')) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/calendar/events/${event.id}?event_type=${event.type}`, {
+        method: 'DELETE',
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
+      });
+
+      if (res.ok) {
+        // Refresh calendar data
+        setFilters({ ...filters });
+        // If it was the last event, close the modal
+        if (calendarData?.events_by_date[selectedDate!]?.length === 1) {
+          setSelectedDate(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting event:', error);
+    }
+  };
+
   const days = generateCalendarDays();
 
   return (
@@ -340,11 +368,12 @@ const Calendar: React.FC = () => {
         <h3 className="text-tiny font-medium text-text-tertiary uppercase tracking-wider mb-3">Event Types</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
-            { key: 'cycle', label: 'Cycle', icon: '🌸', color: 'bg-rose-100 text-rose-600' },
-            { key: 'intimacy', label: 'Intimacy', icon: '💝', color: 'bg-pink-100 text-pink-600' },
+            { key: 'cycle', label: 'Cycle', icon: '🩸', color: 'bg-rose-100 text-rose-600' },
+            { key: 'intimacy', label: 'Intimacy', icon: '💘', color: 'bg-pink-100 text-pink-600' },
             { key: 'conflict', label: 'Conflicts', icon: '⚡', color: 'bg-amber-100 text-amber-600' },
             { key: 'memorable', label: 'Special', icon: '✨', color: 'bg-purple-100 text-purple-600' },
             { key: 'prediction', label: 'Forecast', icon: '🔮', color: 'bg-indigo-100 text-indigo-600' },
+            { key: 'logs', label: 'Logs', icon: '📝', color: 'bg-gray-100 text-gray-600' },
           ].map(({ key, label, icon, color }) => (
             <button
               key={key}
@@ -449,13 +478,7 @@ const Calendar: React.FC = () => {
                     )}
                   </div>
 
-                  {/* Show conflict first if present, otherwise first event */}
-                  {events.length > 0 && (
-                    <div className="text-[10px] text-text-tertiary truncate leading-tight">
-                      {events.find(e => e.type === 'conflict')?.title.replace(/[📌⚠️]/g, '').trim().substring(0, 12) ||
-                        events[0].title.replace(/[📌🩸💕⚠️🎂🔮]/g, '').trim().substring(0, 12)}
-                    </div>
-                  )}
+                  {/* Text label removed as per user request to reduce clutter */}
                 </div>
               );
             })}
@@ -518,7 +541,7 @@ const Calendar: React.FC = () => {
               {calendarData?.events_by_date[selectedDate]?.map((event, idx) => (
                 <div
                   key={idx}
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-all border border-transparent ${event.type === 'conflict' ? 'cursor-pointer hover:bg-surface-hover hover:border-border-subtle' : 'bg-surface-hover'
+                  className={`flex items-start gap-4 p-4 rounded-xl transition-all border border-transparent group ${event.type === 'conflict' ? 'cursor-pointer hover:bg-surface-hover hover:border-border-subtle' : 'bg-surface-hover'
                     }`}
                   onClick={() => {
                     if (event.type === 'conflict' && event.id) {
@@ -551,6 +574,16 @@ const Calendar: React.FC = () => {
                       </div>
                     )}
                   </div>
+
+                  {!event.is_prediction && (
+                    <button
+                      onClick={(e) => handleDeleteEvent(event, e)}
+                      className="p-2 text-text-tertiary hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete event"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

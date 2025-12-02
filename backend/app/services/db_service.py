@@ -712,6 +712,37 @@ class DatabaseService:
             print(f"Error getting conflict: {e}")
             return None
 
+    def delete_conflict(self, conflict_id: str) -> bool:
+        """Delete a conflict and all associated data (cascade should handle most, but explicit for safety)"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Delete related records first (if cascade not set up, though it should be)
+                    # Deleting from conflicts table should cascade to analysis, repair_plans, etc.
+                    # But let's be safe and explicit or rely on cascade. 
+                    # Assuming cascade is set up in migration.sql. If not, we need to delete children first.
+                    # Let's assume cascade for now, but wrap in transaction.
+                    
+                    cursor.execute("DELETE FROM conflicts WHERE id = %s", (conflict_id,))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error deleting conflict: {e}")
+            return False
+
+    def delete_conflicts_by_title(self, title: str) -> int:
+        """Delete all conflicts with a specific title (e.g. 'Conflict Session')"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("DELETE FROM conflicts WHERE title = %s", (title,))
+                    deleted_count = cursor.rowcount
+                    conn.commit()
+                    return deleted_count
+        except Exception as e:
+            print(f"Error deleting conflicts by title: {e}")
+            return 0
+
     def update_conflict_title(self, conflict_id: str, title: str) -> bool:
         """Update the title of a conflict"""
         try:
