@@ -6,7 +6,7 @@ Uses AgentServer pattern like Voice Agent RAG
 """
 import logging
 from livekit import agents
-from app.agents.luna import mediator_entrypoint
+from app.agents.luna import mediator_entrypoint, prewarm
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,6 +25,7 @@ if __name__ == "__main__":
     
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=mediator_entrypoint,
+        prewarm_fnc=prewarm,
         num_idle_processes=1,    # Only keep 1 idle process ready (saves memory)
         job_memory_warn_mb=1024, # Increase warning threshold to 1GB
     ))

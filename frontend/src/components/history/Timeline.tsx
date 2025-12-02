@@ -11,9 +11,10 @@ interface Conflict {
 
 interface TimelineProps {
     conflicts: Conflict[];
+    onDelete: (id: string) => void;
 }
 
-const MonthSection: React.FC<{ month: string; conflicts: Conflict[] }> = ({ month, conflicts }) => {
+const MonthSection: React.FC<{ month: string; conflicts: Conflict[]; onDelete: (id: string) => void }> = ({ month, conflicts, onDelete }) => {
     const [showAll, setShowAll] = React.useState(false);
     const INITIAL_COUNT = 4;
     const hasMore = conflicts.length > INITIAL_COUNT;
@@ -35,7 +36,7 @@ const MonthSection: React.FC<{ month: string; conflicts: Conflict[] }> = ({ mont
             {/* Conflicts Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {visibleConflicts.map((conflict) => (
-                    <ConflictCard key={conflict.id} conflict={conflict} />
+                    <ConflictCard key={conflict.id} conflict={conflict} onDelete={onDelete} />
                 ))}
             </div>
 
@@ -54,7 +55,7 @@ const MonthSection: React.FC<{ month: string; conflicts: Conflict[] }> = ({ mont
     );
 };
 
-const Timeline: React.FC<TimelineProps> = ({ conflicts }) => {
+const Timeline: React.FC<TimelineProps> = ({ conflicts, onDelete }) => {
     // Group conflicts by month
     const groupedConflicts = conflicts.reduce((acc, conflict) => {
         const date = new Date(conflict.date);
@@ -72,7 +73,7 @@ const Timeline: React.FC<TimelineProps> = ({ conflicts }) => {
     return (
         <div className="relative pl-8 border-l-2 border-border-subtle ml-4 md:ml-8 space-y-0">
             {months.map((month) => (
-                <MonthSection key={month} month={month} conflicts={groupedConflicts[month]} />
+                <MonthSection key={month} month={month} conflicts={groupedConflicts[month]} onDelete={onDelete} />
             ))}
         </div>
     );

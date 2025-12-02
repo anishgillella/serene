@@ -80,6 +80,17 @@ class CalendarService:
         try:
             with self.db.get_db_context() as conn:
                 with conn.cursor() as cursor:
+                    # Check for existing event of same type on same date
+                    cursor.execute("""
+                        SELECT id FROM cycle_events 
+                        WHERE partner_id = %s AND event_type = %s AND event_date = %s AND relationship_id = %s
+                    """, (partner_id, event_type, event_date, relationship_id))
+                    
+                    existing = cursor.fetchone()
+                    if existing:
+                        logger.info(f"⚠️ Event already exists: {event_type} on {event_date}")
+                        return str(existing[0])
+
                     # If this is a period_start, set cycle_day to 1
                     if event_type == "period_start":
                         cycle_day = 1  # First day of period is always day 1
@@ -101,6 +112,29 @@ class CalendarService:
         except Exception as e:
             logger.error(f"❌ Error creating cycle event: {e}")
             return None
+
+    def delete_event(self, event_id: str, event_type: str) -> bool:
+        """Delete a calendar event by ID and type."""
+        try:
+            table_map = {
+                "cycle": "cycle_events",
+                "intimacy": "intimacy_events",
+                "memorable": "memorable_dates",
+                "conflict": "conflicts"
+            }
+            
+            table = table_map.get(event_type)
+            if not table:
+                return False
+                
+            with self.db.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(f"DELETE FROM {table} WHERE id = %s", (event_id,))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            logger.error(f"❌ Error deleting event: {e}")
+            return False
     
     def get_cycle_events(
         self,
@@ -150,12 +184,12 @@ class CalendarService:
     def _get_cycle_event_title(self, event_type: str) -> str:
         """Get human-readable title for cycle event type."""
         titles = {
-            "period_start": "🩸 Period Started",
+            "period_start": "Period Started",
             "period_end": "Period Ended",
-            "ovulation": "🥚 Ovulation",
-            "fertile_start": "💕 Fertile Window Start",
+            "ovulation": "Ovulation",
+            "fertile_start": "Fertile Window Start",
             "fertile_end": "Fertile Window End",
-            "pms_start": "⚠️ PMS Phase",
+            "pms_start": "PMS Phase",
         }
         return titles.get(event_type, event_type.replace("_", " ").title())
     
@@ -225,7 +259,7 @@ class CalendarService:
                     "type": "prediction",
                     "event_type": "period_start",
                     "predicted_date": next_period.isoformat(),
-                    "title": "📅 Predicted Period",
+                    "title": "Predicted Period",
                     "color": "#fda4af",  # Light pink
                     "is_prediction": True,
                     "cycle_length": avg_cycle_length
@@ -613,7 +647,7 @@ class CalendarService:
                         end_date = date.today() + timedelta(days=1)
                     
                     cursor.execute("""
-                        SELECT id, started_at, ended_at, status, metadata
+                        SELECT id, started_at, ended_at, status, metadata, title
                         FROM conflicts
                         WHERE relationship_id = %s
                         AND started_at BETWEEN %s AND %s
@@ -623,12 +657,17 @@ class CalendarService:
                     
                     events = []
                     for row in cursor.fetchall():
+                        # Use title from DB column, fallback to metadata, then default
+                        db_title = row[5]
+                        meta_title = (row[4] or {}).get("title")
+                        display_title = db_title or meta_title or "⚠️ Conflict"
+                        
                         events.append({
                             "id": str(row[0]),
                             "type": "conflict",
                             "event_type": "conflict",
                             "event_date": row[1].date().isoformat() if row[1] else None,
-                            "title": (row[4] or {}).get("title", "⚠️ Conflict"),
+                            "title": display_title,
                             "started_at": row[1].isoformat() if row[1] else None,
                             "ended_at": row[2].isoformat() if row[2] else None,
                             "status": row[3],
@@ -1382,12 +1421,9 @@ class CalendarService:
                         topic = topic.strip()
                         if topic:
                             topic_counts[topic] = topic_counts.get(topic, 0) + 1
-                else:
-                    # Fallback to summary/title
-                    topic = c.get("summary", "Conflict Session").strip()
-                    if not topic:
-                        topic = "Conflict Session"
-                    topic_counts[topic] = topic_counts.get(topic, 0) + 1
+                # else:
+                #     # Fallback removed as per user request - only use AI topics
+                #     pass
             
             # Sort by count and take top 5
             top_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:5]
@@ -1436,3 +1472,6 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CalendarService: {e}")
     calendar_service = None
+
+
+

@@ -3,7 +3,7 @@ import time
 import asyncio
 import os
 from livekit import agents, rtc
-from livekit.agents import AgentSession, room_io, JobContext
+from livekit.agents import AgentSession, room_io, JobContext, JobProcess
 from livekit.plugins import deepgram, elevenlabs, openai, silero
 from livekit.plugins import noise_cancellation
 
@@ -20,6 +20,19 @@ except ImportError:
 
 logger = logging.getLogger("luna-entrypoint")
 
+# Global VAD model for prewarming
+_vad_model = None
+
+def prewarm(proc: JobProcess):
+    """Pre-load heavy models (VAD) when worker process starts"""
+    global _vad_model
+    logger.info("🔥 Pre-warming VAD model...")
+    try:
+        _vad_model = silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.3)
+        logger.info("✅ VAD model loaded successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to pre-warm VAD model: {e}")
+
 async def mediator_entrypoint(ctx: JobContext):
     """Main mediator agent entry point"""
     
@@ -35,66 +48,98 @@ async def mediator_entrypoint(ctx: JobContext):
     conflict_id = room_name.replace("mediator-", "").split("?")[0]
     logger.info(f"   ✅ Extracted Conflict ID: {conflict_id}")
     
-    # Create DB session
-    session_id = None
-    if db_service:
+    # Parallel Initialization Tasks
+    async def init_db_session():
+        if db_service:
+            try:
+                sid = await asyncio.to_thread(
+                    db_service.create_mediator_session,
+                    conflict_id=conflict_id
+                )
+                logger.info(f"   ✅ Created DB session: {sid}")
+                return sid
+            except Exception as e:
+                logger.error(f"   ❌ Failed to create DB session: {e}")
+        return None
+
+    async def init_rag_system():
         try:
-            session_id = await asyncio.to_thread(
-                db_service.create_mediator_session,
-                conflict_id=conflict_id
-            )
-            logger.info(f"   ✅ Created DB session: {session_id}")
+            # Check if we need RAG (if conflict_id exists)
+            if not conflict_id:
+                return None, None
+                
+            # Get relationship_id
+            rel_id = None
+            if db_service:
+                try:
+                    conflict_data = await asyncio.to_thread(db_service.get_conflict_by_id, conflict_id=conflict_id)
+                    if conflict_data:
+                        rel_id = str(conflict_data.get("relationship_id"))
+                except Exception:
+                    pass
+            
+            # Initialize RAG system
+            from app.services.transcript_rag import TranscriptRAGSystem
+            # This might involve network calls to Pinecone/OpenAI, so run in thread if blocking
+            # But TranscriptRAGSystem init is mostly setting config, actual connections are lazy or fast
+            rag = TranscriptRAGSystem(k=5, include_profiles=True, include_calendar=False)
+            return rag, rel_id
+        except ImportError:
+            logger.warning("RAG system not available")
+            return None, None
         except Exception as e:
-            logger.error(f"   ❌ Failed to create DB session: {e}")
-            
+            logger.error(f"Error initializing RAG: {e}")
+            return None, None
+
+    # Start parallel tasks
+    # 1. DB Session
+    # 2. RAG System (includes DB lookup for relationship_id)
+    # 3. AI Services (LLM, TTS) - these are fast but good to group
+    
+    # Setup AI Services (Synchronous but fast)
+    elevenlabs_key = settings.ELEVENLABS_API_KEY
+    openrouter_key = settings.OPENROUTER_API_KEY
+    
+    if not elevenlabs_key or not openrouter_key:
+        raise ValueError("ELEVENLABS_API_KEY and OPENROUTER_API_KEY required")
+        
+    os.environ["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1"
+    
+    llm_instance = openai.LLM(
+        api_key=openrouter_key,
+        model="openai/gpt-4o-mini",
+    )
+    
+    tts_instance = elevenlabs.TTS(
+        model="eleven_flash_v2_5",
+        voice_id="21m00Tcm4TlvDq8ikWAM", # Rachel
+        api_key=elevenlabs_key,
+        streaming_latency=3,
+    )
+
+    # Run async tasks
+    session_task = asyncio.create_task(init_db_session())
+    rag_task = asyncio.create_task(init_rag_system())
+    
+    # Wait for results
+    session_id = await session_task
+    rag_system, relationship_id = await rag_task
+    
     try:
-        # Setup AI Services
-        elevenlabs_key = settings.ELEVENLABS_API_KEY
-        openrouter_key = settings.OPENROUTER_API_KEY
-        
-        if not elevenlabs_key or not openrouter_key:
-            raise ValueError("ELEVENLABS_API_KEY and OPENROUTER_API_KEY required")
+        # Use pre-warmed VAD or load new one
+        global _vad_model
+        if _vad_model is None:
+            logger.warning("⚠️ VAD model not pre-warmed, loading now (this will be slow)")
+            _vad_model = silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.3)
             
-        # LLM
-        os.environ["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1"
-        llm_instance = openai.LLM(
-            api_key=openrouter_key,
-            model="openai/gpt-4o-mini",
-        )
-        
-        # TTS
-        tts_instance = elevenlabs.TTS(
-            model="eleven_flash_v2_5",
-            voice_id="21m00Tcm4TlvDq8ikWAM", # Rachel
-            api_key=elevenlabs_key,
-            streaming_latency=3,
-        )
-        
         # Agent Session
         session = AgentSession(
             stt=deepgram.STT(model="nova-3", smart_format=True),
             llm=llm_instance,
             tts=tts_instance,
-            vad=silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.3),
+            vad=_vad_model,
         )
         
-        # Initialize RAG & Tools
-        relationship_id = None
-        if conflict_id and db_service:
-            try:
-                conflict_data = await asyncio.to_thread(db_service.get_conflict_by_id, conflict_id=conflict_id)
-                if conflict_data:
-                    relationship_id = str(conflict_data.get("relationship_id"))
-            except Exception:
-                pass
-
-        rag_system = None
-        try:
-            from app.services.transcript_rag import TranscriptRAGSystem
-            rag_system = TranscriptRAGSystem(k=5, include_profiles=True, include_calendar=False)
-        except ImportError:
-            logger.warning("RAG system not available")
-
         tools = get_tools(conflict_id, relationship_id)
         
         # Create Agent
@@ -118,8 +163,7 @@ async def mediator_entrypoint(ctx: JobContext):
             ),
         )
         
-        # Initial Greeting Logic (Simplified for brevity, but crucial for UX)
-        # ... (We can port the greeting logic here or keep it simple)
+        # Initial Greeting Logic
         greeting = "Hey Adrian, I'm here. What's on your mind?"
         await session.say(greeting, allow_interruptions=True)
         

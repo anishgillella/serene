@@ -8,7 +8,9 @@ import {
     BarChart2,
     Upload,
     Settings,
-    Moon
+    Moon,
+    Heart,
+    User
 } from 'lucide-react';
 
 const Sidebar = () => {
@@ -21,6 +23,8 @@ const Sidebar = () => {
         { icon: History, label: 'History', path: '/history' },
         { icon: BarChart2, label: 'Analytics', path: '/analytics' },
         { icon: Upload, label: 'Upload', path: '/upload' },
+        { icon: Heart, label: 'Onboarding', path: '/onboarding' },
+        { icon: User, label: 'Profile', path: '/profile' },
     ];
 
     return (

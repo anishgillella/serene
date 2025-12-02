@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Clock, ArrowRight, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Calendar, Clock, ArrowRight, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface Conflict {
@@ -12,15 +12,23 @@ interface Conflict {
 
 interface ConflictCardProps {
     conflict: Conflict;
+    onDelete: (id: string) => void;
 }
 
-const ConflictCard: React.FC<ConflictCardProps> = ({ conflict }) => {
+const ConflictCard: React.FC<ConflictCardProps> = ({ conflict, onDelete }) => {
     const navigate = useNavigate();
     const dateObj = new Date(conflict.date);
     const formattedDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const formattedTime = dateObj.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
     const isActive = conflict.status.toLowerCase() === 'active';
+
+    const handleDelete = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (window.confirm('Are you sure you want to delete this conflict?')) {
+            onDelete(conflict.id);
+        }
+    };
 
     return (
         <div
@@ -29,6 +37,15 @@ const ConflictCard: React.FC<ConflictCardProps> = ({ conflict }) => {
         >
             {/* Status Dot */}
             <div className={`absolute top-5 right-5 w-2.5 h-2.5 rounded-full ${isActive ? 'bg-amber-400' : 'bg-green-500'}`} />
+
+            {/* Delete Button (visible on hover) */}
+            <button
+                onClick={handleDelete}
+                className="absolute top-4 right-10 p-1.5 text-text-tertiary hover:text-red-500 hover:bg-red-50 rounded-full opacity-0 group-hover:opacity-100 transition-all duration-200"
+                title="Delete conflict"
+            >
+                <Trash2 size={16} />
+            </button>
 
             <div className="flex flex-col h-full">
                 {/* Header */}
@@ -39,7 +56,7 @@ const ConflictCard: React.FC<ConflictCardProps> = ({ conflict }) => {
                         <span>•</span>
                         <span>{formattedTime}</span>
                     </div>
-                    <h3 className="text-body font-medium text-text-primary group-hover:text-accent transition-colors">
+                    <h3 className="text-body font-medium text-text-primary group-hover:text-accent transition-colors pr-8">
                         {conflict.summary || 'Conflict Session'}
                     </h3>
                 </div>
@@ -48,8 +65,8 @@ const ConflictCard: React.FC<ConflictCardProps> = ({ conflict }) => {
                 <div className="mt-auto flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className={`flex items-center gap-1.5 text-tiny px-2 py-0.5 rounded-full border ${isActive
-                                ? 'bg-amber-50 text-amber-700 border-amber-100'
-                                : 'bg-green-50 text-green-700 border-green-100'
+                            ? 'bg-amber-50 text-amber-700 border-amber-100'
+                            : 'bg-green-50 text-green-700 border-green-100'
                             }`}>
                             {isActive ? <AlertCircle size={12} /> : <CheckCircle2 size={12} />}
                             <span className="font-medium capitalize">{conflict.status}</span>
