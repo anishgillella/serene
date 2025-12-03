@@ -148,6 +148,7 @@ async def dispatch_agent(request: dict = Body(...)):
     Create explicit agent dispatch for local development.
     With AgentServer pattern, agents auto-join, but explicit dispatch may be needed for local dev.
     """
+    room_name = request.get("room_name")
     agent_name = request.get("agent_name")
     
     if not room_name:
@@ -162,10 +163,17 @@ async def dispatch_agent(request: dict = Body(...)):
         
         try:
             # Dispatch to any available worker (unless specific agent_name provided)
-            req = api.CreateAgentDispatchRequest(
-                room=room_name,
-                agent_name=agent_name 
-            )
+            if agent_name:
+                req = api.CreateAgentDispatchRequest(
+                    room=room_name,
+                    agent_name=agent_name 
+                )
+            else:
+                req = api.CreateAgentDispatchRequest(
+                    room=room_name
+                )
+                
+            dispatch = await lkapi.agent_dispatch.create_dispatch(req)
             dispatch = await lkapi.agent_dispatch.create_dispatch(req)
             
             return {
