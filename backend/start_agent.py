@@ -25,7 +25,7 @@ if __name__ == "__main__":
     
     agents.cli.run_app(agents.WorkerOptions(
         entrypoint_fnc=mediator_entrypoint,
-        prewarm_fnc=prewarm,
-        num_idle_processes=1,    # Only keep 1 idle process ready (saves memory)
-        job_memory_warn_mb=1024, # Increase warning threshold to 1GB
+        # prewarm_fnc=prewarm,  # Disable prewarm to save memory on 512MB instance
+        num_idle_processes=0,   # No idle processes - start fresh for each call
+        job_memory_warn_mb=512, # Set to instance limit
     ))

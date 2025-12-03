@@ -212,11 +212,33 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         console.log('✅ Connected to room:', room.name);
         console.log('👥 Remote participants:', room.remoteParticipants.size);
 
-        console.log('⏳ Waiting for agent to auto-join (AgentServer pattern)...');
+        console.log('⏳ Dispatching agent to room...');
         setIsAgentJoining(true);
 
+        // Explicitly dispatch the agent
+        try {
+          const dispatchResponse = await fetch(`${API_BASE_URL}/api/dispatch-agent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true'
+            },
+            body: JSON.stringify({
+              room_name: room.name
+            })
+          });
+
+          if (!dispatchResponse.ok) {
+            console.warn('⚠️ Dispatch request failed, agent might not join automatically');
+          } else {
+            console.log('✅ Agent dispatched successfully');
+          }
+        } catch (dispatchError) {
+          console.error('❌ Error dispatching agent:', dispatchError);
+        }
+
         let agentJoined = false;
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 20; i++) { // Increased wait time to 10s
           await new Promise(resolve => setTimeout(resolve, 500));
 
           agentJoined = Array.from(room.remoteParticipants.values()).some(
@@ -226,14 +248,14 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
           );
 
           if (agentJoined) {
-            console.log('✅ Agent joined via auto-join');
+            console.log('✅ Agent joined');
             setIsAgentJoining(false);
             break;
           }
         }
 
         if (!agentJoined) {
-          console.warn('⚠️ Agent did not auto-join after 5 seconds');
+          console.warn('⚠️ Agent did not join after 10 seconds');
           setIsAgentJoining(false);
         }
 

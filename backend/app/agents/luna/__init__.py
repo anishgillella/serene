@@ -129,7 +129,7 @@ async def mediator_entrypoint(ctx: JobContext):
         # Use pre-warmed VAD or load new one
         global _vad_model
         if _vad_model is None:
-            logger.warning("⚠️ VAD model not pre-warmed, loading now (this will be slow)")
+            logger.info("⚠️ VAD model not pre-warmed, loading now (this will be slow)")
             _vad_model = silero.VAD.load(min_speech_duration=0.1, min_silence_duration=0.3)
             
         # Agent Session
@@ -173,3 +173,7 @@ async def mediator_entrypoint(ctx: JobContext):
     finally:
         if session_id and db_service:
             await asyncio.to_thread(db_service.end_mediator_session, session_id=session_id)
+        
+        # Explicit cleanup to save memory
+        import gc
+        gc.collect()
