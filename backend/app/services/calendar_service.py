@@ -570,7 +570,7 @@ class CalendarService:
                         VALUES (%s, %s, %s, %s)
                         RETURNING id;
                     """, (relationship_id, datetime.combine(event_date, datetime.min.time()), 
-                          initiator_partner_id, {"notes": notes} if notes else {}))
+                          initiator_partner_id, json.dumps({"notes": notes} if notes else {})))
                     
                     event_id = cursor.fetchone()[0]
                     conn.commit()
@@ -812,32 +812,56 @@ class CalendarService:
                           if start_date.isoformat() <= p.get("predicted_date", "") <= end_date.isoformat()]
             all_events.extend(predictions)
         
+        # Deduplicate events (except conflicts)
+        unique_events = []
+        seen_keys = set()
+        
+        for event in all_events:
+            # Always keep conflicts
+            if event.get("type") == "conflict":
+                unique_events.append(event)
+                continue
+                
+            # Create unique key for other events
+            # Key: date + title + type
+            event_date = event.get("event_date", "")
+            title = event.get("title", "")
+            event_type = event.get("event_type", "")
+            
+            # For cycle events, also include partner_id to distinguish between partners
+            partner_key = event.get("partner_id", "") if event.get("type") == "cycle" else ""
+            
+            unique_key = f"{event_date}_{title}_{event_type}_{partner_key}"
+            
+            if unique_key not in seen_keys:
+                seen_keys.add(unique_key)
+                unique_events.append(event)
+        
         # Sort by date
-        all_events.sort(key=lambda x: x.get("event_date") or x.get("predicted_date", ""))
+        unique_events.sort(key=lambda x: x.get("event_date") or "")
         
         # Group by date
         events_by_date = {}
-        for event in all_events:
-            event_date = event.get("event_date") or event.get("predicted_date")
-            if event_date:
-                if event_date not in events_by_date:
-                    events_by_date[event_date] = []
-                events_by_date[event_date].append(event)
+        for event in unique_events:
+            date_str = event.get("event_date")
+            if date_str:
+                if date_str not in events_by_date:
+                    events_by_date[date_str] = []
+                events_by_date[date_str].append(event)
         
-        # Summary stats
+        # Calculate stats
         stats = {
-            "total_events": len(all_events),
-            "cycle_events": len([e for e in all_events if e.get("type") == "cycle"]),
-            "predictions": len([e for e in all_events if e.get("is_prediction")]),
-            "conflict_events": len([e for e in all_events if e.get("type") == "conflict"]),
-            "intimacy_events": len([e for e in all_events if e.get("type") == "intimacy"]),
-            "memorable_events": len([e for e in all_events if e.get("type") == "memorable"]),
+            "total_events": len(unique_events),
+            "conflicts": len([e for e in unique_events if e["type"] == "conflict"]),
+            "intimacy": len([e for e in unique_events if e["type"] == "intimacy"]),
+            "cycle_events": len([e for e in unique_events if e["type"] == "cycle"]),
+            "memorable": len([e for e in unique_events if e["type"] == "memorable"])
         }
         
         return {
             "year": year,
             "month": month,
-            "events": all_events,
+            "events": unique_events,
             "events_by_date": events_by_date,
             "stats": stats
         }

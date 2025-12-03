@@ -139,41 +139,73 @@ async def websocket_transcribe(websocket: WebSocket):
                             if not transcript:
                                 continue
                             
-                            # Extract speaker from words array (most reliable for WebSocket)
-                            speaker_id = None
+                            # Process words to handle speaker changes within the block
                             if 'words' in alternative and len(alternative['words']) > 0:
-                                speaker_counts = {}
+                                current_speaker = None
+                                current_words = []
                                 
                                 for word in alternative['words']:
-                                    word_speaker = word.get('speaker')
-                                    if word_speaker is not None:
-                                        speaker_counts[word_speaker] = speaker_counts.get(word_speaker, 0) + 1
+                                    word_speaker = word.get('speaker', 0)
+                                    word_text = word.get('punctuated_word', word.get('word', ''))
+                                    
+                                    # Initialize current speaker if first word
+                                    if current_speaker is None:
+                                        current_speaker = word_speaker
+                                    
+                                    # If speaker changed, send previous chunk and start new one
+                                    if word_speaker != current_speaker:
+                                        if current_words:
+                                            chunk_text = ' '.join(current_words)
+                                            speaker_name = get_speaker_name(current_speaker)
+                                            
+                                            if is_final:
+                                                await websocket.send_json({
+                                                    "type": "transcript",
+                                                    "text": chunk_text,
+                                                    "speaker": speaker_name,
+                                                    "is_final": is_final
+                                                })
+                                                logger.info(f"📤 Sent: {speaker_name}: {chunk_text[:50]}...")
+                                        
+                                        # Reset for new speaker
+                                        current_speaker = word_speaker
+                                        current_words = []
+                                    
+                                    current_words.append(word_text)
                                 
-                                if speaker_counts:
-                                    speaker_id = max(speaker_counts, key=speaker_counts.get)
-                            
-                            # Fallback: try other locations
-                            if speaker_id is None:
+                                # Send remaining words
+                                if current_words:
+                                    chunk_text = ' '.join(current_words)
+                                    speaker_name = get_speaker_name(current_speaker)
+                                    
+                                    if is_final:
+                                        await websocket.send_json({
+                                            "type": "transcript",
+                                            "text": chunk_text,
+                                            "speaker": speaker_name,
+                                            "is_final": is_final
+                                        })
+                                        logger.info(f"📤 Sent: {speaker_name}: {chunk_text[:50]}...")
+                                        
+                            else:
+                                # Fallback if no words available (shouldn't happen with Nova-3)
+                                # Default to 0 if no speaker found
+                                speaker_id = 0
                                 if 'speaker' in result:
                                     speaker_id = result['speaker']
                                 elif 'speaker' in alternative:
                                     speaker_id = alternative.get('speaker')
-                            
-                            # Default to 0 if still no speaker found
-                            if speaker_id is None:
-                                speaker_id = 0
-                            
-                            speaker_name = get_speaker_name(speaker_id)
-                            
-                            # Only send final results to frontend (more accurate speaker attribution)
-                            if is_final:
-                                await websocket.send_json({
-                                    "type": "transcript",
-                                    "text": transcript,
-                                    "speaker": speaker_name,
-                                    "is_final": is_final
-                                })
-                                logger.info(f"📤 Sent: {speaker_name}: {transcript[:50]}...")
+                                
+                                speaker_name = get_speaker_name(speaker_id)
+                                
+                                if is_final:
+                                    await websocket.send_json({
+                                        "type": "transcript",
+                                        "text": transcript,
+                                        "speaker": speaker_name,
+                                        "is_final": is_final
+                                    })
+                                    logger.info(f"📤 Sent (Fallback): {speaker_name}: {transcript[:50]}...")
             except websockets.exceptions.ConnectionClosed:
                 logger.info("Deepgram connection closed")
             except Exception as e:

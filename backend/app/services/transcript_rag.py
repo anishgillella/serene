@@ -528,3 +528,6 @@ IMPORTANT INSTRUCTIONS:
    - Avoid high-risk cycle phases if possible
    - Consider upcoming anniversaries/events that could be positive opportunities
    - Be mindful of predicted period dates when planning repair conversations"""
+
+# Create singleton instance
+transcript_rag = TranscriptRAGSystem()

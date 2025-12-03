@@ -412,6 +412,53 @@ If calendar data shows a high-risk period, explicitly mention this in timing rec
             max_tokens=2000
         )
 
+
+    def generate_chat_response(
+        self,
+        user_message: str,
+        rag_context: str,
+        conversation_history: list[dict],
+        system_prompt: str = "You are Luna, an empathetic relationship mediator."
+    ) -> str:
+        """Generate a chat response for the Luna interface"""
+        try:
+            # Build messages array
+            messages = [{"role": "system", "content": system_prompt}]
+            
+            # Add RAG context as system message
+            if rag_context:
+                messages.append({
+                    "role": "system", 
+                    "content": f"Relevant Context:\n{rag_context}"
+                })
+            
+            # Add conversation history
+            for msg in conversation_history:
+                # Ensure role is valid (user, assistant, system)
+                role = msg.get("role", "user")
+                if role not in ["user", "assistant", "system"]:
+                    role = "user"
+                
+                messages.append({
+                    "role": role,
+                    "content": msg.get("content", "")
+                })
+            
+            # Add current user message
+            messages.append({"role": "user", "content": user_message})
+            
+            # Call LLM
+            response = self.chat_completion(
+                messages=messages,
+                temperature=0.7,
+                max_tokens=800
+            )
+            
+            return response
+        except Exception as e:
+            logger.error(f"❌ Error generating chat response: {e}")
+            return "I'm sorry, I'm having trouble processing your request right now."
+
     def generate_conflict_title(self, transcript_text: str) -> str:
         """Generate a concise, descriptive title for a conflict based on the transcript"""
         try:

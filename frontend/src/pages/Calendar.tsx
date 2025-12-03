@@ -60,42 +60,22 @@ const MONTH_NAMES = [
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Event type icons - Sleek emoji-based system
-const getEventIcon = (eventType: string) => {
-  const iconMap: Record<string, string> = {
-    // Cycle events
-    'period_start': '🩸',
-    'period_end': '🌸',
-    'ovulation': '🥚',
-    'fertile_start': '💕',
-    'fertile_end': '💕',
-    'pms_start': '⚠️',
-    'symptom_log': '📝',
-    'mood_log': '😊',
+// Event type icons - Sleek emoji-based system matching the legend
+const getEventIcon = (event: CalendarEvent) => {
+  // Strict mapping to legend categories
+  if (event.type === 'prediction') return <span className="text-sm">🔮</span>;
+  if (event.type === 'conflict') return <span className="text-sm">⚡</span>;
+  if (event.type === 'intimacy') return <span className="text-sm">💘</span>;
+  if (event.type === 'memorable') return <span className="text-sm">✨</span>;
 
-    // Intimacy
-    'intimacy': '💘',
+  if (event.type === 'cycle') {
+    if (event.event_type === 'symptom_log' || event.event_type === 'mood_log') {
+      return <span className="text-sm">📝</span>;
+    }
+    return <span className="text-sm">🩸</span>;
+  }
 
-    // Conflicts
-    'conflict': '⚡',
-
-    // Memorable dates
-    'anniversary': '💍',
-    'birthday': '🎂',
-    'first_date': '🥂',
-    'milestone': '🏆',
-    'holiday': '🎉',
-    'custom': '⭐',
-
-    // Social & Activities
-    'social': '👥',
-    'trip': '✈️',
-    'event': '🎭',
-    'appointment': '📅',
-    'work': '💼',
-  };
-
-  const emoji = iconMap[eventType] || '📌';
-  return <span className="text-sm">{emoji}</span>;
+  return <span className="text-sm">📌</span>;
 };
 
 // Risk level badge
@@ -461,7 +441,7 @@ const Calendar: React.FC = () => {
                           title={`${count} ${firstEvent.event_type.replace('_', ' ')} event${count > 1 ? 's' : ''}`}
                         >
                           <div className="w-5 h-5 flex items-center justify-center text-[10px] bg-white rounded-full shadow-sm border border-border-subtle">
-                            {getEventIcon(firstEvent.event_type)}
+                            {getEventIcon(firstEvent)}
                           </div>
                           {count > 1 && (
                             <div className="absolute -top-1 -right-1 w-3 h-3 bg-accent text-white text-[8px] flex items-center justify-center rounded-full border border-white font-bold">
@@ -558,7 +538,7 @@ const Calendar: React.FC = () => {
                   <div
                     className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 bg-white border border-border-subtle shadow-soft"
                   >
-                    {getEventIcon(event.event_type)}
+                    {getEventIcon(event)}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className={`text-body font-medium ${event.type === 'conflict' ? 'text-text-primary hover:text-accent' : 'text-text-primary'}`}>

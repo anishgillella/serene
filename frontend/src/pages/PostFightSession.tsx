@@ -11,6 +11,7 @@ import VoiceButton from '../components/VoiceButton';
 import MediatorModal from '../components/MediatorModal';
 import TranscriptBubble from '../components/TranscriptBubble';
 import { RelatedConflicts } from '@/components/RelatedConflicts';
+import LunaChatPanel from '../components/LunaChatPanel';
 
 interface LocationState {
   transcript?: string[];
@@ -163,7 +164,7 @@ const PostFightSession = () => {
   const [repairPlanGirlfriend, setRepairPlanGirlfriend] = useState<RepairPlan | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
-  const [activeView, setActiveView] = useState<'analysis' | 'repair' | null>(null);
+  const [activeView, setActiveView] = useState<'analysis' | 'repair' | 'chat' | null>(null);
   const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -173,50 +174,91 @@ const PostFightSession = () => {
 
   const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-  // Initialize messages with transcript (merge consecutive messages from same speaker)
-  const [messages, setMessages] = useState<Message[]>(() => {
-    const initialMessages: Message[] = [];
+  // Helper function to parse transcript lines
+  const parseTranscriptLines = (lines: string[]): Message[] => {
+    const parsedMessages: Message[] = [];
 
-    if (state?.transcript && state.transcript.length > 0) {
-      state.transcript.forEach((line: string) => {
-        const boyfriendMatch = line.match(/^(?:Adrian Malhotra|Boyfriend|Speaker\s+1):\s*(.+)$/i);
-        const girlfriendMatch = line.match(/^(?:Elara Voss|Girlfriend|Speaker\s+2):\s*(.+)$/i);
+    // Regex to identify speaker labels at the start of a segment
+    // Matches: "Name:", "Name (Role):", "Speaker N:", etc.
+    const speakerRegex = /((?:Adrian Malhotra|Elara Voss|Boyfriend|Girlfriend|Speaker\s+\d+|partner_[ab])(?:\s*\(.*?\))?):\s*/gi;
 
-        let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
-        let messageText = '';
+    lines.forEach(line => {
+      if (!line || typeof line !== 'string') return;
 
-        if (boyfriendMatch) {
-          currentSpeaker = 'speaker1';
-          messageText = boyfriendMatch[1].trim();
-        } else if (girlfriendMatch) {
-          currentSpeaker = 'speaker2';
-          messageText = girlfriendMatch[1].trim();
-        } else {
-          const cleanedText = line.replace(/^(?:You|Adrian Malhotra|Elara Voss|Boyfriend|Girlfriend|Speaker\s+\d+):\s*/i, '').trim();
-          if (cleanedText) {
-            currentSpeaker = 'speaker1';
-            messageText = cleanedText;
+      // Check if the line contains any speaker labels
+      // We split by the regex, which will include the capturing groups (the names)
+      const parts = line.split(speakerRegex);
+
+      // If no split happened (length 1), it's just text without a clear speaker label
+      // We'll append it to the last message or default to speaker1 if it's the first
+      if (parts.length === 1) {
+        const text = parts[0].trim();
+        if (text) {
+          if (parsedMessages.length > 0) {
+            // Append to last message
+            parsedMessages[parsedMessages.length - 1].message += ' ' + text;
+          } else {
+            // Default to speaker1 if absolutely no context
+            parsedMessages.push({ speaker: 'speaker1', message: text });
           }
         }
+        return;
+      }
 
-        if (currentSpeaker && messageText) {
-          // Check if last message is from same speaker - merge them
-          const lastMessage = initialMessages[initialMessages.length - 1];
-          if (lastMessage && lastMessage.speaker === currentSpeaker) {
-            // Merge with previous message from same speaker
-            lastMessage.message += ' ' + messageText;
+      // If split happened, parts will look like: ["", "Adrian:", "Hello", "Elara:", "Hi"]
+      // The first part might be empty or text before the first speaker label
+
+      let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
+
+      // Process the parts
+      // We skip the first part if it's empty. If it's text, it belongs to previous speaker (or default)
+      if (parts[0].trim()) {
+        if (parsedMessages.length > 0) {
+          parsedMessages[parsedMessages.length - 1].message += ' ' + parts[0].trim();
+        } else {
+          parsedMessages.push({ speaker: 'speaker1', message: parts[0].trim() });
+        }
+      }
+
+      // Loop through the rest: odd indices are speakers, even indices are messages
+      for (let i = 1; i < parts.length; i += 2) {
+        const speakerLabel = parts[i];
+        const messageContent = parts[i + 1] ? parts[i + 1].trim() : "";
+
+        // Determine speaker from label
+        if (/Adrian|Boyfriend|Speaker\s+1|partner_a|Speaker\s+0/i.test(speakerLabel)) {
+          currentSpeaker = 'speaker1';
+        } else if (/Elara|Girlfriend|Speaker\s+2|partner_b|Speaker\s+1/i.test(speakerLabel)) {
+          currentSpeaker = 'speaker2';
+        } else {
+          // Fallback if regex matched something weird, keep current or default
+          if (!currentSpeaker) currentSpeaker = 'speaker1';
+        }
+
+        if (messageContent) {
+          // Check if we can merge with previous message
+          const lastMsg = parsedMessages[parsedMessages.length - 1];
+          if (lastMsg && lastMsg.speaker === currentSpeaker) {
+            lastMsg.message += ' ' + messageContent;
           } else {
-            // New speaker or first message - add as new message
-            initialMessages.push({
-              speaker: currentSpeaker,
-              message: messageText
+            parsedMessages.push({
+              speaker: currentSpeaker as 'speaker1' | 'speaker2',
+              message: messageContent
             });
           }
         }
-      });
-    }
+      }
+    });
 
-    return initialMessages;
+    return parsedMessages;
+  };
+
+  // Initialize messages with transcript
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (state?.transcript && state.transcript.length > 0) {
+      return parseTranscriptLines(state.transcript);
+    }
+    return [];
   });
 
   // Auto-scroll to bottom when new messages arrive
@@ -265,54 +307,10 @@ const PostFightSession = () => {
 
             if (transcriptLines.length > 0) {
               console.log(`📝 Parsing ${transcriptLines.length} transcript lines...`);
-              // Parse and add to messages
-              const newMessages: Message[] = [];
-              transcriptLines.forEach((line: string) => {
-                const boyfriendMatch = line.match(/^(?:Adrian Malhotra|Boyfriend|Speaker\s+1|partner_a|Speaker\s+0):\s*(.+)$/i);
-                const girlfriendMatch = line.match(/^(?:Elara Voss|Girlfriend|Speaker\s+2|partner_b|Speaker\s+1):\s*(.+)$/i);
-
-                let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
-                let messageText = '';
-
-                if (boyfriendMatch) {
-                  currentSpeaker = 'speaker1';
-                  messageText = boyfriendMatch[1].trim();
-                } else if (girlfriendMatch) {
-                  currentSpeaker = 'speaker2';
-                  messageText = girlfriendMatch[1].trim();
-                } else {
-                  // Try to extract any text after colon
-                  const colonIndex = line.indexOf(':');
-                  if (colonIndex > 0) {
-                    const cleanedText = line.substring(colonIndex + 1).trim();
-                    if (cleanedText) {
-                      currentSpeaker = 'speaker1'; // Default to speaker1
-                      messageText = cleanedText;
-                    }
-                  }
-                }
-
-                if (currentSpeaker && messageText) {
-                  const lastMessage = newMessages[newMessages.length - 1];
-                  if (lastMessage && lastMessage.speaker === currentSpeaker) {
-                    // Merge with previous message from same speaker
-                    lastMessage.message += ' ' + messageText;
-                  } else {
-                    // New speaker or first message - add as new message
-                    newMessages.push({
-                      speaker: currentSpeaker,
-                      message: messageText
-                    });
-                  }
-                }
-              });
-
-              if (newMessages.length > 0) {
-                setMessages(newMessages);
-                console.log(`✅ Loaded ${newMessages.length} messages from transcript`);
-              } else {
-                console.warn('⚠️ No valid messages parsed from transcript lines');
-              }
+              // Parse and add to messages using the helper function
+              const newMessages = parseTranscriptLines(transcriptLines);
+              setMessages(newMessages);
+              console.log(`✅ Loaded ${newMessages.length} messages from transcript`);
             } else {
               console.log('⚠️ No transcript lines found in API response');
             }
@@ -747,6 +745,19 @@ const PostFightSession = () => {
               </button>
 
               <button
+                onClick={() => setActiveView('chat')}
+                disabled={!conflictId}
+                className={`flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'chat'
+                  ? 'bg-surface-elevated text-text-primary border border-accent'
+                  : 'bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle'
+                  }`}
+                title="Chat with Luna about this conflict"
+              >
+                <MessageCircleIcon size={16} className="mr-2" strokeWidth={1.5} />
+                Chat with Luna
+              </button>
+
+              <button
                 onClick={() => {
                   console.log('🔘 Talk to Mediator button clicked', { conflictId, activeView });
                   setIsMediatorModalOpen(true);
@@ -754,8 +765,8 @@ const PostFightSession = () => {
                 disabled={!conflictId}
                 className="flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle"
               >
-                <MessageCircleIcon size={16} className="mr-2" strokeWidth={1.5} />
-                Talk to Mediator
+                <MicIcon size={16} className="mr-2" strokeWidth={1.5} />
+                Voice Call
               </button>
             </div>
           </div>
@@ -804,6 +815,11 @@ const PostFightSession = () => {
 
         {/* Right Side - Results Panel */}
         <div className="flex-1 min-w-0 overflow-y-auto pl-6">
+          {activeView === 'chat' && conflictId && (
+            <div className="h-full animate-slide-up">
+              <LunaChatPanel conflictId={conflictId} />
+            </div>
+          )}
           {activeView === 'analysis' && (
             <div className="bg-surface-elevated rounded-2xl p-6 shadow-lifted border border-border-subtle animate-slide-up">
               <div className="flex items-center justify-between mb-6">

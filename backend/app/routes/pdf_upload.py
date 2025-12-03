@@ -41,10 +41,10 @@ async def process_pdf_task(
     try:
         log(f"🚀 Starting background processing for {filename}...")
         
-        # Extract text using Mistral OCR
-        log("🔍 Extracting text from PDF using Mistral OCR...")
-        extracted_text = await ocr_service.extract_text_from_pdf(pdf_bytes, filename=filename)
-        log(f"✅ Extracted {len(extracted_text)} characters from PDF")
+        # Extract text using generic extraction (PDF, DOCX, TXT)
+        log(f"🔍 Extracting text from file using OCR/Text Extraction...")
+        extracted_text = await ocr_service.extract_text(pdf_bytes, filename=filename)
+        log(f"✅ Extracted {len(extracted_text)} characters from file")
         
         # Generate embedding
         log("🧠 Generating embeddings...")
@@ -52,10 +52,9 @@ async def process_pdf_task(
         
         # Determine namespace based on PDF type
         namespace_map = {
-            "boyfriend_profile": "profiles",
-            "girlfriend_profile": "profiles",
             "handbook": "handbooks",
-            "reference_book": "books"
+            "reference_book": "books",
+            "document": "documents"
         }
         namespace = namespace_map.get(pdf_type)
         
@@ -67,19 +66,27 @@ async def process_pdf_task(
         file_path = None
         s3_url = None
         try:
-            if pdf_type in ["boyfriend_profile", "girlfriend_profile"]:
-                folder = "profiles"
-            elif pdf_type == "reference_book":
+            if pdf_type == "reference_book":
                 folder = "books"
             else:
                 folder = "handbooks"
-            file_path = f"{folder}/{relationship_id}/{pdf_id}.pdf"
+            # Determine extension and content type
+            import os
+            _, ext = os.path.splitext(filename)
+            ext = ext.lower()
+            content_type = "application/pdf"
+            if ext == ".docx":
+                content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            elif ext == ".txt":
+                content_type = "text/plain"
+            
+            file_path = f"{folder}/{relationship_id}/{pdf_id}{ext}"
             
             log(f"☁️ Uploading to S3: {file_path}")
             s3_url = s3_service.upload_file(
                 file_path=file_path,
                 file_content=pdf_bytes,
-                content_type="application/pdf"
+                content_type=content_type
             )
             if s3_url:
                 log(f"✅ Stored PDF in S3: {s3_url}")
@@ -266,42 +273,7 @@ async def process_pdf_task(
                 pinecone_service.index.upsert(vectors=batch, namespace=namespace)
                 log(f"   📤 Uploaded batch {i//batch_size + 1}/{total_batches} to Pinecone")
             
-        elif pdf_type in ["boyfriend_profile", "girlfriend_profile"]:
-            # Profiles: store full text if small, otherwise chunk simply
-            if len(extracted_text) <= 40000:
-                metadata["extracted_text"] = extracted_text
-            else:
-                metadata["extracted_text"] = extracted_text[:35000]
-                metadata["text_truncated"] = True
-            
-            # Upload main profile vector
-            pinecone_service.index.upsert(
-                vectors=[{
-                    "id": f"{pdf_type}_{pdf_id}",
-                    "values": embedding,
-                    "metadata": metadata
-                }],
-                namespace=namespace
-            )
-            
-            # If truncated, create chunks
-            if metadata.get("text_truncated"):
-                chunk_size = 10000
-                chunks = [extracted_text[i:i+chunk_size] for i in range(0, len(extracted_text), chunk_size)]
-                for i, chunk in enumerate(chunks):
-                    chunk_embedding = embeddings_service.embed_text(chunk)
-                    chunk_metadata = metadata.copy()
-                    chunk_metadata["chunk_index"] = i
-                    chunk_metadata["total_chunks"] = len(chunks)
-                    chunk_metadata["extracted_text"] = chunk
-                    chunk_vectors.append({
-                        "id": f"{pdf_type}_{pdf_id}_chunk_{i}",
-                        "values": chunk_embedding,
-                        "metadata": chunk_metadata
-                    })
-                if chunk_vectors:
-                    pinecone_service.index.upsert(vectors=chunk_vectors, namespace=namespace)
-                    log(f"   ✅ Created and uploaded {len(chunk_vectors)} profile chunks")
+
         
         else:
             # Other types (handbook): simple upload with basic chunking if large
@@ -361,17 +333,17 @@ async def upload_pdf(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     relationship_id: str = Form(...),
-    pdf_type: str = Form(...),  # "boyfriend_profile", "girlfriend_profile", "handbook", "reference_book"
+    pdf_type: str = Form(...),  # "handbook", "reference_book", "document"
     partner_id: Optional[str] = Form(None)
 ):
     """
     Upload PDF, extract text via OCR, and store in Pinecone (Background Task)
     """
     try:
-        # Read PDF file
+        # Read file
         pdf_bytes = await file.read()
         filename = file.filename
-        logger.info(f"📄 Received PDF: {filename}, size: {len(pdf_bytes)} bytes, type: {pdf_type}")
+        logger.info(f"📄 Received file: {filename}, size: {len(pdf_bytes)} bytes, type: {pdf_type}")
         
         # Create unique ID
         pdf_id = str(uuid.uuid4())
@@ -420,101 +392,7 @@ async def upload_pdf(
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/profiles/{relationship_id}")
-async def get_partner_profiles(relationship_id: str):
-    """
-    Retrieve partner profiles for a relationship
-    Returns full extracted text from profile PDFs
-    """
-    try:
-        # Query Pinecone for profiles using a dummy query vector
-        # We use filter to find the right documents
-        dummy_vector = [0.0] * 1024
-        
-        boyfriend_result = pinecone_service.index.query(
-            vector=dummy_vector,
-            top_k=1,
-            namespace="profiles",
-            include_metadata=True,
-            filter={
-                "relationship_id": {"$eq": relationship_id},
-                "pdf_type": {"$eq": "boyfriend_profile"}
-            }
-        )
-        
-        girlfriend_result = pinecone_service.index.query(
-            vector=dummy_vector,
-            top_k=1,
-            namespace="profiles",
-            include_metadata=True,
-            filter={
-                "relationship_id": {"$eq": relationship_id},
-                "pdf_type": {"$eq": "girlfriend_profile"}
-            }
-        )
-        
-        boyfriend_profile = None
-        girlfriend_profile = None
-        
-        if boyfriend_result.matches:
-            match = boyfriend_result.matches[0]
-            boyfriend_profile = match.metadata.get("extracted_text", "")
-            # If text was truncated, try to get chunks
-            if match.metadata.get("text_truncated") and boyfriend_profile:
-                pdf_id = match.metadata.get("pdf_id")
-                if pdf_id:
-                    # Query for chunks
-                    chunk_results = pinecone_service.index.query(
-                        vector=dummy_vector,
-                        top_k=10,
-                        namespace="profiles",
-                        include_metadata=True,
-                        filter={
-                            "pdf_id": {"$eq": pdf_id},
-                            "chunk_index": {"$exists": True}
-                        }
-                    )
-                    if chunk_results.matches:
-                        chunks = sorted(chunk_results.matches, key=lambda x: x.metadata.get("chunk_index", 0))
-                        full_text = "".join([chunk.metadata.get("extracted_text", "") for chunk in chunks])
-                        if full_text:
-                            boyfriend_profile = full_text
-        
-        if girlfriend_result.matches:
-            match = girlfriend_result.matches[0]
-            girlfriend_profile = match.metadata.get("extracted_text", "")
-            # If text was truncated, try to get chunks
-            if match.metadata.get("text_truncated") and girlfriend_profile:
-                pdf_id = match.metadata.get("pdf_id")
-                if pdf_id:
-                    # Query for chunks
-                    chunk_results = pinecone_service.index.query(
-                        vector=dummy_vector,
-                        top_k=10,
-                        namespace="profiles",
-                        include_metadata=True,
-                        filter={
-                            "pdf_id": {"$eq": pdf_id},
-                            "chunk_index": {"$exists": True}
-                        }
-                    )
-                    if chunk_results.matches:
-                        chunks = sorted(chunk_results.matches, key=lambda x: x.metadata.get("chunk_index", 0))
-                        full_text = "".join([chunk.metadata.get("extracted_text", "") for chunk in chunks])
-                        if full_text:
-                            girlfriend_profile = full_text
-        
-        return {
-            "success": True,
-            "boyfriend_profile": boyfriend_profile,
-            "girlfriend_profile": girlfriend_profile
-        }
-        
-    except Exception as e:
-        logger.error(f"❌ Error retrieving profiles: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @router.get("/list/{relationship_id}")

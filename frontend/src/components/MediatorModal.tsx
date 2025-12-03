@@ -7,7 +7,7 @@ interface MediatorModalProps {
   onClose: () => void;
   conflictId: string;
   context?: {
-    activeView?: 'analysis' | 'repair' | null;
+    activeView?: 'analysis' | 'repair' | 'chat' | null;
     povView?: 'boyfriend' | 'girlfriend';
     hasAnalysis?: boolean;
     hasRepairPlans?: boolean;

@@ -1234,32 +1234,60 @@ async def store_transcript(
             if not isinstance(line, str):
                 continue
                 
-            boyfriend_match = re.match(r'^(?:Adrian Malhotra|Boyfriend|Speaker\s+1):\s*(.+)$', line, re.IGNORECASE)
-            girlfriend_match = re.match(r'^(?:Elara Voss|Girlfriend|Speaker\s+2):\s*(.+)$', line, re.IGNORECASE)
+            # Use regex split to find all speaker segments in the line
+            # This handles cases where multiple turns are clumped: "Adrian: Hello. Elara: Hi."
+            # Pattern matches "Name:", "Name (Role):", "Speaker N:", etc.
+            # We use capturing group to keep the delimiter (the speaker name)
+            parts = re.split(r'((?:Adrian Malhotra|Elara Voss|Boyfriend|Girlfriend|Speaker\s+\d+|partner_[ab])(?:\s*\(.*?\))?):\s*', line, flags=re.IGNORECASE)
             
-            if boyfriend_match:
-                text = boyfriend_match.group(1)
+            # If no split happened (len 1), it's just text. Append to last segment if exists.
+            if len(parts) == 1:
+                text = parts[0].strip()
+                if text and speaker_segments:
+                    # Append to last segment
+                    speaker_segments[-1].text += " " + text
+                    # Update corresponding db_message
+                    if db_messages:
+                        db_messages[-1]["content"] += " " + text
+                continue
+                
+            # If split happened, parts will look like: ['', 'Adrian', 'Hello. ', 'Elara', 'Hi.']
+            # The first part is text before the first speaker label (usually empty or belongs to prev speaker)
+            if parts[0].strip() and speaker_segments:
+                speaker_segments[-1].text += " " + parts[0].strip()
+                if db_messages:
+                    db_messages[-1]["content"] += " " + parts[0].strip()
+            
+            # Iterate through the rest: odd indices are speakers, even are text
+            for i in range(1, len(parts), 2):
+                speaker_label = parts[i]
+                text = parts[i+1].strip() if i+1 < len(parts) else ""
+                
+                if not text:
+                    continue
+                    
+                # Determine standardized speaker name
+                speaker_name = "Unknown"
+                partner_id = "partner_a" # Default
+                
+                if re.match(r'(?:Adrian|Boyfriend|Speaker\s+1|partner_a|Speaker\s+0)', speaker_label, re.IGNORECASE):
+                    speaker_name = "Adrian Malhotra"
+                    partner_id = "partner_a"
+                elif re.match(r'(?:Elara|Girlfriend|Speaker\s+2|partner_b|Speaker\s+1)', speaker_label, re.IGNORECASE):
+                    speaker_name = "Elara Voss"
+                    partner_id = "partner_b"
+                
+                # Create segment
                 speaker_segments.append(SpeakerSegment(
-                    speaker="Adrian Malhotra",
+                    speaker=speaker_name,
                     text=text,
                     start_time=None,
                     end_time=None
                 ))
+                
+                # Create DB message
                 db_messages.append({
-                    "partner_id": "partner_a",
-                    "role": "user",
-                    "content": text
-                })
-            elif girlfriend_match:
-                text = girlfriend_match.group(1)
-                speaker_segments.append(SpeakerSegment(
-                    speaker="Elara Voss",
-                    text=text,
-                    start_time=None,
-                    end_time=None
-                ))
-                db_messages.append({
-                    "partner_id": "partner_b",
+                    "partner_id": partner_id,
                     "role": "user",
                     "content": text
                 })
@@ -1271,6 +1299,12 @@ async def store_transcript(
                 logger.info(f"✅ Saved {len(db_messages)} transcript messages to rant_messages table")
             except Exception as e:
                 logger.error(f"❌ Error saving transcript messages to DB: {e}")
+        
+        # Reconstruct transcript_text from the clean segments to ensure it matches DB
+        # This fixes the issue where the raw input was clumped but DB was clean
+        if speaker_segments:
+            transcript_text = "\n".join([f"{seg.speaker}: {seg.text}" for seg in speaker_segments])
+            logger.info(f"✅ Reconstructed transcript text from {len(speaker_segments)} segments")
         
         # Create ConflictTranscript model
         conflict_transcript = ConflictTranscript(

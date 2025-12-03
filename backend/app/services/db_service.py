@@ -977,6 +977,49 @@ class DatabaseService:
         except Exception as e:
             raise e
 
+    def store_chat_message(self, conflict_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+        """Store a chat message"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO chat_messages (conflict_id, role, content, metadata, created_at)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (conflict_id, role, content, json.dumps(metadata) if metadata else '{}', datetime.now()))
+                    
+                    message_id = cursor.fetchone()[0]
+                    conn.commit()
+                    return str(message_id)
+        except Exception as e:
+            raise e
+
+    def get_chat_history(self, conflict_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get chat history for a conflict"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, role, content, metadata, created_at
+                        FROM chat_messages
+                        WHERE conflict_id = %s
+                        ORDER BY created_at ASC
+                        LIMIT %s;
+                    """, (conflict_id, limit))
+                    
+                    messages = []
+                    for row in cursor.fetchall():
+                        messages.append({
+                            "id": str(row["id"]),
+                            "role": row["role"],
+                            "content": row["content"],
+                            "metadata": row["metadata"],
+                            "created_at": row["created_at"].isoformat() if row["created_at"] else None
+                        })
+                    return messages
+        except Exception as e:
+            raise e
+
 # Global singleton instance
 try:
     db_service = DatabaseService()

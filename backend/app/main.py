@@ -39,6 +39,8 @@ from .routes import user_routes
 app.include_router(user_routes.router)
 from .routes import onboarding
 app.include_router(onboarding.router)
+from .routes import mediator_routes
+app.include_router(mediator_routes.router, prefix="/api/mediator")
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)

@@ -216,3 +216,20 @@ CREATE POLICY "Allow public access to memorable_dates" ON memorable_dates FOR AL
 ALTER TABLE memorable_dates ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow public access to conflict_analysis" ON conflict_analysis FOR ALL USING (true);
 CREATE POLICY "Allow public access to repair_plans" ON repair_plans FOR ALL USING (true);
+
+-- Create chat_messages table for storing Luna chat history
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    conflict_id UUID REFERENCES conflicts(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+    content TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create index for faster queries
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conflict ON chat_messages(conflict_id, created_at);
+
+-- Create RLS policies
+ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow public access to chat_messages" ON chat_messages FOR ALL USING (true);

@@ -12,14 +12,68 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+import io
+try:
+    import docx
+except ImportError:
+    docx = None
+    logger.warning("python-docx not installed, DOCX support disabled")
+
 class OCRService:
-    """Service for OCR using Mistral OCR API"""
+    """Service for OCR using Mistral OCR API and text extraction for other formats"""
     
     def __init__(self):
         self.client = Mistral(api_key=settings.MISTRAL_API_KEY)
         self.model = "mistral-ocr-latest"
         logger.info("✅ Initialized Mistral OCR service")
     
+    async def extract_text(self, file_bytes: bytes, filename: str) -> str:
+        """
+        Extract text from file based on extension
+        
+        Args:
+            file_bytes: File content as bytes
+            filename: Filename with extension
+            
+        Returns:
+            Extracted text content
+        """
+        filename_lower = filename.lower()
+        
+        if filename_lower.endswith('.pdf'):
+            return await self.extract_text_from_pdf(file_bytes, filename)
+            
+        elif filename_lower.endswith('.txt'):
+            try:
+                return file_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                # Try fallback encodings
+                try:
+                    return file_bytes.decode('latin-1')
+                except Exception:
+                    logger.error(f"❌ Failed to decode TXT file: {filename}")
+                    return ""
+                    
+        elif filename_lower.endswith('.docx'):
+            if not docx:
+                logger.error("❌ python-docx not installed, cannot process DOCX")
+                return ""
+            
+            try:
+                # Load docx from bytes
+                doc = docx.Document(io.BytesIO(file_bytes))
+                full_text = []
+                for para in doc.paragraphs:
+                    full_text.append(para.text)
+                return '\n'.join(full_text)
+            except Exception as e:
+                logger.error(f"❌ Error extracting text from DOCX: {e}")
+                return ""
+        
+        else:
+            logger.warning(f"⚠️ Unsupported file type for text extraction: {filename}")
+            return ""
+
     async def extract_text_from_pdf(self, pdf_bytes: bytes, filename: Optional[str] = None) -> str:
         """
         Extract text from PDF using Mistral OCR API

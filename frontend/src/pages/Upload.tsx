@@ -28,7 +28,7 @@ const Upload = () => {
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [existingFiles, setExistingFiles] = useState<ExistingFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [selectedPdfType, setSelectedPdfType] = useState<string>('boyfriend_profile');
+  const [selectedPdfType, setSelectedPdfType] = useState<string>('reference_book');
   const [relationshipId, setRelationshipId] = useState<string>('00000000-0000-0000-0000-000000000000');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -48,7 +48,7 @@ const Upload = () => {
       if (response.ok) {
         const data = await response.json();
         if (data.success) {
-          setExistingFiles(data.files);
+          setExistingFiles(data.files.filter((f: ExistingFile) => f.filename !== 'onboarding_questionnaire.json'));
         }
       }
     } catch (error) {
@@ -129,7 +129,7 @@ const Upload = () => {
     setIsDragging(false);
 
     const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      file => file.type === 'application/pdf'
+      file => /\.(pdf|docx|txt)$/i.test(file.name)
     );
 
     if (droppedFiles.length > 0) {
@@ -140,7 +140,7 @@ const Upload = () => {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
       const selectedFiles = Array.from(e.target.files).filter(
-        file => file.type === 'application/pdf'
+        file => /\.(pdf|docx|txt)$/i.test(file.name)
       );
       handleFiles(selectedFiles);
     }
@@ -244,9 +244,8 @@ const Upload = () => {
   };
 
   const pdfTypeOptions = [
-    { value: 'boyfriend_profile', label: 'Boyfriend Profile', description: 'Character description for boyfriend' },
-    { value: 'girlfriend_profile', label: 'Girlfriend Profile', description: 'Character description for girlfriend' },
-    { value: 'reference_book', label: 'Relationship Book', description: 'Romance/relationship book (e.g. "Attached", "The Seven Principles")' }
+    { value: 'reference_book', label: 'Relationship Book', description: 'Romance/relationship book (e.g. "Attached", "The Seven Principles")' },
+    { value: 'document', label: 'Document', description: 'General relationship document or text' }
   ];
 
   return (
@@ -264,10 +263,10 @@ const Upload = () => {
 
       <div className="text-center mb-8">
         <h2 className="text-h2 text-text-primary mb-2">
-          Upload PDFs for RAG Pipeline
+          Upload Relationship Context
         </h2>
         <p className="text-body text-text-secondary">
-          Upload PDFs to extract text via OCR and store in vector database
+          Share books, letters, or documents to help Luna understand your unique connection
         </p>
       </div>
 
@@ -303,7 +302,8 @@ const Upload = () => {
               value={relationshipId}
               onChange={(e) => setRelationshipId(e.target.value)}
               placeholder="00000000-0000-0000-0000-000000000000"
-              className="w-full px-4 py-2.5 bg-surface-hover border border-transparent focus:bg-white focus:border-accent rounded-xl transition-all outline-none font-mono text-small"
+              readOnly
+              className="w-full px-4 py-2.5 bg-surface-hover border border-transparent rounded-xl transition-all outline-none font-mono text-small text-text-secondary cursor-not-allowed opacity-75"
             />
             <p className="text-tiny text-text-tertiary mt-1.5">
               Default relationship ID (can be changed)
@@ -325,7 +325,7 @@ const Upload = () => {
       >
         <UploadIcon size={40} className={`mb-4 ${isDragging ? 'text-accent' : 'text-text-tertiary'}`} strokeWidth={1.5} />
         <h3 className="text-h3 text-text-primary mb-2">
-          {isDragging ? 'Drop PDF here' : 'Drag & Drop PDF files here'}
+          {isDragging ? 'Drop files here' : 'Drag & Drop files here'}
         </h3>
         <p className="text-body text-text-secondary mb-6">
           or click to browse
@@ -334,12 +334,12 @@ const Upload = () => {
           onClick={() => fileInputRef.current?.click()}
           className="px-6 py-2.5 bg-white border border-border-subtle text-text-primary hover:border-accent hover:text-accent rounded-xl font-medium transition-all shadow-soft hover:shadow-subtle"
         >
-          Select PDF Files
+          Select Files
         </button>
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf"
+          accept=".pdf,.docx,.txt"
           multiple
           onChange={handleFileSelect}
           className="hidden"
@@ -389,7 +389,7 @@ const Upload = () => {
                       <div className="mt-2">
                         <div className="flex items-center text-tiny text-text-secondary mb-1.5">
                           <SparklesIcon size={12} className="mr-1.5 text-accent" />
-                          <span>{file.message || 'Running OCR and storing in vector database...'}</span>
+                          <span>{file.message || 'Reading and understanding your document...'}</span>
                         </div>
                         <div className="w-full bg-surface-hover rounded-full h-1">
                           <div
@@ -501,23 +501,7 @@ const Upload = () => {
         </div>
       )}
 
-      {/* Info Box */}
-      <div className="mt-8 bg-surface-hover border border-border-subtle rounded-xl p-5">
-        <div className="flex items-start">
-          <SparklesIcon size={20} className="text-accent mr-3 mt-0.5" strokeWidth={1.5} />
-          <div className="flex-1">
-            <h4 className="text-small font-semibold text-text-primary mb-2">
-              How it works
-            </h4>
-            <ul className="text-tiny text-text-secondary space-y-1.5 list-disc list-inside">
-              <li>PDFs are automatically processed with Mistral OCR</li>
-              <li>Extracted text is embedded using Voyage AI</li>
-              <li>Stored in Pinecone vector database for RAG retrieval</li>
-              <li>Used for personalized conflict analysis and repair plans</li>
-            </ul>
-          </div>
-        </div>
-      </div>
+
     </div>
   );
 };
