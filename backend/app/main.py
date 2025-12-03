@@ -49,6 +49,26 @@ supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 async def root():
     return {"message": "HeartSync API is running"}
 
+@app.get("/api/health/db")
+async def db_health_check():
+    """Check database connection"""
+    try:
+        from app.services.db_service import db_service
+        # Try a simple query
+        result = db_service.get_all_conflicts(limit=1)
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "message": "Successfully connected to database"
+        }
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "database": "disconnected",
+            "error": str(e)
+        }
+
 @app.post("/api/token")
 async def get_token(room_name: str, participant_name: str):
     token = api.AccessToken(
