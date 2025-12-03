@@ -25,6 +25,7 @@ pinecone
 httpx
 pydub
 boto3
+python-docx
 
 langfuse
 python-multipart
