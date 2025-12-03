@@ -88,3 +88,4 @@ anish_credentials*
 
 # Voice Agent RAG reference implementation
 Voice Agent RAG/
+backend/setup_fly.sh

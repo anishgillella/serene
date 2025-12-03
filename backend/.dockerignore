@@ -1,0 +1,16 @@
+# flyctl launch added from .gitignore
+
+# Credentials and sensitive files
+**/*credentials*.csv
+**/*credentials*.json
+**/*credentials*.txt
+**/anish_credentials*.csv
+
+# flyctl launch added from .pytest_cache/.gitignore
+# Created by pytest automatically.
+.pytest_cache/**/*
+
+# flyctl launch added from venv/lib/python3.12/site-packages/chromadb/proto/.gitignore
+venv/lib/python3.12/site-packages/chromadb/proto/**/*_pb2.py*
+venv/lib/python3.12/site-packages/chromadb/proto/**/*_pb2_grpc.py
+fly.toml
