@@ -6,6 +6,7 @@ from supabase import create_client
 from .routes import transcription
 import json
 import logging
+import os
 
 # Configure logging to show INFO level and above
 logging.basicConfig(
@@ -14,6 +15,21 @@ logging.basicConfig(
 )
 
 app = FastAPI(title="HeartSync API")
+
+# Security middleware (Phase 5)
+# Only enable in production or when explicitly requested
+ENABLE_SECURITY_MIDDLEWARE = os.getenv("ENABLE_SECURITY_MIDDLEWARE", "true").lower() == "true"
+
+if ENABLE_SECURITY_MIDDLEWARE:
+    from .middleware.security import (
+        RateLimitMiddleware,
+        SecurityHeadersMiddleware,
+        RequestIDMiddleware,
+    )
+    # Add security middleware (order matters - first added = last executed)
+    app.add_middleware(RequestIDMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RateLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,6 +63,8 @@ from .routes import onboarding
 app.include_router(onboarding.router)
 from .routes import mediator_routes
 app.include_router(mediator_routes.router, prefix="/api/mediator")
+from .routes import relationship_routes
+app.include_router(relationship_routes.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
@@ -338,58 +356,61 @@ async def list_conflicts(relationship_id: str = None):
         }
 
 @app.post("/api/conflicts/create")
-async def create_conflict(relationship_id: str = None):
-    """Create a new conflict and return its ID (uses hardcoded default relationship)"""
+async def create_conflict(
+    relationship_id: str = None,
+    request: dict = Body(default={})
+):
+    """
+    Create a new conflict and return its ID.
+
+    Multi-tenancy support:
+    - relationship_id can be passed as query param or in request body
+    - Falls back to DEFAULT_RELATIONSHIP_ID if not provided (backward compatibility)
+    """
     import uuid
     from datetime import datetime
-    from app.services.db_service import DEFAULT_RELATIONSHIP_ID
-    
+    from app.services.db_service import DEFAULT_RELATIONSHIP_ID, db_service
+
     try:
         conflict_id = str(uuid.uuid4())
-        
-        # Always use default relationship ID for MVP
-        relationship_id = DEFAULT_RELATIONSHIP_ID
-        
-        # Use db_service (direct PostgreSQL connection, bypasses RLS)
-        try:
-            from app.services.db_service import db_service
-            db_service.create_conflict(
-                conflict_id=conflict_id,
-                relationship_id=relationship_id,
-                status="active"
-            )
-            return {
-                "success": True,
-                "conflict_id": conflict_id,
-                "relationship_id": relationship_id
-            }
-        except ImportError:
-            # Fallback to Supabase if db_service not available
-            try:
-                data = {
-                    "id": conflict_id,
-                    "relationship_id": relationship_id,
-                    "started_at": datetime.now().isoformat(),
-                    "status": "active"
-                }
-                supabase.table("conflicts").insert(data).execute()
-                return {
-                    "success": True,
-                    "conflict_id": conflict_id,
-                    "relationship_id": relationship_id
-                }
-            except Exception as e:
-                # If DB insert fails, still return conflict_id for frontend use
-                return {
-                    "success": True,
-                    "conflict_id": conflict_id,
-                    "relationship_id": relationship_id,
-                    "warning": f"Database insert failed: {str(e)}"
-                }
+
+        # Get relationship_id from request body if not in query params
+        if not relationship_id:
+            relationship_id = request.get("relationship_id")
+
+        # Fall back to default if still not provided (backward compatibility)
+        if not relationship_id:
+            relationship_id = DEFAULT_RELATIONSHIP_ID
+
+        # Validate relationship exists
+        if not db_service.validate_relationship_exists(relationship_id):
+            # Create a default relationship if it doesn't exist
+            if relationship_id == DEFAULT_RELATIONSHIP_ID:
+                db_service.ensure_default_relationship()
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Relationship {relationship_id} not found. Create a relationship first."
+                )
+
+        # Create the conflict
+        db_service.create_conflict(
+            conflict_id=conflict_id,
+            relationship_id=relationship_id,
+            status="active"
+        )
+
+        return {
+            "success": True,
+            "conflict_id": conflict_id,
+            "relationship_id": relationship_id
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         import logging
         logger = logging.getLogger(__name__)
-        logger.error(f"❌ Error creating conflict: {e}")
+        logger.error(f"Error creating conflict: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/conflicts/cleanup")

@@ -9,8 +9,14 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from app.config import settings
 
-# Hardcoded single relationship ID for MVP
+# Default relationship ID for backward compatibility (Adrian & Elara test data)
+# This is kept for MVP/testing purposes only
 DEFAULT_RELATIONSHIP_ID = "00000000-0000-0000-0000-000000000000"
+
+# Multi-tenancy: relationship_id should now be passed dynamically via:
+# - URL query parameter: ?relationship_id=xxx
+# - Request header: X-Relationship-ID
+# - localStorage on frontend (persisted per browser)
 
 class DatabaseService:
     """Service for direct database access"""
@@ -897,8 +903,27 @@ class DatabaseService:
                     transcript_lines = []
                     formatted_messages = []
                     
+                    # Get dynamic speaker names based on relationship
+                    # First try to get relationship_id from the conflict
+                    speaker_labels = {"partner_a": "Partner A", "partner_b": "Partner B"}
+                    if messages:
+                        try:
+                            cursor.execute("""
+                                SELECT c.relationship_id, r.partner_a_name, r.partner_b_name
+                                FROM conflicts c
+                                LEFT JOIN relationships r ON c.relationship_id = r.id
+                                WHERE c.id = %s;
+                            """, (conflict_id,))
+                            rel_row = cursor.fetchone()
+                            if rel_row and rel_row.get("partner_a_name"):
+                                speaker_labels["partner_a"] = rel_row["partner_a_name"]
+                            if rel_row and rel_row.get("partner_b_name"):
+                                speaker_labels["partner_b"] = rel_row["partner_b_name"]
+                        except Exception:
+                            pass
+
                     for msg in messages:
-                        speaker = "Adrian Malhotra" if msg["partner_id"] == "partner_a" else "Elara Voss"
+                        speaker = speaker_labels.get(msg["partner_id"], "Speaker")
                         transcript_lines.append(f"{speaker}: {msg['content']}")
                         formatted_messages.append({
                             "partner_id": msg["partner_id"],
@@ -1233,6 +1258,309 @@ class DatabaseService:
             print(f"Error resolving relationship context: {e}")
             context["user_role"] = "partner_a"  # Default
             return context
+
+    # ============================================
+    # Multi-Tenancy Methods (Phase 2)
+    # ============================================
+
+    def create_relationship(self, partner_a_name: str, partner_b_name: str) -> str:
+        """
+        Create a new relationship with partner names.
+        Returns the new relationship_id.
+        """
+        import uuid
+        relationship_id = str(uuid.uuid4())
+
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Create relationship
+                    cursor.execute("""
+                        INSERT INTO relationships (id, partner_a_name, partner_b_name, created_at)
+                        VALUES (%s, %s, %s, NOW())
+                        RETURNING id;
+                    """, (relationship_id, partner_a_name, partner_b_name))
+
+                    relationship_id = str(cursor.fetchone()[0])
+
+                    # Create couple_profile for easy access
+                    cursor.execute("""
+                        INSERT INTO couple_profiles (relationship_id, partner_a_name, partner_b_name)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (relationship_id) DO NOTHING;
+                    """, (relationship_id, partner_a_name, partner_b_name))
+
+                    conn.commit()
+                    return relationship_id
+        except Exception as e:
+            print(f"Error creating relationship: {e}")
+            raise e
+
+    def get_relationship(self, relationship_id: str) -> Optional[Dict[str, Any]]:
+        """Get relationship details by ID."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT r.id, r.partner_a_name, r.partner_b_name, r.created_at,
+                               r.partner_a_id, r.partner_b_id
+                        FROM relationships r
+                        WHERE r.id = %s;
+                    """, (relationship_id,))
+
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            "id": str(row["id"]),
+                            "partner_a_name": row["partner_a_name"] or "Partner A",
+                            "partner_b_name": row["partner_b_name"] or "Partner B",
+                            "partner_a_id": str(row["partner_a_id"]) if row["partner_a_id"] else None,
+                            "partner_b_id": str(row["partner_b_id"]) if row["partner_b_id"] else None,
+                            "created_at": row["created_at"].isoformat() if row["created_at"] else None
+                        }
+                    return None
+        except Exception as e:
+            print(f"Error getting relationship: {e}")
+            return None
+
+    def update_relationship_names(self, relationship_id: str, partner_a_name: str = None, partner_b_name: str = None) -> bool:
+        """Update partner names for a relationship."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    updates = []
+                    params = []
+
+                    if partner_a_name:
+                        updates.append("partner_a_name = %s")
+                        params.append(partner_a_name)
+
+                    if partner_b_name:
+                        updates.append("partner_b_name = %s")
+                        params.append(partner_b_name)
+
+                    if not updates:
+                        return True
+
+                    params.append(relationship_id)
+
+                    # Update relationships table
+                    cursor.execute(f"""
+                        UPDATE relationships
+                        SET {', '.join(updates)}
+                        WHERE id = %s;
+                    """, params)
+
+                    # Also update couple_profiles table
+                    cursor.execute("""
+                        UPDATE couple_profiles
+                        SET partner_a_name = COALESCE(%s, partner_a_name),
+                            partner_b_name = COALESCE(%s, partner_b_name),
+                            updated_at = NOW()
+                        WHERE relationship_id = %s;
+                    """, (partner_a_name, partner_b_name, relationship_id))
+
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error updating relationship names: {e}")
+            return False
+
+    def get_couple_profile(self, relationship_id: str) -> Optional[Dict[str, Any]]:
+        """Get couple profile by relationship_id."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, relationship_id, partner_a_name, partner_b_name,
+                               created_at, updated_at, metadata
+                        FROM couple_profiles
+                        WHERE relationship_id = %s;
+                    """, (relationship_id,))
+
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            "id": str(row["id"]),
+                            "relationship_id": str(row["relationship_id"]),
+                            "partner_a_name": row["partner_a_name"],
+                            "partner_b_name": row["partner_b_name"],
+                            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                            "metadata": row["metadata"] or {}
+                        }
+                    return None
+        except Exception as e:
+            print(f"Error getting couple profile: {e}")
+            return None
+
+    def get_partner_names(self, relationship_id: str) -> Dict[str, str]:
+        """
+        Get partner names for a relationship.
+        Returns dict with partner_a and partner_b names.
+        Falls back to defaults if not found.
+        """
+        try:
+            relationship = self.get_relationship(relationship_id)
+            if relationship:
+                return {
+                    "partner_a": relationship.get("partner_a_name") or "Partner A",
+                    "partner_b": relationship.get("partner_b_name") or "Partner B"
+                }
+            return {"partner_a": "Partner A", "partner_b": "Partner B"}
+        except Exception as e:
+            print(f"Error getting partner names: {e}")
+            return {"partner_a": "Partner A", "partner_b": "Partner B"}
+
+    def get_dynamic_speaker_labels(self, relationship_id: str) -> Dict[str, str]:
+        """
+        Get speaker labels for transcripts based on relationship.
+        Maps partner_a/partner_b to actual names.
+        """
+        names = self.get_partner_names(relationship_id)
+        return {
+            "partner_a": names["partner_a"],
+            "partner_b": names["partner_b"]
+        }
+
+    def validate_relationship_exists(self, relationship_id: str) -> bool:
+        """Check if a relationship exists."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT 1 FROM relationships WHERE id = %s;
+                    """, (relationship_id,))
+                    return cursor.fetchone() is not None
+        except Exception as e:
+            print(f"Error validating relationship: {e}")
+            return False
+
+    # ============================================
+    # Security & Audit Methods (Phase 5)
+    # ============================================
+
+    def create_audit_log(self, log_entry: Dict[str, Any]) -> bool:
+        """Create an audit log entry."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO audit_logs (
+                            action, table_name, record_id, relationship_id,
+                            ip_address, user_agent, request_path, request_method,
+                            status_code, error_message, metadata
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+                    """, (
+                        log_entry.get("action"),
+                        log_entry.get("table_name"),
+                        log_entry.get("record_id"),
+                        log_entry.get("relationship_id"),
+                        log_entry.get("ip_address"),
+                        log_entry.get("user_agent"),
+                        log_entry.get("request_path"),
+                        log_entry.get("request_method"),
+                        log_entry.get("status_code"),
+                        log_entry.get("error_message"),
+                        json.dumps(log_entry.get("metadata", {}))
+                    ))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error creating audit log: {e}")
+            return False
+
+    def get_audit_logs(
+        self,
+        relationship_id: str = None,
+        action: str = None,
+        table_name: str = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get audit logs with optional filters."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    query = "SELECT * FROM audit_logs WHERE 1=1"
+                    params = []
+
+                    if relationship_id:
+                        query += " AND relationship_id = %s"
+                        params.append(relationship_id)
+                    if action:
+                        query += " AND action = %s"
+                        params.append(action)
+                    if table_name:
+                        query += " AND table_name = %s"
+                        params.append(table_name)
+
+                    query += " ORDER BY timestamp DESC LIMIT %s"
+                    params.append(limit)
+
+                    cursor.execute(query, params)
+                    rows = cursor.fetchall()
+                    return [dict(row) for row in rows]
+        except Exception as e:
+            print(f"Error getting audit logs: {e}")
+            return []
+
+    def check_rate_limit(
+        self,
+        identifier: str,
+        endpoint: str,
+        limit: int = 60,
+        window_seconds: int = 60
+    ) -> tuple[bool, int]:
+        """
+        Check and update rate limit for an identifier.
+        Returns (is_allowed, remaining_requests).
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    now = datetime.now()
+                    window_start = now - timedelta(seconds=window_seconds)
+
+                    # Get current count
+                    cursor.execute("""
+                        SELECT request_count, window_start
+                        FROM rate_limits
+                        WHERE identifier = %s AND endpoint = %s
+                        AND window_start > %s;
+                    """, (identifier, endpoint, window_start))
+
+                    row = cursor.fetchone()
+
+                    if row:
+                        current_count = row["request_count"]
+                        if current_count >= limit:
+                            return False, 0
+
+                        # Update count
+                        cursor.execute("""
+                            UPDATE rate_limits
+                            SET request_count = request_count + 1, updated_at = NOW()
+                            WHERE identifier = %s AND endpoint = %s;
+                        """, (identifier, endpoint))
+                        conn.commit()
+                        return True, limit - current_count - 1
+                    else:
+                        # Create new entry
+                        cursor.execute("""
+                            INSERT INTO rate_limits (identifier, endpoint, request_count, window_start, window_end)
+                            VALUES (%s, %s, 1, %s, %s)
+                            ON CONFLICT (identifier, endpoint) DO UPDATE
+                            SET request_count = 1, window_start = %s, window_end = %s, updated_at = NOW();
+                        """, (
+                            identifier, endpoint, now, now + timedelta(seconds=window_seconds),
+                            now, now + timedelta(seconds=window_seconds)
+                        ))
+                        conn.commit()
+                        return True, limit - 1
+
+        except Exception as e:
+            print(f"Error checking rate limit: {e}")
+            return True, limit  # Allow on error
 
 
 # Global singleton instance

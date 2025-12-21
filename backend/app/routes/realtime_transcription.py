@@ -97,19 +97,22 @@ async def websocket_transcribe(websocket: WebSocket):
             return
         
         # Speaker mapping for diarization
+        # Default names - will be updated if relationship_id is provided
+        partner_a_name = "Speaker 1"
+        partner_b_name = "Speaker 2"
         speaker_counter = 0
         speaker_map = {}
-        
+
         def get_speaker_name(speaker_id: int) -> str:
             """Map Deepgram speaker ID to readable name"""
             nonlocal speaker_counter
             if speaker_id not in speaker_map:
                 speaker_counter += 1
-                # Map first speaker to Adrian Malhotra, second to Elara Voss
+                # Map first speaker to partner A, second to partner B
                 if speaker_counter == 1:
-                    speaker_map[speaker_id] = "Adrian Malhotra"
+                    speaker_map[speaker_id] = partner_a_name
                 else:
-                    speaker_map[speaker_id] = "Elara Voss"
+                    speaker_map[speaker_id] = partner_b_name
             return speaker_map[speaker_id]
         
         # Start receiving transcripts in background

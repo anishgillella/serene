@@ -124,7 +124,22 @@ async def mediator_entrypoint(ctx: JobContext):
     # Wait for results
     session_id = await session_task
     rag_system, relationship_id = await rag_task
-    
+
+    # Fetch partner names for dynamic greeting and instructions
+    partner_a_name = "Partner A"
+    partner_b_name = "Partner B"
+    if relationship_id and db_service:
+        try:
+            partner_names = await asyncio.to_thread(
+                db_service.get_partner_names,
+                relationship_id
+            )
+            partner_a_name = partner_names.get("partner_a", "Partner A")
+            partner_b_name = partner_names.get("partner_b", "Partner B")
+            logger.info(f"   ✅ Loaded partner names: {partner_a_name} & {partner_b_name}")
+        except Exception as e:
+            logger.warning(f"   ⚠️ Could not load partner names: {e}")
+
     try:
         # Use pre-warmed VAD or load new one
         global _vad_model
@@ -140,13 +155,26 @@ async def mediator_entrypoint(ctx: JobContext):
             vad=_vad_model,
         )
         
-        tools = get_tools(conflict_id, relationship_id)
+        tools = get_tools(conflict_id, relationship_id, partner_b_name=partner_b_name)
         
-        # Create Agent
+        # Create Agent with dynamic partner names
         if rag_system:
-            agent = RAGMediator(rag_system, conflict_id, relationship_id, session_id, tools=tools)
+            agent = RAGMediator(
+                rag_system,
+                conflict_id,
+                relationship_id,
+                session_id,
+                tools=tools,
+                partner_a_name=partner_a_name,
+                partner_b_name=partner_b_name
+            )
         else:
-            agent = SimpleMediator(session_id, tools=tools)
+            agent = SimpleMediator(
+                session_id,
+                tools=tools,
+                partner_a_name=partner_a_name,
+                partner_b_name=partner_b_name
+            )
             
         # Connect
         await session.start(
@@ -163,8 +191,8 @@ async def mediator_entrypoint(ctx: JobContext):
             ),
         )
         
-        # Initial Greeting Logic
-        greeting = "Hey Adrian, I'm here. What's on your mind?"
+        # Initial Greeting Logic with dynamic partner name
+        greeting = f"Hey {partner_a_name}, I'm here. What's on your mind?"
         await session.say(greeting, allow_interruptions=True)
         
     except Exception as e:
