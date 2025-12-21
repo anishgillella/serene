@@ -16,6 +16,20 @@ import {
 const Sidebar = () => {
     const location = useLocation();
 
+    // Hardcoded for now - will use auth context when enabled
+    const displayName = "Adrian";
+    const partnerName = "Elara";
+
+    // Get initials for avatar
+    const getInitials = (name: string) => {
+        return name
+            .split(' ')
+            .map((n) => n[0])
+            .join('')
+            .toUpperCase()
+            .slice(0, 2);
+    };
+
     const navItems = [
         { icon: LayoutDashboard, label: 'Home', path: '/' },
         { icon: Mic, label: 'Fight Capture', path: '/fight-capture' },
@@ -66,11 +80,15 @@ const Sidebar = () => {
             <div className="p-4 mt-auto border-t border-border-subtle">
                 <div className="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-surface-hover cursor-pointer transition-colors">
                     <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent font-medium text-xs">
-                        AM
+                        {getInitials(displayName)}
                     </div>
                     <div className="flex-1 min-w-0">
-                        <div className="text-small font-medium text-text-primary truncate">Adrian M.</div>
-                        <div className="text-tiny text-text-tertiary truncate">Connected</div>
+                        <div className="text-small font-medium text-text-primary truncate">
+                            {displayName}
+                        </div>
+                        <div className="text-tiny text-text-tertiary truncate">
+                            with {partnerName}
+                        </div>
                     </div>
                     <Settings size={16} className="text-text-tertiary" />
                 </div>
