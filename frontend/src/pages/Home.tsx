@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Moon, ArrowRight, Sparkles, MessageSquare, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useRelationship } from '../contexts/RelationshipContext';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -144,6 +145,8 @@ const RecentConflicts = () => {
 
 const Home = () => {
   const navigate = useNavigate();
+  const { partnerAName } = useRelationship();
+  const displayName = partnerAName || "there";
   const currentHour = new Date().getHours();
 
   let greeting = 'Good morning';
@@ -159,7 +162,7 @@ const Home = () => {
           <span>Your relationship companion</span>
         </div>
         <h1 className="text-4xl md:text-5xl font-medium text-text-primary mb-3 tracking-tight">
-          {greeting}, Adrian.
+          {greeting}, {displayName}.
         </h1>
         <p className="text-body text-text-secondary max-w-xl">
           Luna is here to help you navigate conflicts, track your journey, and build a stronger connection.

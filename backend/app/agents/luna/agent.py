@@ -9,14 +9,16 @@ from app.services.db_service import db_service
 
 logger = logging.getLogger("luna-agent")
 
-DEFAULT_INSTRUCTIONS = """
-You are Luna, Adrian's buddy who helps him think through relationship stuff.
+def get_dynamic_instructions(partner_a_name: str = "Partner A", partner_b_name: str = "Partner B") -> str:
+    """Generate Luna instructions with dynamic partner names."""
+    return f"""
+You are Luna, {partner_a_name}'s buddy who helps them think through relationship stuff.
 
 IMPORTANT CONTEXT:
-- The boyfriend is Adrian Malhotra
-- The girlfriend is Elara Voss
-- You're talking to Adrian like a close friend would
-- You're on his side - you get what he's going through
+- You're talking to {partner_a_name}
+- Their partner is {partner_b_name}
+- You're talking to {partner_a_name} like a close friend would
+- You're on their side - you get what they're going through
 
 Your personality:
 - Talk like a friend, not a therapist
@@ -24,26 +26,37 @@ Your personality:
 - Be warm and empathetic, but conversational
 - Vary your language naturally - don't overuse "man", "bro", or "dude"
 - Mix casual phrases like "I hear you", "That's tough", "I get it"
-- You can occasionally say things like "Women can be confusing" or suggest grabbing a beer to talk
 - Be honest and direct, like a good friend would be
-- Supportive but also willing to call him out if needed (gently)
+- Supportive but also willing to call them out if needed (gently)
 
 Your role:
-- Listen like a friend would - let him vent
-- Validate his feelings naturally, without always using the same phrases
-- Help him see Elara's side without making him feel wrong
+- Listen like a friend would - let them vent
+- Validate their feelings naturally, without always using the same phrases
+- Help them see {partner_b_name}'s side without making them feel wrong
 - Suggest practical fixes that actually work in the real world
-- Be the kind of friend who has his back but also helps him grow
+- Be the kind of friend who has their back but also helps them grow
 
-Remember: You're his friend, not his therapist. Talk naturally like you're having a conversation over coffee or beer, not using the same bro-phrases every sentence.
+Remember: You're their friend, not their therapist. Talk naturally like you're having a conversation over coffee, not using the same phrases every sentence.
 """
+
+# Default instructions for backward compatibility (will be replaced dynamically)
+DEFAULT_INSTRUCTIONS = get_dynamic_instructions("Partner A", "Partner B")
 
 class SimpleMediator(voice.Agent):
     """Luna - A simple, friendly relationship mediator"""
-    
-    def __init__(self, session_id: str = None, tools: list = None):
-        super().__init__(instructions=DEFAULT_INSTRUCTIONS, tools=tools or [])
+
+    def __init__(
+        self,
+        session_id: str = None,
+        tools: list = None,
+        partner_a_name: str = "Partner A",
+        partner_b_name: str = "Partner B"
+    ):
+        instructions = get_dynamic_instructions(partner_a_name, partner_b_name)
+        super().__init__(instructions=instructions, tools=tools or [])
         self.session_id = session_id
+        self.partner_a_name = partner_a_name
+        self.partner_b_name = partner_b_name
 
 
 
@@ -80,7 +93,7 @@ class SimpleMediator(voice.Agent):
 
 class RAGMediator(voice.Agent):
     """Luna - Mediator agent with RAG capabilities"""
-    
+
     def __init__(
         self,
         rag_system,
@@ -89,22 +102,29 @@ class RAGMediator(voice.Agent):
         session_id: str = None,
         instructions: str = "",
         tools: list = None,
+        partner_a_name: str = "Partner A",
+        partner_b_name: str = "Partner B"
     ):
         self.rag_handler = RAGHandler(rag_system, conflict_id, relationship_id, session_id)
-        
-        # Append RAG-specific instructions
-        full_instructions = (instructions or DEFAULT_INSTRUCTIONS) + """
-        
+        self.partner_a_name = partner_a_name
+        self.partner_b_name = partner_b_name
+
+        # Generate dynamic base instructions
+        base_instructions = instructions or get_dynamic_instructions(partner_a_name, partner_b_name)
+
+        # Append RAG-specific instructions with dynamic partner names
+        full_instructions = base_instructions + f"""
+
 You have access to:
 - All past conversation transcripts (not just the current one)
-- Adrian's complete profile (background, personality, what he values)
-- Elara's profile (what makes her tick)
+- {partner_a_name}'s complete profile (background, personality, what they value)
+- {partner_b_name}'s profile (what makes them tick)
 
 When answering questions:
 - Use transcripts to reference what was actually said
-- Use profiles to explain WHY he feels that way
+- Use profiles to explain WHY they feel that way
 - Connect current situations to past conversations naturally
-- Talk about Adrian and Elara by name
+- Talk about {partner_a_name} and {partner_b_name} by name
 - Show you really understand the full picture
 
 IMPORTANT: If asked about personal details (favorites, hobbies, background), ALWAYS check the profile context first. Do not say you don't know if the information is in the profile.

@@ -30,3 +30,8 @@ python-docx
 langfuse
 python-multipart
 python-jose[cryptography]
+
+# Testing
+pytest
+pytest-asyncio
+httpx

@@ -38,13 +38,14 @@ def _set_cache(key: str, value: Any):
     _cache[key] = (value, time.time())
 
 class MediatorTools:
-    """Tools for the Luna Mediator Agent"""
+    """Tools for the Luna Mediator Agent - Gender-neutral implementation"""
 
-    def __init__(self, conflict_id: str, relationship_id: str):
+    def __init__(self, conflict_id: str, relationship_id: str, partner_b_name: str = "Partner"):
         self.conflict_id = conflict_id
         self.relationship_id = relationship_id
-        
-        # Initialize OpenAI client for internal tool use (Elara perspective)
+        self.partner_b_name = partner_b_name  # Dynamic partner name
+
+        # Initialize OpenAI client for internal tool use (partner perspective)
         try:
             from openai import AsyncOpenAI
             self.openai = AsyncOpenAI(
@@ -153,69 +154,86 @@ class MediatorTools:
             logger.error(f"Error in find_similar_conflicts: {e}")
             return "I encountered an error while looking up past conflicts."
 
-    @observe(name="get_elara_perspective")
-    async def get_elara_perspective(self, situation_description: str) -> str:
+    @observe(name="get_partner_perspective")
+    async def get_partner_perspective(self, situation_description: str) -> str:
         """
-        Get Elara's likely perspective on the current situation based on her profile.
-        
+        Get the partner's likely perspective on the current situation based on their profile.
+        Gender-neutral implementation that works for any relationship type.
+
         Args:
             situation_description: Description of the specific situation or behavior to analyze
         """
-        cache_key = f"elara_perspective:{self.conflict_id}:{situation_description}"
+        cache_key = f"partner_perspective:{self.conflict_id}:{situation_description}"
         cached = _get_cached(cache_key)
         if cached:
-            logger.info(f"Using cached Elara perspective for {situation_description}")
+            logger.info(f"Using cached partner perspective for {situation_description}")
             return cached
 
         if not self.openai:
             return "I can't access the perspective analysis tool right now."
 
         try:
-            logger.info(f"Generating Elara perspective for: {situation_description}")
-            
-            # 1. Fetch Elara's profile (simplified for now, ideally fetch from DB/Pinecone)
-            # For this implementation, we'll try to fetch from Pinecone 'profiles' namespace
+            logger.info(f"Generating partner perspective for: {situation_description}")
+
+            # 1. Fetch partner's profile from Pinecone
             profile_text = ""
             if pinecone_service and embeddings_service:
-                # Search for Elara's profile
-                query_embedding = embeddings_service.embed_query("Elara Voss personality triggers communication style")
+                # Search for partner B's profile using relationship_id filter
+                query_embedding = embeddings_service.embed_query("personality triggers communication style values")
                 results = await asyncio.to_thread(
                     pinecone_service.index.query,
                     vector=query_embedding,
                     top_k=3,
                     namespace="profiles",
-                    filter={"person_name": {"$eq": "Elara Voss"}}, # Assuming metadata has name
+                    filter={
+                        "relationship_id": {"$eq": self.relationship_id},
+                        # Look for partner_b or girlfriend profiles
+                        "$or": [
+                            {"pdf_type": {"$eq": "partner_b_profile"}},
+                            {"pdf_type": {"$eq": "girlfriend_profile"}}
+                        ]
+                    },
                     include_metadata=True
                 )
                 if results and results.matches:
-                    profile_text = "\n".join([m.metadata.get("text", "") for m in results.matches])
-            
+                    profile_text = "\n".join([m.metadata.get("text", m.metadata.get("extracted_text", "")) for m in results.matches])
+
             if not profile_text:
-                # Fallback if no profile found in vector DB, use a generic placeholder or try to get from context
-                # But we really need profile data. Let's assume we have some basic info or fail gracefully.
-                # Ideally we'd pass the profile in __init__ if available.
-                # For now, let's proceed with a generic prompt if empty, or better, return a message.
-                pass 
+                # Try alternate query without pdf_type filter
+                if pinecone_service and embeddings_service:
+                    results = await asyncio.to_thread(
+                        pinecone_service.index.query,
+                        vector=query_embedding,
+                        top_k=3,
+                        namespace="profiles",
+                        filter={"relationship_id": {"$eq": self.relationship_id}},
+                        include_metadata=True
+                    )
+                    if results and results.matches:
+                        profile_text = "\n".join([m.metadata.get("text", m.metadata.get("extracted_text", "")) for m in results.matches])
 
             # 2. Generate perspective using LLM
-            system_prompt = """
-            You are an empathetic relationship psychologist. 
-            Based on Elara's profile, explain how she is likely perceiving the described situation.
-            Focus on her triggers, values, and communication style.
-            Keep it concise (2-3 sentences) and speak as if you are explaining it to her partner.
-            Do not judge, just explain her likely internal state.
+            partner_name = self.partner_b_name or "your partner"
+
+            system_prompt = f"""
+            You are an empathetic relationship psychologist.
+            Based on {partner_name}'s profile, explain how they are likely perceiving the described situation.
+            Focus on their triggers, values, and communication style.
+            Keep it concise (2-3 sentences) and speak as if you are explaining it to their partner.
+            Do not judge, just explain their likely internal state.
+            Use gender-neutral language (they/them) unless you know the person's pronouns.
             """
-            
+
             user_prompt = f"""
             Profile Excerpt:
-            {profile_text}
-            
+            {profile_text if profile_text else "No specific profile available - use general relationship psychology principles."}
+
             Situation:
             {situation_description}
-            
-            What is Elara likely thinking and feeling?
+
+            What is {partner_name} likely thinking and feeling?
             """
-            
+
             completion = await self.openai.chat.completions.create(
                 model="openai/gpt-4o-mini",
                 messages=[
@@ -225,14 +243,17 @@ class MediatorTools:
                 max_tokens=150,
                 temperature=0.7
             )
-            
+
             perspective = completion.choices[0].message.content
-            
-            # Telemetry handled by @observe decorator
-            
+
             _set_cache(cache_key, perspective)
             return perspective
 
         except Exception as e:
-            logger.error(f"Error in get_elara_perspective: {e}")
-            return "I'm having trouble analyzing Elara's perspective right now."
+            logger.error(f"Error in get_partner_perspective: {e}")
+            return f"I'm having trouble analyzing {self.partner_b_name}'s perspective right now."
+
+    # Backward compatibility alias
+    async def get_elara_perspective(self, situation_description: str) -> str:
+        """Backward compatibility alias for get_partner_perspective."""
+        return await self.get_partner_perspective(situation_description)

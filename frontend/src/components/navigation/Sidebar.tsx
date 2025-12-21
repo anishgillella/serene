@@ -12,13 +12,15 @@ import {
     Heart,
     User
 } from 'lucide-react';
+import { useRelationship } from '../../contexts/RelationshipContext';
 
 const Sidebar = () => {
     const location = useLocation();
 
-    // Hardcoded for now - will use auth context when enabled
-    const displayName = "Adrian";
-    const partnerName = "Elara";
+    // Use relationship context for dynamic partner names
+    const { partnerAName, partnerBName } = useRelationship();
+    const displayName = partnerAName || "Partner A";
+    const partnerName = partnerBName || "Partner B";
 
     // Get initials for avatar
     const getInitials = (name: string) => {

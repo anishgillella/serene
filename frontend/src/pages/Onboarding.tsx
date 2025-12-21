@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowRightIcon, ArrowLeftIcon, MicIcon, CheckCircleIcon, HeartIcon, UserIcon, BookOpenIcon, UtensilsIcon, TrophyIcon, StarIcon, AlertCircleIcon, SparklesIcon, EyeIcon, PlayIcon } from 'lucide-react';
 import VoiceGuidanceModal from '../components/ui/VoiceGuidanceModal';
 
-// Types
+// Types - Using gender-neutral terminology
 interface PartnerProfile {
     name: string;
-    role: 'boyfriend' | 'girlfriend' | 'partner_a' | 'partner_b';
+    role: 'partner_a' | 'partner_b';  // Gender-neutral roles
     age: number | '';
     communication_style: string;
     stress_triggers: string[];
@@ -221,7 +221,7 @@ const Onboarding = () => {
 
     const [partnerProfile, setPartnerProfile] = useState<PartnerProfile>({
         name: '',
-        role: 'boyfriend',
+        role: 'partner_a',
         age: '',
         communication_style: '',
         stress_triggers: [],
@@ -263,9 +263,9 @@ const Onboarding = () => {
         { type: 'welcome', title: "Welcome to Luna", description: "Let's get to know you better so we can help you build a stronger relationship." },
 
         { type: 'chapter_start', chapter: 1, title: "The Basics", description: "First, tell us a bit about yourself." },
-        { type: 'partner', field: 'name', label: "What's your name?", placeholder: "e.g., Adrian", icon: UserIcon, chapter: 1 },
+        { type: 'partner', field: 'name', label: "What's your name?", placeholder: "e.g., Alex", icon: UserIcon, chapter: 1 },
         { type: 'partner', field: 'age', label: "How old are you?", placeholder: "e.g., 28", icon: UserIcon, chapter: 1 },
-        { type: 'partner', field: 'role', label: "What is your role in the relationship?", placeholder: "e.g., Boyfriend, Partner A", icon: UserIcon, chapter: 1 },
+        { type: 'partner', field: 'role', label: "What is your role in the relationship?", placeholder: "e.g., Partner A, Partner B", icon: UserIcon, chapter: 1 },
 
         { type: 'chapter_start', chapter: 2, title: "Your Story", description: "Your past shapes who you are today." },
         { type: 'partner', field: 'background_story', label: "Tell us your story.", sublabel: "Where did you grow up? What was your childhood like? How did you get to where you are now?", placeholder: "I grew up in...", multiline: true, icon: BookOpenIcon, chapter: 2 },
@@ -389,25 +389,25 @@ const Onboarding = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <button
-                    onClick={() => { setPartnerId('partner_a'); setPartnerProfile(p => ({ ...p, role: 'boyfriend' })); handleNext(); }}
+                    onClick={() => { setPartnerId('partner_a'); setPartnerProfile(p => ({ ...p, role: 'partner_a' })); handleNext(); }}
                     className="p-10 bg-surface-elevated border-2 border-transparent rounded-3xl hover:border-accent hover:shadow-lg transition-all text-left group"
                 >
                     <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                         <UserIcon size={32} />
                     </div>
                     <h3 className="text-h3 text-text-primary mb-2">Partner A</h3>
-                    <p className="text-body text-text-secondary">Usually the Boyfriend (Default)</p>
+                    <p className="text-body text-text-secondary">First partner (default)</p>
                 </button>
 
                 <button
-                    onClick={() => { setPartnerId('partner_b'); setPartnerProfile(p => ({ ...p, role: 'girlfriend' })); handleNext(); }}
+                    onClick={() => { setPartnerId('partner_b'); setPartnerProfile(p => ({ ...p, role: 'partner_b' })); handleNext(); }}
                     className="p-10 bg-surface-elevated border-2 border-transparent rounded-3xl hover:border-accent hover:shadow-lg transition-all text-left group"
                 >
-                    <div className="w-16 h-16 bg-pink-50 text-pink-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                    <div className="w-16 h-16 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                         <UserIcon size={32} />
                     </div>
                     <h3 className="text-h3 text-text-primary mb-2">Partner B</h3>
-                    <p className="text-body text-text-secondary">Usually the Girlfriend</p>
+                    <p className="text-body text-text-secondary">Second partner</p>
                 </button>
             </div>
         </div>

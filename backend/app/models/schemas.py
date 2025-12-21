@@ -1,5 +1,8 @@
 """
 Pydantic models for HeartSync data structures
+
+Note: This module uses gender-neutral terminology (partner_a, partner_b)
+to support all relationship types (same-sex, non-binary, etc.)
 """
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -8,7 +11,7 @@ from datetime import datetime
 
 class SpeakerSegment(BaseModel):
     """A single speaker segment in a transcript"""
-    speaker: str  # "Adrian Malhotra" (boyfriend) or "Elara Voss" (girlfriend)
+    speaker: str  # Dynamic partner name (e.g., "Alex", "Jordan")
     text: str
     start_time: Optional[float] = None
     end_time: Optional[float] = None
@@ -28,7 +31,7 @@ class ConflictTranscript(BaseModel):
     partner_b_id: str
     speaker_labels: dict = Field(
         default_factory=dict,
-        description="Mapping of speaker IDs to names, e.g., {0: 'Adrian Malhotra', 1: 'Elara Voss'}"
+        description="Mapping of speaker IDs to partner names, e.g., {0: 'Partner A Name', 1: 'Partner B Name'}"
     )
 
 
@@ -48,14 +51,26 @@ class ConflictAnalysis(BaseModel):
         default_factory=list,
         description="Key moments where the conflict escalated"
     )
-    unmet_needs_boyfriend: List[str] = Field(
+    # Gender-neutral field names
+    unmet_needs_partner_a: List[str] = Field(
         default_factory=list,
-        description="Needs that the boyfriend expressed but weren't met"
+        description="Needs that partner A expressed but weren't met"
     )
-    unmet_needs_girlfriend: List[str] = Field(
+    unmet_needs_partner_b: List[str] = Field(
         default_factory=list,
-        description="Needs that the girlfriend expressed but weren't met"
+        description="Needs that partner B expressed but weren't met"
     )
+    # Backward compatibility aliases
+    @property
+    def unmet_needs_boyfriend(self) -> List[str]:
+        """Backward compatibility alias for unmet_needs_partner_a"""
+        return self.unmet_needs_partner_a
+
+    @property
+    def unmet_needs_girlfriend(self) -> List[str]:
+        """Backward compatibility alias for unmet_needs_partner_b"""
+        return self.unmet_needs_partner_b
+
     communication_breakdowns: List[str] = Field(
         default_factory=list,
         description="Specific communication failures that occurred"
@@ -66,7 +81,7 @@ class ConflictAnalysis(BaseModel):
 class RepairPlan(BaseModel):
     """Model for repair plan and coaching"""
     conflict_id: str
-    partner_requesting: str  # "Boyfriend" or "Girlfriend"
+    partner_requesting: str  # "partner_a" or "partner_b" (or partner's actual name)
     steps: List[str] = Field(description="Actionable steps for repair")
     apology_script: str = Field(description="Personalized apology script")
     timing_suggestion: str = Field(description="When and how to approach the repair")
@@ -75,6 +90,28 @@ class RepairPlan(BaseModel):
         description="Potential risks or things to avoid"
     )
     generated_at: datetime = Field(default_factory=datetime.now)
+
+
+# Helper functions for pdf_type normalization
+def normalize_pdf_type(pdf_type: str) -> str:
+    """Convert legacy pdf_type values to gender-neutral equivalents."""
+    mapping = {
+        'boyfriend_profile': 'partner_a_profile',
+        'girlfriend_profile': 'partner_b_profile',
+        'boyfriend': 'partner_a_profile',
+        'girlfriend': 'partner_b_profile',
+    }
+    return mapping.get(pdf_type, pdf_type)
+
+
+def is_partner_a_profile(pdf_type: str) -> bool:
+    """Check if pdf_type refers to partner A's profile."""
+    return pdf_type in ('boyfriend_profile', 'partner_a_profile', 'boyfriend', 'partner_a')
+
+
+def is_partner_b_profile(pdf_type: str) -> bool:
+    """Check if pdf_type refers to partner B's profile."""
+    return pdf_type in ('girlfriend_profile', 'partner_b_profile', 'girlfriend', 'partner_b')
 
 
 

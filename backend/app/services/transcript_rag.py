@@ -161,7 +161,8 @@ class TranscriptRAGSystem:
                                 if name:
                                     speaker = name
                                 else:
-                                    speaker = "Adrian" if "boyfriend" in pdf_type else "Elara"
+                                    # Use gender-neutral labels for partner profiles
+                                    speaker = "Partner A" if "boyfriend" in pdf_type or "partner_a" in pdf_type else "Partner B"
                                 
                                 chunks.append({
                                     'text': text,
@@ -179,18 +180,29 @@ class TranscriptRAGSystem:
                     return []
 
             async def fetch_past_conflicts():
-                """Fetch past conflict chunks"""
+                """Fetch past conflict chunks - SECURITY: Must filter by relationship_id"""
                 if not conflict_id:
                     return []
-                
+
+                # SECURITY FIX: Must filter by relationship_id to prevent data leakage
+                if not relationship_id:
+                    logger.warning("   ⚠️ No relationship_id provided, skipping past conflicts for security")
+                    return []
+
                 t_start = time.perf_counter()
                 try:
+                    # SECURITY: Filter by relationship_id AND exclude current conflict
                     results = await asyncio.to_thread(
                         pinecone_service.index.query,
                         vector=query_embedding,
                         top_k=5,  # Get top 5 from past conflicts
                         namespace="transcript_chunks",
-                        filter={"conflict_id": {"$ne": conflict_id}},  # EXCLUDE current conflict
+                        filter={
+                            "$and": [
+                                {"conflict_id": {"$ne": conflict_id}},  # EXCLUDE current conflict
+                                {"relationship_id": {"$eq": relationship_id}}  # SECURITY: Only same relationship
+                            ]
+                        },
                         include_metadata=True,
                     )
                     
