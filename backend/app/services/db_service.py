@@ -1020,6 +1020,221 @@ class DatabaseService:
         except Exception as e:
             raise e
 
+    # ============================================
+    # User & Relationship Context Methods (Phase 1)
+    # ============================================
+
+    def get_user_by_auth0_id(self, auth0_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by Auth0 ID (sub claim)."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, auth0_id, email, name, picture, created_at, last_login
+                        FROM users
+                        WHERE auth0_id = %s;
+                    """, (auth0_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+                    return None
+        except Exception as e:
+            print(f"Error getting user by auth0_id: {e}")
+            return None
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get user by internal user ID."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, auth0_id, email, name, picture, created_at, last_login
+                        FROM users
+                        WHERE id = %s;
+                    """, (user_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        return dict(row)
+                    return None
+        except Exception as e:
+            print(f"Error getting user by id: {e}")
+            return None
+
+    def get_user_relationship_context(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get user's relationship context including partner info.
+
+        Returns:
+            {
+                "relationship_id": str,
+                "display_name": str,
+                "partner_display_name": str,
+                "role": str
+            }
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT
+                            rm.relationship_id,
+                            rm.display_name,
+                            rm.role,
+                            partner.display_name as partner_display_name,
+                            partner.user_id as partner_user_id
+                        FROM relationship_members rm
+                        LEFT JOIN relationship_members partner
+                            ON partner.relationship_id = rm.relationship_id
+                            AND partner.user_id != rm.user_id
+                            AND partner.invitation_status = 'accepted'
+                        WHERE rm.user_id = %s
+                            AND rm.invitation_status = 'accepted'
+                        LIMIT 1;
+                    """, (user_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            "relationship_id": str(row["relationship_id"]),
+                            "display_name": row["display_name"],
+                            "partner_display_name": row["partner_display_name"],
+                            "role": row["role"],
+                            "partner_user_id": str(row["partner_user_id"]) if row["partner_user_id"] else None
+                        }
+                    return None
+        except Exception as e:
+            print(f"Error getting user relationship context: {e}")
+            return None
+
+    def get_speaker_labels(self, relationship_id: str) -> Dict[str, str]:
+        """
+        Get speaker labels for a relationship (for transcript display).
+
+        Returns:
+            {
+                "partner_a": "Adrian",
+                "partner_b": "Elara"
+            }
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT
+                            display_name,
+                            joined_at
+                        FROM relationship_members
+                        WHERE relationship_id = %s
+                            AND invitation_status = 'accepted'
+                        ORDER BY joined_at ASC;
+                    """, (relationship_id,))
+                    rows = cursor.fetchall()
+
+                    labels = {"partner_a": "Partner A", "partner_b": "Partner B"}
+                    for i, row in enumerate(rows):
+                        if i == 0:
+                            labels["partner_a"] = row["display_name"] or "Partner A"
+                        elif i == 1:
+                            labels["partner_b"] = row["display_name"] or "Partner B"
+
+                    return labels
+        except Exception as e:
+            print(f"Error getting speaker labels: {e}")
+            return {"partner_a": "Partner A", "partner_b": "Partner B"}
+
+    def create_user_with_relationship(
+        self,
+        auth0_id: str,
+        email: str,
+        name: Optional[str],
+        display_name: str
+    ) -> tuple:
+        """
+        Create a new user and their relationship.
+
+        Returns:
+            (user_id, relationship_id)
+        """
+        import uuid
+        user_id = str(uuid.uuid4())
+        relationship_id = str(uuid.uuid4())
+
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Create or update user
+                    cursor.execute("""
+                        INSERT INTO users (id, auth0_id, email, name, created_at, last_login)
+                        VALUES (%s, %s, %s, %s, NOW(), NOW())
+                        ON CONFLICT (auth0_id) DO UPDATE SET
+                            email = EXCLUDED.email,
+                            name = EXCLUDED.name,
+                            last_login = NOW()
+                        RETURNING id;
+                    """, (user_id, auth0_id, email, name))
+                    user_id = str(cursor.fetchone()[0])
+
+                    # Create relationship
+                    cursor.execute("""
+                        INSERT INTO relationships (id, created_at, partner_a_name)
+                        VALUES (%s, NOW(), %s);
+                    """, (relationship_id, display_name))
+
+                    # Link user to relationship
+                    cursor.execute("""
+                        INSERT INTO relationship_members
+                            (user_id, relationship_id, role, display_name, invitation_status, joined_at)
+                        VALUES (%s, %s, 'partner', %s, 'accepted', NOW());
+                    """, (user_id, relationship_id, display_name))
+
+                    conn.commit()
+                    return (user_id, relationship_id)
+        except Exception as e:
+            print(f"Error creating user with relationship: {e}")
+            raise e
+
+    def resolve_relationship_context(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Resolve full relationship context for a user.
+
+        Returns:
+            {
+                "relationship_id": str,
+                "user_role": str,  # "partner_a" or "partner_b"
+                "display_name": str,
+                "partner_display_name": str,
+                "partner_user_id": str | None
+            }
+        """
+        context = self.get_user_relationship_context(user_id)
+        if not context:
+            return None
+
+        # Determine user role based on join order
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT user_id
+                        FROM relationship_members
+                        WHERE relationship_id = %s
+                            AND invitation_status = 'accepted'
+                        ORDER BY joined_at ASC
+                        LIMIT 1;
+                    """, (context["relationship_id"],))
+                    first_member = cursor.fetchone()
+
+                    if first_member and str(first_member["user_id"]) == user_id:
+                        context["user_role"] = "partner_a"
+                    else:
+                        context["user_role"] = "partner_b"
+
+                    return context
+        except Exception as e:
+            print(f"Error resolving relationship context: {e}")
+            context["user_role"] = "partner_a"  # Default
+            return context
+
+
 # Global singleton instance
 try:
     db_service = DatabaseService()
