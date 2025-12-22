@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, Clock, ArrowRight, AlertCircle, CheckCircle2, Trash2 } from 'lucide-react';
+import { Calendar, Clock, ArrowRight, AlertCircle, CheckCircle2, Trash2, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 interface Conflict {
@@ -13,9 +13,18 @@ interface Conflict {
 interface ConflictCardProps {
     conflict: Conflict;
     onDelete: (id: string) => void;
+    isSelectionMode?: boolean;
+    isSelected?: boolean;
+    onToggleSelect?: (id: string) => void;
 }
 
-const ConflictCard: React.FC<ConflictCardProps> = ({ conflict, onDelete }) => {
+const ConflictCard: React.FC<ConflictCardProps> = ({
+    conflict,
+    onDelete,
+    isSelectionMode = false,
+    isSelected = false,
+    onToggleSelect
+}) => {
     const navigate = useNavigate();
     const dateObj = new Date(conflict.date);
     const formattedDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -30,24 +39,59 @@ const ConflictCard: React.FC<ConflictCardProps> = ({ conflict, onDelete }) => {
         }
     };
 
+    const handleClick = () => {
+        if (isSelectionMode && onToggleSelect) {
+            onToggleSelect(conflict.id);
+        } else {
+            navigate('/post-fight', { state: { conflict_id: conflict.id } });
+        }
+    };
+
+    const handleCheckboxClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (onToggleSelect) {
+            onToggleSelect(conflict.id);
+        }
+    };
+
     return (
         <div
-            onClick={() => navigate('/post-fight', { state: { conflict_id: conflict.id } })}
-            className="group relative bg-surface-elevated rounded-2xl p-5 border border-border-subtle shadow-soft transition-all duration-300 hover:shadow-lifted hover:border-accent/30 cursor-pointer"
+            onClick={handleClick}
+            className={`group relative bg-surface-elevated rounded-2xl p-5 border shadow-soft transition-all duration-300 cursor-pointer ${
+                isSelected
+                    ? 'border-accent bg-accent/5 shadow-lifted'
+                    : 'border-border-subtle hover:shadow-lifted hover:border-accent/30'
+            }`}
         >
+            {/* Selection Checkbox (visible in selection mode) */}
+            {isSelectionMode && (
+                <button
+                    onClick={handleCheckboxClick}
+                    className={`absolute top-4 left-4 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                        isSelected
+                            ? 'bg-accent border-accent text-white'
+                            : 'border-border-subtle bg-white hover:border-accent'
+                    }`}
+                >
+                    {isSelected && <Check size={12} strokeWidth={3} />}
+                </button>
+            )}
+
             {/* Status Dot */}
             <div className={`absolute top-5 right-5 w-2.5 h-2.5 rounded-full ${isActive ? 'bg-amber-400' : 'bg-green-500'}`} />
 
-            {/* Delete Button (visible on hover) */}
-            <button
-                onClick={handleDelete}
-                className="absolute top-4 right-10 p-1.5 text-text-tertiary hover:text-red-500 hover:bg-red-50 rounded-full opacity-0 group-hover:opacity-100 transition-all duration-200"
-                title="Delete conflict"
-            >
-                <Trash2 size={16} />
-            </button>
+            {/* Delete Button (visible on hover, hidden in selection mode) */}
+            {!isSelectionMode && (
+                <button
+                    onClick={handleDelete}
+                    className="absolute top-4 right-10 p-1.5 text-text-tertiary hover:text-red-500 hover:bg-red-50 rounded-full opacity-0 group-hover:opacity-100 transition-all duration-200"
+                    title="Delete conflict"
+                >
+                    <Trash2 size={16} />
+                </button>
+            )}
 
-            <div className="flex flex-col h-full">
+            <div className={`flex flex-col h-full ${isSelectionMode ? 'pl-6' : ''}`}>
                 {/* Header */}
                 <div className="mb-3">
                     <div className="flex items-center gap-2 text-tiny font-medium text-text-tertiary uppercase tracking-wider mb-1">
@@ -80,9 +124,11 @@ const ConflictCard: React.FC<ConflictCardProps> = ({ conflict, onDelete }) => {
                         )}
                     </div>
 
-                    <div className="w-8 h-8 rounded-full bg-surface-hover flex items-center justify-center text-text-tertiary opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
-                        <ArrowRight size={16} strokeWidth={1.5} />
-                    </div>
+                    {!isSelectionMode && (
+                        <div className="w-8 h-8 rounded-full bg-surface-hover flex items-center justify-center text-text-tertiary opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                            <ArrowRight size={16} strokeWidth={1.5} />
+                        </div>
+                    )}
                 </div>
             </div>
         </div>

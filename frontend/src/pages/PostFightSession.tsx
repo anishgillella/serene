@@ -164,6 +164,8 @@ const PostFightSession = () => {
   const [repairPlanGirlfriend, setRepairPlanGirlfriend] = useState<RepairPlan | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [repairPlanError, setRepairPlanError] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'analysis' | 'repair' | 'chat' | null>(null);
   const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
@@ -178,77 +180,55 @@ const PostFightSession = () => {
   const parseTranscriptLines = (lines: string[]): Message[] => {
     const parsedMessages: Message[] = [];
 
-    // Regex to identify speaker labels at the start of a segment
-    // Matches: "Name:", "Name (Role):", "Speaker N:", etc.
-    const speakerRegex = /((?:Adrian Malhotra|Elara Voss|Boyfriend|Girlfriend|Speaker\s+\d+|partner_[ab])(?:\s*\(.*?\))?):\s*/gi;
+    // First, join all lines and split by speaker labels to handle concatenated transcripts
+    const fullText = lines.join(' ');
 
-    lines.forEach(line => {
-      if (!line || typeof line !== 'string') return;
+    // Regex to split by speaker labels - captures the speaker name
+    // Matches: "Adrian:", "Elara:", "Adrian Malhotra:", "Elara Voss:", "Speaker 1:", etc.
+    const speakerSplitRegex = /\b(Adrian(?:\s+Malhotra)?|Elara(?:\s+Voss)?|Boyfriend|Girlfriend|Speaker\s+\d+|partner_[ab]):\s*/gi;
 
-      // Check if the line contains any speaker labels
-      // We split by the regex, which will include the capturing groups (the names)
-      const parts = line.split(speakerRegex);
+    // Split and get all parts
+    const parts = fullText.split(speakerSplitRegex).filter(p => p.trim());
 
-      // If no split happened (length 1), it's just text without a clear speaker label
-      // We'll append it to the last message or default to speaker1 if it's the first
-      if (parts.length === 1) {
-        const text = parts[0].trim();
-        if (text) {
-          if (parsedMessages.length > 0) {
-            // Append to last message
-            parsedMessages[parsedMessages.length - 1].message += ' ' + text;
-          } else {
-            // Default to speaker1 if absolutely no context
-            parsedMessages.push({ speaker: 'speaker1', message: text });
-          }
-        }
-        return;
+    if (parts.length === 0) return parsedMessages;
+
+    // If the first part isn't a speaker label, it's orphan text - assign to speaker1
+    let i = 0;
+    const isSpeakerLabel = (text: string) => /^(Adrian(?:\s+Malhotra)?|Elara(?:\s+Voss)?|Boyfriend|Girlfriend|Speaker\s+\d+|partner_[ab])$/i.test(text.trim());
+
+    if (!isSpeakerLabel(parts[0])) {
+      parsedMessages.push({ speaker: 'speaker1', message: parts[0].trim() });
+      i = 1;
+    }
+
+    // Process speaker-message pairs
+    while (i < parts.length) {
+      const speakerLabel = parts[i]?.trim() || '';
+      const messageContent = parts[i + 1]?.trim() || '';
+
+      // Determine speaker from label
+      let currentSpeaker: 'speaker1' | 'speaker2' = 'speaker1';
+      if (/Adrian|Boyfriend|partner_a/i.test(speakerLabel)) {
+        currentSpeaker = 'speaker1';
+      } else if (/Elara|Girlfriend|partner_b/i.test(speakerLabel)) {
+        currentSpeaker = 'speaker2';
+      } else if (/Speaker\s+1|Speaker\s+0/i.test(speakerLabel)) {
+        currentSpeaker = 'speaker1';
+      } else if (/Speaker\s+2/i.test(speakerLabel)) {
+        currentSpeaker = 'speaker2';
       }
 
-      // If split happened, parts will look like: ["", "Adrian:", "Hello", "Elara:", "Hi"]
-      // The first part might be empty or text before the first speaker label
-
-      let currentSpeaker: 'speaker1' | 'speaker2' | null = null;
-
-      // Process the parts
-      // We skip the first part if it's empty. If it's text, it belongs to previous speaker (or default)
-      if (parts[0].trim()) {
-        if (parsedMessages.length > 0) {
-          parsedMessages[parsedMessages.length - 1].message += ' ' + parts[0].trim();
-        } else {
-          parsedMessages.push({ speaker: 'speaker1', message: parts[0].trim() });
-        }
+      if (messageContent) {
+        // Always create a new message for each speaker label (don't merge)
+        // This preserves the conversation flow
+        parsedMessages.push({
+          speaker: currentSpeaker,
+          message: messageContent
+        });
       }
 
-      // Loop through the rest: odd indices are speakers, even indices are messages
-      for (let i = 1; i < parts.length; i += 2) {
-        const speakerLabel = parts[i];
-        const messageContent = parts[i + 1] ? parts[i + 1].trim() : "";
-
-        // Determine speaker from label
-        if (/Adrian|Boyfriend|Speaker\s+1|partner_a|Speaker\s+0/i.test(speakerLabel)) {
-          currentSpeaker = 'speaker1';
-        } else if (/Elara|Girlfriend|Speaker\s+2|partner_b|Speaker\s+1/i.test(speakerLabel)) {
-          currentSpeaker = 'speaker2';
-        } else {
-          // Fallback if regex matched something weird, keep current or default
-          if (!currentSpeaker) currentSpeaker = 'speaker1';
-        }
-
-        if (messageContent) {
-          // Check if we can merge with previous message
-          const lastMsg = parsedMessages[parsedMessages.length - 1];
-          if (lastMsg && lastMsg.speaker === currentSpeaker) {
-            lastMsg.message += ' ' + messageContent;
-          } else {
-            parsedMessages.push({
-              speaker: currentSpeaker as 'speaker1' | 'speaker2',
-              message: messageContent
-            });
-          }
-        }
-      }
-    });
+      i += 2;
+    }
 
     return parsedMessages;
   };
@@ -266,11 +246,26 @@ const PostFightSession = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Track if transcript has been loaded to prevent duplicate fetches
+  const transcriptLoadedRef = useRef<string | null>(null);
+  const isLoadingTranscriptRef = useRef(false);
+
   // Load transcript from API if conflictId is present but transcript is not in state
   useEffect(() => {
     const loadTranscript = async () => {
+      // Skip if already loading or already loaded for this conflict
+      if (isLoadingTranscriptRef.current) {
+        console.log('⏳ Already loading transcript, skipping...');
+        return;
+      }
+      if (transcriptLoadedRef.current === conflictId) {
+        console.log('✅ Transcript already loaded for this conflict, skipping...');
+        return;
+      }
+
       // Only load if we have conflictId but no transcript in state
       if (conflictId && (!state?.transcript || state.transcript.length === 0)) {
+        isLoadingTranscriptRef.current = true;
         try {
           console.log(`📖 Loading transcript for conflict ${conflictId}...`);
           const response = await fetch(`${apiUrl}/api/conflicts/${conflictId}`, {
@@ -314,18 +309,23 @@ const PostFightSession = () => {
             } else {
               console.log('⚠️ No transcript lines found in API response');
             }
+
+            // Mark as loaded for this conflict
+            transcriptLoadedRef.current = conflictId;
           } else {
             const errorText = await response.text();
             console.error('Failed to load transcript:', response.status, errorText);
           }
         } catch (error) {
           console.error('Error loading transcript:', error);
+        } finally {
+          isLoadingTranscriptRef.current = false;
         }
       }
     };
 
     loadTranscript();
-  }, [conflictId, state?.transcript, apiUrl]);
+  }, [conflictId, apiUrl]); // Removed state?.transcript from dependencies to prevent re-fetching
 
   // Define functions before useEffects that use them
   const addMessage = useCallback((speaker: 'speaker1' | 'speaker2' | 'heartsync', message: string, isPrivate: boolean = false) => {
@@ -355,26 +355,36 @@ const PostFightSession = () => {
   };
 
   const handleGenerateAnalysis = useCallback(async () => {
+    console.log('🔄 handleGenerateAnalysis called', { conflictId, analysisBoyfriend: !!analysisBoyfriend, loadingAnalysis });
+
     if (!conflictId) {
+      console.error('❌ No conflictId');
       alert('Conflict ID not available. Please ensure the fight was properly captured.');
       return;
     }
 
     // If already generated, just show it
     if (analysisBoyfriend) {
+      console.log('✅ Analysis already exists, showing it');
       setActiveView('analysis');
       return;
     }
 
     // Prevent duplicate requests
     if (loadingAnalysis) {
+      console.log('⏳ Already loading, skipping');
       return;
     }
 
     setLoadingAnalysis(true);
+    setAnalysisError(null); // Clear previous error
+    console.log('🚀 Starting analysis generation...');
 
     try {
-      const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-analysis`, {
+      const url = `${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-analysis`;
+      console.log('📡 Fetching:', url);
+
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -387,8 +397,17 @@ const PostFightSession = () => {
         })
       });
 
+      console.log('📥 Response status:', response.status, response.statusText);
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        const errorText = await response.text();
+        console.error('❌ Response not OK:', errorText);
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { detail: response.statusText };
+        }
         throw new Error(errorData.detail || `Generation failed: ${response.statusText}`);
       }
 
@@ -397,21 +416,27 @@ const PostFightSession = () => {
 
       if (data.success) {
         if (data.analysis_boyfriend) {
-          console.log('✅ Setting analysisBoyfriend');
+          console.log('✅ Setting analysisBoyfriend:', data.analysis_boyfriend);
           setAnalysisBoyfriend(data.analysis_boyfriend);
+        } else {
+          console.warn('⚠️ No analysis_boyfriend in response');
         }
         setActiveView('analysis');
       } else {
+        console.error('❌ Response success=false:', data);
         throw new Error(data.detail || 'Generation failed');
       }
     } catch (error: any) {
-      console.error('Error generating analysis:', error);
+      console.error('❌ Error generating analysis:', error);
       const errorMessage = error.message || error.toString() || 'Unknown error';
-      addMessage('heartsync', `Sorry, I encountered an error: ${errorMessage}. Please check the backend logs.`);
+      console.log('Setting analysisError to:', errorMessage);
+      setAnalysisError(errorMessage);
+      setActiveView('analysis'); // Show the analysis panel with error
     } finally {
+      console.log('🏁 Analysis generation complete');
       setLoadingAnalysis(false);
     }
-  }, [conflictId, apiUrl, addMessage, analysisBoyfriend, loadingAnalysis]);
+  }, [conflictId, apiUrl, analysisBoyfriend, loadingAnalysis]);
 
   const handleGenerateRepairPlans = useCallback(async () => {
     if (!conflictId) {
@@ -431,6 +456,7 @@ const PostFightSession = () => {
     }
 
     setLoadingRepairPlan(true);
+    setRepairPlanError(null); // Clear previous error
 
     try {
       const response = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-repair-plans`, {
@@ -470,11 +496,12 @@ const PostFightSession = () => {
     } catch (error: any) {
       console.error('Error generating repair plans:', error);
       const errorMessage = error.message || error.toString() || 'Unknown error';
-      addMessage('heartsync', `Sorry, I encountered an error: ${errorMessage}. Please check the backend logs.`);
+      setRepairPlanError(errorMessage);
+      setActiveView('repair'); // Show the repair panel with error
     } finally {
       setLoadingRepairPlan(false);
     }
-  }, [conflictId, apiUrl, addMessage, repairPlanBoyfriend, repairPlanGirlfriend, loadingRepairPlan]);
+  }, [conflictId, apiUrl, repairPlanBoyfriend, repairPlanGirlfriend, loadingRepairPlan]);
 
   const handleGenerateAll = useCallback(async () => {
     if (!conflictId) {
@@ -842,6 +869,27 @@ const PostFightSession = () => {
                   <LoaderIcon size={24} className="animate-spin text-purple-500 mr-3" />
                   <span className="text-gray-600">Analyzing conflict from your perspective...</span>
                 </div>
+              ) : analysisError ? (
+                <div className="bg-red-50 rounded-xl p-6 border border-red-200">
+                  <div className="flex items-start">
+                    <AlertCircleIcon size={24} className="text-red-500 mr-3 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-semibold text-red-800 mb-2">Error Generating Analysis</h4>
+                      <p className="text-red-700 text-sm mb-4">{analysisError}</p>
+                      <button
+                        onClick={() => {
+                          setAnalysisError(null);
+                          setAnalysisBoyfriend(null);
+                          handleGenerateAnalysis();
+                        }}
+                        className="bg-red-100 hover:bg-red-200 text-red-800 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center"
+                      >
+                        <RefreshCwIcon size={16} className="mr-2" />
+                        Retry
+                      </button>
+                    </div>
+                  </div>
+                </div>
               ) : analysisBoyfriend ? (
                 <>
                   {analysisBoyfriend && (
@@ -1009,6 +1057,28 @@ const PostFightSession = () => {
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-rose-500 mr-3" />
                   <span className="text-gray-600">Generating personalized repair plans...</span>
+                </div>
+              ) : repairPlanError ? (
+                <div className="bg-red-50 rounded-xl p-6 border border-red-200">
+                  <div className="flex items-start">
+                    <AlertCircleIcon size={24} className="text-red-500 mr-3 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="font-semibold text-red-800 mb-2">Error Generating Repair Plan</h4>
+                      <p className="text-red-700 text-sm mb-4">{repairPlanError}</p>
+                      <button
+                        onClick={() => {
+                          setRepairPlanError(null);
+                          setRepairPlanBoyfriend(null);
+                          setRepairPlanGirlfriend(null);
+                          handleGenerateRepairPlans();
+                        }}
+                        className="bg-red-100 hover:bg-red-200 text-red-800 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center"
+                      >
+                        <RefreshCwIcon size={16} className="mr-2" />
+                        Retry
+                      </button>
+                    </div>
+                  </div>
                 </div>
               ) : (repairPlanBoyfriend || repairPlanGirlfriend) ? (
                 <>
