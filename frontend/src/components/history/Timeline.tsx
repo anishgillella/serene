@@ -12,9 +12,28 @@ interface Conflict {
 interface TimelineProps {
     conflicts: Conflict[];
     onDelete: (id: string) => void;
+    isSelectionMode?: boolean;
+    selectedIds?: Set<string>;
+    onToggleSelect?: (id: string) => void;
 }
 
-const MonthSection: React.FC<{ month: string; conflicts: Conflict[]; onDelete: (id: string) => void }> = ({ month, conflicts, onDelete }) => {
+interface MonthSectionProps {
+    month: string;
+    conflicts: Conflict[];
+    onDelete: (id: string) => void;
+    isSelectionMode?: boolean;
+    selectedIds?: Set<string>;
+    onToggleSelect?: (id: string) => void;
+}
+
+const MonthSection: React.FC<MonthSectionProps> = ({
+    month,
+    conflicts,
+    onDelete,
+    isSelectionMode = false,
+    selectedIds = new Set(),
+    onToggleSelect
+}) => {
     const [showAll, setShowAll] = React.useState(false);
     const INITIAL_COUNT = 4;
     const hasMore = conflicts.length > INITIAL_COUNT;
@@ -36,7 +55,14 @@ const MonthSection: React.FC<{ month: string; conflicts: Conflict[]; onDelete: (
             {/* Conflicts Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 {visibleConflicts.map((conflict) => (
-                    <ConflictCard key={conflict.id} conflict={conflict} onDelete={onDelete} />
+                    <ConflictCard
+                        key={conflict.id}
+                        conflict={conflict}
+                        onDelete={onDelete}
+                        isSelectionMode={isSelectionMode}
+                        isSelected={selectedIds.has(conflict.id)}
+                        onToggleSelect={onToggleSelect}
+                    />
                 ))}
             </div>
 
@@ -55,7 +81,13 @@ const MonthSection: React.FC<{ month: string; conflicts: Conflict[]; onDelete: (
     );
 };
 
-const Timeline: React.FC<TimelineProps> = ({ conflicts, onDelete }) => {
+const Timeline: React.FC<TimelineProps> = ({
+    conflicts,
+    onDelete,
+    isSelectionMode = false,
+    selectedIds = new Set(),
+    onToggleSelect
+}) => {
     // Group conflicts by month
     const groupedConflicts = conflicts.reduce((acc, conflict) => {
         const date = new Date(conflict.date);
@@ -73,7 +105,15 @@ const Timeline: React.FC<TimelineProps> = ({ conflicts, onDelete }) => {
     return (
         <div className="relative pl-8 border-l-2 border-border-subtle ml-4 md:ml-8 space-y-0">
             {months.map((month) => (
-                <MonthSection key={month} month={month} conflicts={groupedConflicts[month]} onDelete={onDelete} />
+                <MonthSection
+                    key={month}
+                    month={month}
+                    conflicts={groupedConflicts[month]}
+                    onDelete={onDelete}
+                    isSelectionMode={isSelectionMode}
+                    selectedIds={selectedIds}
+                    onToggleSelect={onToggleSelect}
+                />
             ))}
         </div>
     );

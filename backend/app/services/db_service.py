@@ -6,7 +6,7 @@ import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.config import settings
 
 # Default relationship ID for backward compatibility (Adrian & Elara test data)
@@ -66,6 +66,7 @@ class DatabaseService:
         """
         Batch save transcript messages to rant_messages table.
         messages should be a list of dicts with: partner_id, role, content
+        Uses sequence_number for explicit ordering to preserve conversation flow.
         """
         try:
             with self.get_db_context() as conn:
@@ -74,24 +75,24 @@ class DatabaseService:
                     values = []
                     now = datetime.now()
                     for i, msg in enumerate(messages):
-                        # Add slight time offset to preserve order
-                        msg_time = now 
                         values.append((
                             conflict_id,
                             msg["partner_id"],
                             msg["role"],
                             msg["content"],
-                            msg_time
+                            now,
+                            i  # sequence_number - explicit ordering
                         ))
-                    
-                    # Execute batch insert
+
+                    # Execute batch insert with sequence_number
                     from psycopg2.extras import execute_values
                     execute_values(cursor, """
-                        INSERT INTO rant_messages (conflict_id, partner_id, role, content, created_at)
+                        INSERT INTO rant_messages (conflict_id, partner_id, role, content, created_at, sequence_number)
                         VALUES %s
                     """, values)
-                    
+
                     conn.commit()
+                    print(f"✅ Saved {len(messages)} transcript messages with sequence numbers")
                     return True
         except Exception as e:
             print(f"Error batch saving transcript messages: {e}")
@@ -102,13 +103,28 @@ class DatabaseService:
         try:
             with self.get_db_context() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Check if sequence_number column exists
                     cursor.execute("""
-                        SELECT role, content, created_at
-                        FROM rant_messages
-                        WHERE conflict_id = %s AND partner_id = %s
-                        ORDER BY created_at ASC;
-                    """, (conflict_id, partner_id))
-                    
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'rant_messages' AND column_name = 'sequence_number'
+                    """)
+                    has_sequence_number = cursor.fetchone() is not None
+
+                    if has_sequence_number:
+                        cursor.execute("""
+                            SELECT role, content, created_at, sequence_number
+                            FROM rant_messages
+                            WHERE conflict_id = %s AND partner_id = %s
+                            ORDER BY sequence_number ASC, created_at ASC;
+                        """, (conflict_id, partner_id))
+                    else:
+                        cursor.execute("""
+                            SELECT role, content, created_at, 0 as sequence_number
+                            FROM rant_messages
+                            WHERE conflict_id = %s AND partner_id = %s
+                            ORDER BY created_at ASC;
+                        """, (conflict_id, partner_id))
+
                     messages = []
                     for row in cursor.fetchall():
                         messages.append({
@@ -725,15 +741,20 @@ class DatabaseService:
                 with conn.cursor() as cursor:
                     # Delete related records first (if cascade not set up, though it should be)
                     # Deleting from conflicts table should cascade to analysis, repair_plans, etc.
-                    # But let's be safe and explicit or rely on cascade. 
+                    # But let's be safe and explicit or rely on cascade.
                     # Assuming cascade is set up in migration.sql. If not, we need to delete children first.
                     # Let's assume cascade for now, but wrap in transaction.
-                    
-                    cursor.execute("DELETE FROM conflicts WHERE id = %s", (conflict_id,))
+
+                    # Cast to UUID explicitly to ensure proper type matching
+                    cursor.execute("DELETE FROM conflicts WHERE id = %s::uuid", (conflict_id,))
+                    deleted_count = cursor.rowcount
                     conn.commit()
-                    return True
+                    print(f"✅ Deleted conflict {conflict_id}, rows affected: {deleted_count}")
+                    return deleted_count > 0
         except Exception as e:
-            print(f"Error deleting conflict: {e}")
+            print(f"❌ Error deleting conflict {conflict_id}: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def delete_conflicts_by_title(self, title: str) -> int:
@@ -747,6 +768,28 @@ class DatabaseService:
                     return deleted_count
         except Exception as e:
             print(f"Error deleting conflicts by title: {e}")
+            return 0
+
+    def delete_conflicts_bulk(self, conflict_ids: List[str]) -> int:
+        """Delete multiple conflicts by their IDs"""
+        if not conflict_ids:
+            return 0
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Use ANY with array for efficient bulk delete, cast to UUID array
+                    cursor.execute(
+                        "DELETE FROM conflicts WHERE id = ANY(%s::uuid[])",
+                        (conflict_ids,)
+                    )
+                    deleted_count = cursor.rowcount
+                    conn.commit()
+                    print(f"✅ Bulk deleted {deleted_count} conflicts out of {len(conflict_ids)} requested")
+                    return deleted_count
+        except Exception as e:
+            print(f"❌ Error bulk deleting conflicts: {e}")
+            import traceback
+            traceback.print_exc()
             return 0
 
     def update_conflict_title(self, conflict_id: str, title: str) -> bool:
@@ -885,16 +928,33 @@ class DatabaseService:
         """
         Get full transcript from rant_messages for a conflict.
         Returns transcript text and structured messages.
+        Orders by sequence_number to preserve conversation flow.
         """
         try:
             with self.get_db_context() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Check if sequence_number column exists
                     cursor.execute("""
-                        SELECT partner_id, content, role, created_at
-                        FROM rant_messages
-                        WHERE conflict_id = %s
-                        ORDER BY created_at
-                    """, (conflict_id,))
+                        SELECT column_name FROM information_schema.columns
+                        WHERE table_name = 'rant_messages' AND column_name = 'sequence_number'
+                    """)
+                    has_sequence_number = cursor.fetchone() is not None
+
+                    if has_sequence_number:
+                        cursor.execute("""
+                            SELECT partner_id, content, role, created_at, sequence_number
+                            FROM rant_messages
+                            WHERE conflict_id = %s
+                            ORDER BY sequence_number ASC, created_at ASC
+                        """, (conflict_id,))
+                    else:
+                        # Fallback if sequence_number column doesn't exist
+                        cursor.execute("""
+                            SELECT partner_id, content, role, created_at, 0 as sequence_number
+                            FROM rant_messages
+                            WHERE conflict_id = %s
+                            ORDER BY created_at ASC
+                        """, (conflict_id,))
                     
                     messages = cursor.fetchall()
                     if not messages:
@@ -930,7 +990,8 @@ class DatabaseService:
                             "speaker": speaker,
                             "content": msg["content"],
                             "role": msg["role"],
-                            "created_at": msg["created_at"].isoformat() if msg["created_at"] else None
+                            "created_at": msg["created_at"].isoformat() if msg["created_at"] else None,
+                            "sequence_number": msg.get("sequence_number", 0)
                         })
                     
                     return {

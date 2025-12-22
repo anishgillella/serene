@@ -45,12 +45,14 @@ CREATE TABLE IF NOT EXISTS rant_messages (
     role TEXT NOT NULL, -- "user" or "assistant"
     content TEXT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    sequence_number INTEGER DEFAULT 0, -- Explicit ordering for transcript messages
     metadata JSONB DEFAULT '{}'::jsonb
 );
 
 -- Create index for faster queries
 CREATE INDEX IF NOT EXISTS idx_rant_messages_conflict_partner ON rant_messages(conflict_id, partner_id);
 CREATE INDEX IF NOT EXISTS idx_rant_messages_created_at ON rant_messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rant_messages_sequence ON rant_messages(conflict_id, sequence_number);
 
 -- Create RLS policies
 ALTER TABLE rant_messages ENABLE ROW LEVEL SECURITY;

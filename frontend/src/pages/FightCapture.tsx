@@ -50,6 +50,7 @@ const FightCapture = () => {
           console.log('✅ WebSocket connected');
           setConnectionStatus('connected');
           setIsRecording(true);
+          setError(''); // Clear any previous errors (e.g., from React Strict Mode double-mount)
 
           // Create conflict and get conflict_id
           try {
@@ -158,15 +159,24 @@ const FightCapture = () => {
 
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
-          setError('Connection error. Please try again.');
-          setConnectionStatus('disconnected');
+          // Only set error if we're not already connected (handles React Strict Mode double-mount)
+          setConnectionStatus((current) => {
+            if (current !== 'connected') {
+              setError('Connection error. Please try again.');
+              return 'disconnected';
+            }
+            return current;
+          });
         };
 
         ws.onclose = () => {
           console.log('WebSocket closed');
-          setConnectionStatus('disconnected');
-          setIsRecording(false);
-          setInterimTranscript(null); // Clear interim transcript on disconnect
+          // Only update if this is the current WebSocket (not a stale one from Strict Mode)
+          if (wsRef.current === ws) {
+            setConnectionStatus('disconnected');
+            setIsRecording(false);
+            setInterimTranscript(null); // Clear interim transcript on disconnect
+          }
         };
 
       } catch (e) {
@@ -373,34 +383,44 @@ const FightCapture = () => {
             <p className="text-tiny text-text-tertiary mb-4 font-medium uppercase tracking-wider">Live transcript</p>
             <div className="space-y-4">
               {transcript.map((item, index) => {
-                const isBoyfriend = item.speaker === 'Adrian Malhotra';
+                // Speaker 1 or Adrian = left side (blue/gray), Speaker 2 or Elara = right side (accent)
+                const isSpeaker1 = item.speaker === 'Speaker 1' || item.speaker === 'Adrian Malhotra' || item.speaker.includes('Speaker 0');
+                const displayName = item.speaker === 'Speaker 1' || item.speaker.includes('Speaker 0') ? 'Adrian Malhotra'
+                  : item.speaker === 'Speaker 2' || item.speaker.includes('Speaker 1') ? 'Elara Voss'
+                  : item.speaker;
                 return (
-                  <div key={index} className={`flex w-full ${isBoyfriend ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`rounded-2xl py-3 px-5 max-w-[85%] ${isBoyfriend
-                      ? 'bg-surface-hover text-text-primary border border-border-subtle rounded-tl-sm'
-                      : 'bg-white text-text-primary border border-accent/20 shadow-sm rounded-tr-sm'
+                  <div key={index} className={`flex w-full ${isSpeaker1 ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`rounded-2xl py-3 px-5 max-w-[85%] ${isSpeaker1
+                      ? 'bg-blue-50 text-text-primary border border-blue-200 rounded-tl-sm'
+                      : 'bg-rose-50 text-text-primary border border-rose-200 rounded-tr-sm'
                       }`}>
-                      <div className="text-tiny font-medium mb-1 text-text-secondary">
-                        {item.speaker}
+                      <div className={`text-tiny font-medium mb-1 ${isSpeaker1 ? 'text-blue-600' : 'text-rose-600'}`}>
+                        {displayName}
                       </div>
                       <div className="text-body leading-relaxed">{item.text}</div>
                     </div>
                   </div>
                 );
               })}
-              {interimTranscript && (
-                <div className={`flex w-full ${interimTranscript.speaker === 'Adrian Malhotra' ? 'justify-start' : 'justify-end'}`}>
-                  <div className={`rounded-2xl py-3 px-5 max-w-[85%] opacity-70 ${interimTranscript.speaker === 'Adrian Malhotra'
-                    ? 'bg-surface-hover text-text-primary border border-border-subtle rounded-tl-sm'
-                    : 'bg-white text-text-primary border border-accent/20 shadow-sm rounded-tr-sm'
-                    }`}>
-                    <div className="text-tiny font-medium mb-1 text-text-secondary">
-                      {interimTranscript.speaker}
+              {interimTranscript && (() => {
+                const isSpeaker1 = interimTranscript.speaker === 'Speaker 1' || interimTranscript.speaker === 'Adrian Malhotra' || interimTranscript.speaker.includes('Speaker 0');
+                const displayName = interimTranscript.speaker === 'Speaker 1' || interimTranscript.speaker.includes('Speaker 0') ? 'Adrian Malhotra'
+                  : interimTranscript.speaker === 'Speaker 2' || interimTranscript.speaker.includes('Speaker 1') ? 'Elara Voss'
+                  : interimTranscript.speaker;
+                return (
+                  <div className={`flex w-full ${isSpeaker1 ? 'justify-start' : 'justify-end'}`}>
+                    <div className={`rounded-2xl py-3 px-5 max-w-[85%] opacity-70 ${isSpeaker1
+                      ? 'bg-blue-50 text-text-primary border border-blue-200 rounded-tl-sm'
+                      : 'bg-rose-50 text-text-primary border border-rose-200 rounded-tr-sm'
+                      }`}>
+                      <div className={`text-tiny font-medium mb-1 ${isSpeaker1 ? 'text-blue-600' : 'text-rose-600'}`}>
+                        {displayName}
+                      </div>
+                      <div className="text-body italic">{interimTranscript.text}</div>
                     </div>
-                    <div className="text-body italic">{interimTranscript.text}</div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           </div>
         )}

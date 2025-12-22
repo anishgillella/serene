@@ -434,3 +434,33 @@ async def delete_conflict(conflict_id: str):
         return {"success": True, "message": f"Conflict {conflict_id} deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/conflicts/bulk-delete")
+async def bulk_delete_conflicts(request: dict = Body(...)):
+    """Delete multiple conflicts by their IDs
+
+    Request body:
+    {
+        "conflict_ids": ["id1", "id2", "id3"]
+    }
+    """
+    try:
+        from app.services.db_service import db_service
+        conflict_ids = request.get("conflict_ids", [])
+
+        if not conflict_ids:
+            raise HTTPException(status_code=400, detail="No conflict IDs provided")
+
+        if len(conflict_ids) > 100:
+            raise HTTPException(status_code=400, detail="Cannot delete more than 100 conflicts at once")
+
+        deleted_count = db_service.delete_conflicts_bulk(conflict_ids)
+        return {
+            "success": True,
+            "deleted_count": deleted_count,
+            "message": f"Deleted {deleted_count} conflicts"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
