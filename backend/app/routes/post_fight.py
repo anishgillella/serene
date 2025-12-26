@@ -16,6 +16,7 @@ from app.services.s3_service import s3_service
 
 from app.services.llm_service import llm_service
 from app.services.transcript_chunker import TranscriptChunker
+from app.services.conflict_enrichment_service import conflict_enrichment_service
 from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
 from app.models.schemas import ConflictAnalysis, RepairPlan, ConflictTranscript, SpeakerSegment
@@ -59,6 +60,50 @@ async def generate_analysis_and_repair_plan_background(
     try:
         logger.info(f"🚀 Starting background generation for conflict {conflict_id}")
         logger.info(f"📝 Full transcript length: {len(transcript_text)} characters")
+
+        # ========================================================================
+        # Phase 1: Enrich conflict with trigger phrases and unmet needs
+        # ========================================================================
+        try:
+            logger.info(f"🔗 Starting conflict enrichment for {conflict_id}")
+
+            # Get previous conflicts for context
+            previous_conflicts = db_service.get_previous_conflicts(relationship_id, limit=5)
+
+            # Extract relationships, triggers, and unmet needs
+            enrichment = await conflict_enrichment_service.extract_conflict_relationships(
+                conflict_id=conflict_id,
+                transcript=transcript_text,
+                relationship_id=relationship_id,
+                previous_conflicts=previous_conflicts
+            )
+
+            # Save trigger phrases
+            await conflict_enrichment_service.save_trigger_phrases(
+                conflict_id=conflict_id,
+                relationship_id=relationship_id,
+                phrases=enrichment.trigger_phrases
+            )
+
+            # Save unmet needs
+            await conflict_enrichment_service.save_unmet_needs(
+                conflict_id=conflict_id,
+                relationship_id=relationship_id,
+                needs=enrichment.unmet_needs
+            )
+
+            # Update conflict with enrichment data
+            await conflict_enrichment_service.update_conflict_enrichment(
+                conflict_id=conflict_id,
+                enrichment=enrichment
+            )
+
+            logger.info(f"✅ Conflict enrichment complete: {len(enrichment.trigger_phrases)} phrases, "
+                       f"{len(enrichment.unmet_needs)} needs, resentment: {enrichment.resentment_level}/10")
+        except Exception as e:
+            logger.error(f"⚠️ Conflict enrichment failed (non-blocking): {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         # Use RAG pipeline with reranker to get relevant profile information
         boyfriend_profile = None

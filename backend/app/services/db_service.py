@@ -1623,6 +1623,193 @@ class DatabaseService:
             print(f"Error checking rate limit: {e}")
             return True, limit  # Allow on error
 
+    # ========================================================================
+    # Phase 1: Conflict Enrichment Methods
+    # ========================================================================
+
+    def save_trigger_phrase(self, relationship_id: str, conflict_id: str, phrase_data: dict) -> bool:
+        """Save a trigger phrase to the database"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO trigger_phrases (
+                            relationship_id, conflict_id, phrase, phrase_category,
+                            emotional_intensity, references_past_conflict, speaker,
+                            is_pattern_trigger, created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (
+                        relationship_id,
+                        conflict_id,
+                        phrase_data.get('phrase'),
+                        phrase_data.get('phrase_category'),
+                        phrase_data.get('emotional_intensity', 5),
+                        phrase_data.get('references_past', False),
+                        phrase_data.get('speaker'),
+                        phrase_data.get('is_escalation_trigger', False),
+                        datetime.now()
+                    ))
+
+                    phrase_id = cursor.fetchone()[0]
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error saving trigger phrase: {e}")
+            return False
+
+    def save_unmet_need(self, relationship_id: str, conflict_id: str, need_data: dict) -> bool:
+        """Save an unmet need to the database"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO unmet_needs (
+                            relationship_id, conflict_id, need, identified_by,
+                            confidence, speaker, evidence, first_identified_at,
+                            created_at
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (
+                        relationship_id,
+                        conflict_id,
+                        need_data.get('need'),
+                        need_data.get('identified_by', 'gpt_analysis'),
+                        need_data.get('confidence', 0.5),
+                        need_data.get('speaker'),
+                        need_data.get('evidence'),
+                        datetime.now(),
+                        datetime.now()
+                    ))
+
+                    need_id = cursor.fetchone()[0]
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error saving unmet need: {e}")
+            return False
+
+    def update_conflict(
+        self,
+        conflict_id: str,
+        parent_conflict_id: Optional[str] = None,
+        resentment_level: Optional[int] = None,
+        has_past_references: Optional[bool] = None,
+        is_continuation: Optional[bool] = None,
+        unmet_needs: Optional[List[str]] = None
+    ) -> bool:
+        """Update conflict with enrichment data"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    updates = []
+                    values = [conflict_id]
+
+                    if parent_conflict_id is not None:
+                        updates.append("parent_conflict_id = %s")
+                        values.insert(0, parent_conflict_id)
+
+                    if resentment_level is not None:
+                        updates.append(f"resentment_level = %s")
+                        values.insert(0, resentment_level)
+
+                    if has_past_references is not None:
+                        updates.append("has_past_references = %s")
+                        values.insert(0, has_past_references)
+
+                    if is_continuation is not None:
+                        updates.append("is_continuation = %s")
+                        values.insert(0, is_continuation)
+
+                    if unmet_needs is not None:
+                        updates.append("unmet_needs = %s")
+                        values.insert(0, unmet_needs)
+
+                    if not updates:
+                        return True
+
+                    update_clause = ", ".join(updates)
+                    cursor.execute(f"""
+                        UPDATE conflicts
+                        SET {update_clause}
+                        WHERE id = %s;
+                    """, values)
+
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error updating conflict enrichment: {e}")
+            return False
+
+    def get_previous_conflicts(
+        self, relationship_id: str, limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Get previous conflicts for a relationship"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, started_at, metadata, resentment_level, unmet_needs
+                        FROM conflicts
+                        WHERE relationship_id = %s
+                        ORDER BY started_at DESC
+                        LIMIT %s;
+                    """, (relationship_id, limit))
+
+                    return cursor.fetchall() if cursor.rowcount > 0 else []
+        except Exception as e:
+            print(f"Error getting previous conflicts: {e}")
+            return []
+
+    def get_trigger_phrases_for_relationship(
+        self, relationship_id: str
+    ) -> List[Dict[str, Any]]:
+        """Get all trigger phrases for a relationship"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT phrase, phrase_category, speaker,
+                               COUNT(*) as usage_count,
+                               AVG(emotional_intensity) as avg_intensity,
+                               COUNT(CASE WHEN is_pattern_trigger THEN 1 END)::FLOAT / COUNT(*) as escalation_rate
+                        FROM trigger_phrases
+                        WHERE relationship_id = %s
+                        GROUP BY phrase, phrase_category, speaker
+                        ORDER BY usage_count DESC;
+                    """, (relationship_id,))
+
+                    return cursor.fetchall() if cursor.rowcount > 0 else []
+        except Exception as e:
+            print(f"Error getting trigger phrases: {e}")
+            return []
+
+    def get_unmet_needs_for_relationship(
+        self, relationship_id: str
+    ) -> List[Dict[str, Any]]:
+        """Get chronic unmet needs for a relationship"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT need,
+                               COUNT(DISTINCT conflict_id) as conflict_count,
+                               MIN(first_identified_at) as first_appeared,
+                               COUNT(DISTINCT DATE(created_at)) as days_appeared_in,
+                               CASE WHEN COUNT(DISTINCT conflict_id) >= 3 THEN TRUE ELSE FALSE END as is_chronic
+                        FROM unmet_needs
+                        WHERE relationship_id = %s
+                        GROUP BY need
+                        ORDER BY conflict_count DESC;
+                    """, (relationship_id,))
+
+                    return cursor.fetchall() if cursor.rowcount > 0 else []
+        except Exception as e:
+            print(f"Error getting unmet needs: {e}")
+            return []
+
 
 # Global singleton instance
 try:
