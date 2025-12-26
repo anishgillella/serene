@@ -114,8 +114,94 @@ def is_partner_b_profile(pdf_type: str) -> bool:
     return pdf_type in ('girlfriend_profile', 'partner_b_profile', 'girlfriend', 'partner_b')
 
 
+# ============================================================================
+# Phase 1: Conflict Triggers & Escalation Analysis Models
+# ============================================================================
+
+class TriggerPhrase(BaseModel):
+    """A phrase that escalates conflicts"""
+    phrase: str
+    phrase_category: str  # 'temporal_reference', 'passive_aggressive', 'blame', etc.
+    emotional_intensity: int = Field(ge=1, le=10)
+    references_past: bool = False
+    speaker: Optional[str] = None  # 'partner_a' or 'partner_b'
+    is_escalation_trigger: bool = False
+    past_conflict_id: Optional[str] = None
 
 
+class UnmetNeed(BaseModel):
+    """An unmet need identified in a conflict"""
+    need: str  # 'feeling_heard', 'trust', 'appreciation', etc.
+    identified_by: str = "gpt_analysis"  # 'gpt_analysis' or 'manual'
+    confidence: float = Field(ge=0.0, le=1.0)
+    speaker: Optional[str] = None  # 'partner_a', 'partner_b', or 'both'
+    evidence: Optional[str] = None  # supporting quote
+
+
+class ConflictEnrichment(BaseModel):
+    """Enriched conflict data with relationships and patterns"""
+    conflict_id: str
+    parent_conflict_id: Optional[str] = None
+    trigger_phrases: List[TriggerPhrase] = Field(default_factory=list)
+    unmet_needs: List[UnmetNeed] = Field(default_factory=list)
+    resentment_level: int = Field(ge=1, le=10)
+    has_past_references: bool = False
+    conflict_chain_id: Optional[str] = None
+    is_continuation: bool = False
+
+
+class ConflictWithEnrichment(BaseModel):
+    """Complete conflict data including enrichment"""
+    id: str
+    relationship_id: str
+    started_at: datetime
+    ended_at: Optional[datetime] = None
+    transcript_path: Optional[str] = None
+    status: str = "active"
+
+    # Enrichment fields
+    parent_conflict_id: Optional[str] = None
+    resentment_level: Optional[int] = None
+    unmet_needs: List[str] = Field(default_factory=list)
+    has_past_references: bool = False
+    conflict_chain_id: Optional[str] = None
+    is_resolved: bool = False
+    resolved_at: Optional[datetime] = None
+
+    # Related data
+    trigger_phrases: List[TriggerPhrase] = Field(default_factory=list)
+    all_unmet_needs: List[UnmetNeed] = Field(default_factory=list)
+
+
+class TriggerPhraseAnalysis(BaseModel):
+    """Analysis of trigger phrase patterns"""
+    phrase: str
+    phrase_category: str
+    usage_count: int
+    avg_emotional_intensity: float
+    escalation_rate: float  # 0.0-1.0
+    speaker: Optional[str] = None
+    is_pattern_trigger: bool
+
+
+class UnmetNeedRecurrence(BaseModel):
+    """Tracking of recurring unmet needs"""
+    need: str
+    conflict_count: int
+    first_appeared: datetime
+    days_appeared_in: int
+    is_chronic: bool
+    percentage_of_conflicts: float
+
+
+class EscalationRiskReport(BaseModel):
+    """Risk assessment for escalation"""
+    risk_score: float = Field(ge=0.0, le=1.0)
+    interpretation: str  # 'low', 'medium', 'high', 'critical'
+    unresolved_issues: int
+    days_until_predicted_conflict: int
+    factors: dict = Field(default_factory=dict)
+    recommendations: List[str] = Field(default_factory=list)
 
 
 
