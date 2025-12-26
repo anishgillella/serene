@@ -3,7 +3,8 @@ Mediator Context Routes - Phase 3
 Provides context for Luna's mediation
 """
 import logging
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Body
+from typing import Optional
 
 from app.services.pattern_analysis_service import pattern_analysis_service
 from app.services.db_service import db_service
@@ -84,4 +85,81 @@ async def get_mediation_context(conflict_id: str = Path(...)):
         }
     except Exception as e:
         logger.error(f"❌ Error getting mediation context: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/enhance-response")
+async def enhance_luna_response(
+    conflict_id: str = Body(...),
+    response: str = Body(...),
+    user_message: Optional[str] = Body(None)
+):
+    """
+    Enhance Luna's response with relationship context
+
+    Uses mediation context to suggest improvements or risk warnings
+    """
+    try:
+        logger.info(f"💡 Enhancing Luna response for conflict {conflict_id}")
+
+        # Get mediation context
+        context = await get_mediation_context(conflict_id)
+
+        # Check for risk patterns in response
+        enhancements = {
+            "original_response": response,
+            "suggestions": [],
+            "risk_warnings": [],
+            "context_applied": []
+        }
+
+        # Risk escalation warning
+        escalation = context.get("escalation_risk", {})
+        if escalation.get("is_critical"):
+            enhancements["risk_warnings"].append({
+                "type": "critical_escalation",
+                "message": "Relationship is at critical escalation risk. Consider suggesting a break or recommending professional help.",
+                "severity": "high"
+            })
+            enhancements["context_applied"].append("escalation_risk")
+
+        # Trigger phrase warning
+        triggers = context.get("high_impact_triggers", [])
+        if triggers:
+            trigger_phrases = [t.get("phrase", "") for t in triggers[:3]]
+            if any(phrase.lower() in response.lower() for phrase in trigger_phrases):
+                enhancements["risk_warnings"].append({
+                    "type": "trigger_phrase_detected",
+                    "message": f"Response contains known escalation trigger: {', '.join(trigger_phrases)}",
+                    "severity": "medium"
+                })
+                enhancements["context_applied"].append("trigger_phrases")
+
+        # Chronic needs suggestion
+        chronic_needs = context.get("chronic_needs", [])
+        if chronic_needs and user_message:
+            if not any(need in response.lower() for need in chronic_needs):
+                enhancements["suggestions"].append({
+                    "type": "address_chronic_needs",
+                    "message": f"Consider addressing chronic unmet needs: {', '.join(chronic_needs)}",
+                    "needs": chronic_needs
+                })
+                enhancements["context_applied"].append("chronic_needs")
+
+        # Unresolved issues connection
+        unresolved = context.get("unresolved_issues", [])
+        if unresolved and len(unresolved) > 2:
+            enhancements["suggestions"].append({
+                "type": "connect_to_past",
+                "message": f"This may be connected to {len(unresolved)} other unresolved issues. Help them see the pattern.",
+                "unresolved_count": len(unresolved)
+            })
+            enhancements["context_applied"].append("unresolved_issues")
+
+        logger.info(f"✅ Response enhancement complete. Applied {len(enhancements['context_applied'])} context elements.")
+
+        return enhancements
+
+    except Exception as e:
+        logger.error(f"❌ Error enhancing response: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

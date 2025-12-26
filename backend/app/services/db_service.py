@@ -1810,6 +1810,35 @@ class DatabaseService:
             print(f"Error getting unmet needs: {e}")
             return []
 
+    def get_conflict(self, conflict_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific conflict by ID"""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM conflicts WHERE id = %s;
+                    """, (conflict_id,))
+                    return cursor.fetchone()
+        except Exception as e:
+            print(f"Error getting conflict: {e}")
+            return None
+
+    def _get_days_since(self, date_str: str) -> int:
+        """Calculate days since a given date"""
+        try:
+            if not date_str:
+                return 0
+            if isinstance(date_str, str):
+                date_obj = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            else:
+                date_obj = date_str
+
+            now = datetime.now(date_obj.tzinfo if hasattr(date_obj, 'tzinfo') else None)
+            delta = now - date_obj
+            return delta.days
+        except Exception:
+            return 0
+
 
 # Global singleton instance
 try:

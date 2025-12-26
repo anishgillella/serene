@@ -92,7 +92,7 @@ class SimpleMediator(voice.Agent):
         return ""
 
 class RAGMediator(voice.Agent):
-    """Luna - Mediator agent with RAG capabilities"""
+    """Luna - Mediator agent with RAG capabilities and pattern awareness (Phase 3)"""
 
     def __init__(
         self,
@@ -103,17 +103,29 @@ class RAGMediator(voice.Agent):
         instructions: str = "",
         tools: list = None,
         partner_a_name: str = "Partner A",
-        partner_b_name: str = "Partner B"
+        partner_b_name: str = "Partner B",
+        mediation_context: dict = None
     ):
         self.rag_handler = RAGHandler(rag_system, conflict_id, relationship_id, session_id)
         self.partner_a_name = partner_a_name
         self.partner_b_name = partner_b_name
+        self.conflict_id = conflict_id
+        self.relationship_id = relationship_id
+        self.mediation_context = mediation_context or {}
 
         # Generate dynamic base instructions
         base_instructions = instructions or get_dynamic_instructions(partner_a_name, partner_b_name)
 
-        # Append RAG-specific instructions with dynamic partner names
-        full_instructions = base_instructions + f"""
+        # Build context-aware instructions with pattern analysis (Phase 3)
+        full_instructions = base_instructions + self._build_context_instructions(
+            partner_a_name, partner_b_name
+        )
+
+        super().__init__(instructions=full_instructions, tools=tools or [])
+
+    def _build_context_instructions(self, partner_a_name: str, partner_b_name: str) -> str:
+        """Build context-aware instructions using mediation context (Phase 3)"""
+        context_section = f"""
 
 You have access to:
 - All past conversation transcripts (not just the current one)
@@ -129,11 +141,105 @@ When answering questions:
 
 IMPORTANT: If asked about personal details (favorites, hobbies, background), ALWAYS check the profile context first. Do not say you don't know if the information is in the profile.
 """
-        super().__init__(instructions=full_instructions, tools=tools or [])
-    
+
+        # Add relationship pattern awareness if context available (Phase 3)
+        if self.mediation_context:
+            context_section += self._build_pattern_awareness_section()
+
+        return context_section
+
+    def _build_pattern_awareness_section(self) -> str:
+        """Build pattern-aware section from mediation context (Phase 3)"""
+        section = "\n## RELATIONSHIP PATTERNS (Critical Context for This Mediation):\n"
+
+        # Escalation risk awareness
+        escalation = self.mediation_context.get("escalation_risk", {})
+        if escalation:
+            risk_score = escalation.get("score", 0)
+            interpretation = escalation.get("interpretation", "unknown")
+            section += f"- Escalation Risk: {interpretation.upper()} ({risk_score*100:.0f}%)\n"
+            if escalation.get("is_critical"):
+                section += "  ⚠️ THIS RELATIONSHIP IS AT CRITICAL ESCALATION RISK - Use extra care\n"
+
+        # Chronic unmet needs awareness
+        chronic_needs = self.mediation_context.get("chronic_needs", [])
+        if chronic_needs:
+            section += f"- Chronic Unmet Needs: {', '.join(chronic_needs)}\n"
+            section += "  These are recurring pain points - address them sensitively\n"
+
+        # High-impact triggers
+        triggers = self.mediation_context.get("high_impact_triggers", [])
+        if triggers:
+            section += "- Known Escalation Triggers:\n"
+            for trigger in triggers[:3]:
+                phrase = trigger.get("phrase", "")
+                escalation_rate = trigger.get("escalation_rate", 0)
+                section += f"  • \"{phrase}\" (escalates {escalation_rate*100:.0f}% of the time)\n"
+            section += "  Avoid these phrases or help them understand the impact\n"
+
+        # Unresolved issues
+        unresolved = self.mediation_context.get("unresolved_issues", [])
+        if unresolved:
+            section += f"- {len(unresolved)} Unresolved Issues Still Pending:\n"
+            for issue in unresolved[:3]:
+                topic = issue.get("topic", "Unknown")
+                days = issue.get("days_unresolved", 0)
+                section += f"  • {topic} (unresolved for {days}+ days)\n"
+            section += "  Consider whether this current conflict is connected to these\n"
+
+        section += "\nUse this context to:\n"
+        section += "1. Recognize and name the patterns they're stuck in\n"
+        section += "2. Help them see how current conflict repeats past issues\n"
+        section += "3. Suggest breaks if escalation risk is critical\n"
+        section += "4. Focus on the chronic needs causing the conflict\n\n"
+
+        return section
+
     async def on_user_turn_completed(
         self,
         turn_ctx: llm.ChatContext,
         new_message: llm.ChatMessage,
     ) -> None:
         await self.rag_handler.handle_user_turn(turn_ctx, new_message)
+
+    @staticmethod
+    async def create_with_context(
+        rag_system,
+        conflict_id: str,
+        relationship_id: str,
+        session_id: str = None,
+        instructions: str = "",
+        tools: list = None,
+        partner_a_name: str = "Partner A",
+        partner_b_name: str = "Partner B"
+    ):
+        """Factory method to create RAGMediator with enriched context (Phase 3)"""
+        from app.routes.mediator_context import get_mediation_context as fetch_context
+
+        try:
+            # Fetch mediation context from analytics
+            context_data = await fetch_context(conflict_id)
+
+            return RAGMediator(
+                rag_system=rag_system,
+                conflict_id=conflict_id,
+                relationship_id=relationship_id,
+                session_id=session_id,
+                instructions=instructions,
+                tools=tools,
+                partner_a_name=partner_a_name,
+                partner_b_name=partner_b_name,
+                mediation_context=context_data
+            )
+        except Exception as e:
+            logger.warning(f"Could not fetch mediation context: {str(e)}. Creating agent without context.")
+            return RAGMediator(
+                rag_system=rag_system,
+                conflict_id=conflict_id,
+                relationship_id=relationship_id,
+                session_id=session_id,
+                instructions=instructions,
+                tools=tools,
+                partner_a_name=partner_a_name,
+                partner_b_name=partner_b_name
+            )
