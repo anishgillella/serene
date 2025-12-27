@@ -3,7 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   MessageCircleIcon, SparklesIcon, HeartIcon, LoaderIcon, XIcon,
   BarChart4Icon, RefreshCwIcon, FileTextIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon,
-  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, SendIcon, MicIcon, MicOffIcon, PencilIcon
+  AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, SendIcon, MicIcon, MicOffIcon, PencilIcon,
+  LayersIcon, ActivityIcon, PlayIcon
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,11 @@ import MediatorModal from '../components/MediatorModal';
 import TranscriptBubble from '../components/TranscriptBubble';
 import { RelatedConflicts } from '@/components/RelatedConflicts';
 import LunaChatPanel from '../components/LunaChatPanel';
+import {
+  SurfaceUnderlyingCard,
+  EmotionalTimelineChart,
+  ConflictReplayViewer,
+} from '../components/premium';
 
 interface LocationState {
   transcript?: string[];
@@ -166,7 +172,14 @@ const PostFightSession = () => {
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [repairPlanError, setRepairPlanError] = useState<string | null>(null);
-  const [activeView, setActiveView] = useState<'analysis' | 'repair' | 'chat' | null>(null);
+  const [activeView, setActiveView] = useState<'analysis' | 'repair' | 'chat' | 'deep-insights' | null>(null);
+  const [deepInsightsData, setDeepInsightsData] = useState<{
+    replayData: any;
+    surfaceData: any;
+    timelineData: any;
+  } | null>(null);
+  const [loadingDeepInsights, setLoadingDeepInsights] = useState(false);
+  const [deepInsightsSubTab, setDeepInsightsSubTab] = useState<'replay' | 'meanings' | 'timeline'>('replay');
   const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -571,6 +584,66 @@ const PostFightSession = () => {
 
   // Removed handleGetRepairPlan - now handled by handleGenerateAll
 
+  // Fetch deep insights data
+  const handleFetchDeepInsights = useCallback(async () => {
+    if (!conflictId) return;
+    if (deepInsightsData) {
+      setActiveView('deep-insights');
+      return;
+    }
+
+    setLoadingDeepInsights(true);
+    try {
+      const relationshipId = "00000000-0000-0000-0000-000000000000";
+
+      // Fetch all data in parallel
+      const [replayRes, surfaceRes, timelineRes] = await Promise.all([
+        fetch(`${apiUrl}/api/analytics/advanced/conflict-replay/${conflictId}?relationship_id=${relationshipId}`, {
+          headers: { 'ngrok-skip-browser-warning': 'true' }
+        }),
+        fetch(`${apiUrl}/api/analytics/advanced/surface-underlying/${conflictId}?relationship_id=${relationshipId}`, {
+          headers: { 'ngrok-skip-browser-warning': 'true' }
+        }),
+        fetch(`${apiUrl}/api/analytics/advanced/emotional-timeline/${conflictId}?relationship_id=${relationshipId}`, {
+          headers: { 'ngrok-skip-browser-warning': 'true' }
+        })
+      ]);
+
+      const replayData = replayRes.ok ? await replayRes.json() : null;
+      const surfaceData = surfaceRes.ok ? await surfaceRes.json() : null;
+      const timelineData = timelineRes.ok ? await timelineRes.json() : null;
+
+      setDeepInsightsData({ replayData, surfaceData, timelineData });
+      setActiveView('deep-insights');
+    } catch (error) {
+      console.error('Error fetching deep insights:', error);
+    } finally {
+      setLoadingDeepInsights(false);
+    }
+  }, [conflictId, apiUrl, deepInsightsData]);
+
+  // Run advanced analysis on this conflict
+  const handleRunAdvancedAnalysis = useCallback(async () => {
+    if (!conflictId) return;
+    setLoadingDeepInsights(true);
+    try {
+      const relationshipId = "00000000-0000-0000-0000-000000000000";
+      const response = await fetch(`${apiUrl}/api/analytics/advanced/analyze-conflict/${conflictId}?relationship_id=${relationshipId}`, {
+        method: 'POST',
+        headers: { 'ngrok-skip-browser-warning': 'true' }
+      });
+      if (response.ok) {
+        // Clear cached data and refetch
+        setDeepInsightsData(null);
+        await handleFetchDeepInsights();
+      }
+    } catch (error) {
+      console.error('Error running advanced analysis:', error);
+    } finally {
+      setLoadingDeepInsights(false);
+    }
+  }, [conflictId, apiUrl, handleFetchDeepInsights]);
+
   // Debug logging for render state
   useEffect(() => {
     console.log('🔍 PostFightSession State:', {
@@ -782,6 +855,20 @@ const PostFightSession = () => {
               >
                 <MessageCircleIcon size={16} className="mr-2" strokeWidth={1.5} />
                 Chat with Luna
+              </button>
+
+              <button
+                onClick={handleFetchDeepInsights}
+                disabled={!conflictId || loadingDeepInsights}
+                className={`flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed ${activeView === 'deep-insights'
+                  ? 'bg-surface-elevated text-text-primary border border-accent'
+                  : 'bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle'
+                  }`}
+                title="View deep insights including what they really meant and emotional timeline"
+              >
+                {loadingDeepInsights && <LoaderIcon size={16} className="mr-2 animate-spin" strokeWidth={1.5} />}
+                {!loadingDeepInsights && <LayersIcon size={16} className="mr-2" strokeWidth={1.5} />}
+                {loadingDeepInsights ? 'Loading Insights...' : 'Deep Insights'}
               </button>
 
               <button
@@ -1159,6 +1246,117 @@ const PostFightSession = () => {
                 <div className="text-center py-12 text-gray-500">
                   <HeartIcon size={48} className="mx-auto mb-3 text-gray-300" />
                   <p>Click "View Repair Plan" to generate and see personalized steps</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeView === 'deep-insights' && (
+            <div className="bg-surface-elevated rounded-2xl p-6 shadow-lifted border border-border-subtle animate-slide-up">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center">
+                  <div className="bg-purple-100 p-2.5 rounded-xl mr-3 border border-purple-200">
+                    <LayersIcon size={20} className="text-purple-600" strokeWidth={1.5} />
+                  </div>
+                  <h3 className="text-h3 text-text-primary">Deep Insights</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleRunAdvancedAnalysis}
+                    disabled={loadingDeepInsights}
+                    className="text-tiny text-purple-600 hover:text-purple-700 transition-colors flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-purple-50"
+                    title="Re-run analysis"
+                  >
+                    <RefreshCwIcon size={14} className={loadingDeepInsights ? 'animate-spin' : ''} />
+                    {loadingDeepInsights ? 'Analyzing...' : 'Re-analyze'}
+                  </button>
+                  <button
+                    onClick={() => setActiveView(null)}
+                    className="text-text-tertiary hover:text-text-primary transition-colors p-2 hover:bg-surface-hover rounded-full"
+                  >
+                    <XIcon size={20} strokeWidth={1.5} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Sub-tabs */}
+              <div className="flex gap-2 mb-4 p-1 bg-gray-100 rounded-xl">
+                <button
+                  onClick={() => setDeepInsightsSubTab('replay')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-tiny font-medium transition-all flex items-center justify-center gap-1.5 ${
+                    deepInsightsSubTab === 'replay'
+                      ? 'bg-white text-text-primary shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  <PlayIcon size={14} />
+                  Replay
+                </button>
+                <button
+                  onClick={() => setDeepInsightsSubTab('meanings')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-tiny font-medium transition-all flex items-center justify-center gap-1.5 ${
+                    deepInsightsSubTab === 'meanings'
+                      ? 'bg-white text-text-primary shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  <LayersIcon size={14} />
+                  What They Meant
+                </button>
+                <button
+                  onClick={() => setDeepInsightsSubTab('timeline')}
+                  className={`flex-1 py-2 px-3 rounded-lg text-tiny font-medium transition-all flex items-center justify-center gap-1.5 ${
+                    deepInsightsSubTab === 'timeline'
+                      ? 'bg-white text-text-primary shadow-sm'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  <ActivityIcon size={14} />
+                  Emotional Arc
+                </button>
+              </div>
+
+              {/* Content */}
+              {loadingDeepInsights ? (
+                <div className="flex items-center justify-center py-12">
+                  <LoaderIcon size={24} className="animate-spin text-purple-500 mr-3" />
+                  <span className="text-gray-600">Loading deep insights...</span>
+                </div>
+              ) : deepInsightsData ? (
+                <div className="max-h-[500px] overflow-y-auto">
+                  {deepInsightsSubTab === 'replay' && (
+                    <ConflictReplayViewer
+                      messages={deepInsightsData.replayData?.messages || []}
+                      surfaceUnderlying={deepInsightsData.replayData?.surface_underlying}
+                      partnerAName="Partner A"
+                      partnerBName="Partner B"
+                    />
+                  )}
+                  {deepInsightsSubTab === 'meanings' && (
+                    <SurfaceUnderlyingCard
+                      mappings={deepInsightsData.surfaceData?.mappings || []}
+                      overallPattern={deepInsightsData.surfaceData?.overall_pattern}
+                      keyInsight={deepInsightsData.surfaceData?.key_insight}
+                    />
+                  )}
+                  {deepInsightsSubTab === 'timeline' && (
+                    <EmotionalTimelineChart
+                      moments={deepInsightsData.timelineData?.moments || []}
+                      summary={deepInsightsData.timelineData?.summary}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-12 text-gray-500">
+                  <LayersIcon size={48} className="mx-auto mb-3 text-gray-300" />
+                  <p className="mb-4">No deep insights available yet</p>
+                  <button
+                    onClick={handleRunAdvancedAnalysis}
+                    disabled={loadingDeepInsights}
+                    className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+                  >
+                    Run Deep Analysis
+                  </button>
                 </div>
               )}
             </div>

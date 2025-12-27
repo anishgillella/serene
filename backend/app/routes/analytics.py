@@ -1,6 +1,6 @@
 """
-Analytics API Routes - Phase 2
-Provides analytics data for dashboard and visualizations
+Analytics API Routes
+Provides unified analytics data for the relationship dashboard
 Includes Gottman metrics (Four Horsemen, repair attempts, etc.)
 """
 import asyncio
@@ -14,116 +14,11 @@ from psycopg2.extras import RealDictCursor
 from app.services.pattern_analysis_service import pattern_analysis_service
 from app.services.db_service import db_service
 from app.services.gottman_analysis_service import gottman_service
+from app.services.advanced_analytics_service import advanced_analytics_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
-
-
-@router.get("/escalation-risk")
-async def get_escalation_risk(
-    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
-):
-    """Get escalation risk assessment for a relationship"""
-    try:
-        logger.info(f"📊 Getting escalation risk for {relationship_id}")
-        risk_report = await pattern_analysis_service.calculate_escalation_risk(
-            relationship_id
-        )
-        return risk_report.model_dump()
-    except Exception as e:
-        logger.error(f"❌ Error getting escalation risk: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/trigger-phrases")
-async def get_trigger_phrases(
-    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
-):
-    """Get trigger phrase analysis with patterns"""
-    try:
-        logger.info(f"🎯 Getting trigger phrases for {relationship_id}")
-        analysis = await pattern_analysis_service.find_trigger_phrase_patterns(
-            relationship_id
-        )
-        return analysis
-    except Exception as e:
-        logger.error(f"❌ Error getting trigger phrases: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/conflict-chains")
-async def get_conflict_chains(
-    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
-):
-    """Get identified conflict chains (related conflicts)"""
-    try:
-        logger.info(f"🔗 Getting conflict chains for {relationship_id}")
-        chains = await pattern_analysis_service.identify_conflict_chains(
-            relationship_id
-        )
-        return {"chains": chains}
-    except Exception as e:
-        logger.error(f"❌ Error getting conflict chains: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/unmet-needs")
-async def get_unmet_needs(
-    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
-):
-    """Get chronic unmet needs (appearing in 3+ conflicts)"""
-    try:
-        logger.info(f"💔 Getting unmet needs for {relationship_id}")
-        needs = await pattern_analysis_service.track_chronic_needs(relationship_id)
-        return {"chronic_needs": [n.model_dump() for n in needs]}
-    except Exception as e:
-        logger.error(f"❌ Error getting unmet needs: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/health-score")
-async def get_health_score(
-    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
-):
-    """Get relationship health score (0-100)"""
-    try:
-        logger.info(f"📈 Calculating health score for {relationship_id}")
-        risk_report = await pattern_analysis_service.calculate_escalation_risk(
-            relationship_id
-        )
-        health_score = int((1.0 - risk_report.risk_score) * 100)
-        recent_conflicts = db_service.get_previous_conflicts(relationship_id, limit=20)
-        
-        if len(recent_conflicts) >= 2:
-            recent_unresolved = sum(
-                1 for c in recent_conflicts[:5] if not c.get("is_resolved")
-            )
-            older_unresolved = sum(
-                1 for c in recent_conflicts[5:10] if not c.get("is_resolved")
-            )
-            if recent_unresolved < older_unresolved:
-                trend = "up"
-            elif recent_unresolved > older_unresolved:
-                trend = "down"
-            else:
-                trend = "stable"
-        else:
-            trend = "stable"
-
-        return {
-            "value": health_score,
-            "trend": trend,
-            "breakdownFactors": {
-                "unresolved_issues": risk_report.factors.get("unresolved_issues", 0),
-                "conflict_frequency": risk_report.factors.get("recurrence_pattern", 0),
-                "escalation_risk": risk_report.risk_score,
-                "resentment_level": risk_report.factors.get("avg_resentment", 5),
-            },
-        }
-    except Exception as e:
-        logger.error(f"❌ Error calculating health score: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/dashboard")
@@ -592,4 +487,374 @@ async def get_positivity_ratio(
         }
     except Exception as e:
         logger.error(f"❌ Error getting positivity ratio: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ADVANCED ANALYTICS ENDPOINTS
+# ============================================================================
+
+@router.get("/advanced/surface-underlying/{conflict_id}")
+async def get_surface_underlying_analysis(
+    conflict_id: str,
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Get Surface vs Underlying Concerns analysis for a conflict.
+    Maps what was said to what was really meant.
+    """
+    try:
+        logger.info(f"🔍 Getting surface/underlying analysis for {conflict_id}")
+
+        # Check if analysis exists
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT * FROM surface_underlying_mapping
+                    WHERE conflict_id = %s
+                    ORDER BY created_at;
+                """, (conflict_id,))
+                rows = cursor.fetchall()
+
+        if rows:
+            return {
+                "conflict_id": conflict_id,
+                "has_data": True,
+                "mappings": [dict(r) for r in rows]
+            }
+
+        # Run analysis if not exists
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
+        if not transcript_data or not transcript_data.get("transcript_text"):
+            raise HTTPException(status_code=404, detail="No transcript found")
+
+        names = db_service.get_partner_names(relationship_id)
+        result = await advanced_analytics_service.analyze_surface_underlying(
+            conflict_id=conflict_id,
+            transcript=transcript_data["transcript_text"],
+            relationship_id=relationship_id,
+            partner_a_name=names.get("partner_a", "Partner A"),
+            partner_b_name=names.get("partner_b", "Partner B")
+        )
+
+        return {
+            "conflict_id": conflict_id,
+            "has_data": True,
+            "mappings": [m.model_dump() for m in result.mappings],
+            "overall_pattern": result.overall_pattern,
+            "key_insight": result.key_insight
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting surface/underlying: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/emotional-timeline/{conflict_id}")
+async def get_emotional_timeline(
+    conflict_id: str,
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Get Emotional Temperature Timeline for a conflict.
+    Shows emotional intensity at each message.
+    """
+    try:
+        logger.info(f"📈 Getting emotional timeline for {conflict_id}")
+
+        # Check if analysis exists
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT * FROM emotional_temperature
+                    WHERE conflict_id = %s
+                    ORDER BY message_sequence;
+                """, (conflict_id,))
+                rows = cursor.fetchall()
+
+        if rows:
+            # Calculate summary
+            moments = [dict(r) for r in rows]
+            peak_moment = max(moments, key=lambda x: x['emotional_intensity'])
+            return {
+                "conflict_id": conflict_id,
+                "has_data": True,
+                "moments": moments,
+                "summary": {
+                    "peak_intensity": peak_moment['emotional_intensity'],
+                    "peak_moment": peak_moment['message_sequence'],
+                    "peak_emotion": peak_moment['primary_emotion'],
+                    "total_escalations": sum(1 for m in moments if m['is_escalation_point']),
+                    "total_repair_attempts": sum(1 for m in moments if m['is_repair_attempt']),
+                    "total_de_escalations": sum(1 for m in moments if m['is_de_escalation'])
+                }
+            }
+
+        # Run analysis if not exists
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
+        if not transcript_data:
+            raise HTTPException(status_code=404, detail="No transcript found")
+
+        names = db_service.get_partner_names(relationship_id)
+        result = await advanced_analytics_service.analyze_emotional_timeline(
+            conflict_id=conflict_id,
+            transcript=transcript_data.get("transcript_text", ""),
+            relationship_id=relationship_id,
+            messages=transcript_data.get("messages", []),
+            partner_a_name=names.get("partner_a", "Partner A"),
+            partner_b_name=names.get("partner_b", "Partner B")
+        )
+
+        return {
+            "conflict_id": conflict_id,
+            "has_data": True,
+            "moments": [m.model_dump() for m in result.moments],
+            "summary": {
+                "peak_intensity_moment": result.peak_intensity_moment,
+                "peak_emotion": result.peak_emotion,
+                "total_escalations": result.total_escalations,
+                "total_repair_attempts": result.total_repair_attempts,
+                "successful_de_escalations": result.successful_de_escalations,
+                "emotional_arc": result.emotional_arc
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting emotional timeline: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/emotional-trends")
+async def get_emotional_trends(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
+    period_type: str = Query(default="weekly", description="daily, weekly, or monthly"),
+    periods: int = Query(default=8, ge=1, le=52)
+):
+    """
+    Get emotional trends across multiple conflicts over time.
+    Shows how emotional patterns are changing.
+    """
+    try:
+        logger.info(f"📊 Getting emotional trends for {relationship_id}")
+        trends = await advanced_analytics_service.get_emotional_trends(
+            relationship_id=relationship_id,
+            period_type=period_type,
+            periods=periods
+        )
+        return {
+            "relationship_id": relationship_id,
+            "period_type": period_type,
+            "trends": trends
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting emotional trends: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/trigger-sensitivity")
+async def get_trigger_sensitivity(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
+    refresh: bool = Query(default=False, description="Force re-analysis")
+):
+    """
+    Get Partner-Specific Trigger Sensitivity analysis.
+    Shows what triggers each partner and how they react.
+    """
+    try:
+        logger.info(f"🎯 Getting trigger sensitivity for {relationship_id}")
+
+        if not refresh:
+            # Check for existing data
+            existing = await advanced_analytics_service.get_partner_sensitivities(relationship_id)
+            if existing['partner_a_triggers'] or existing['partner_b_triggers']:
+                return {
+                    "relationship_id": relationship_id,
+                    "has_data": True,
+                    **existing
+                }
+
+        # Run analysis
+        names = db_service.get_partner_names(relationship_id)
+        result = await advanced_analytics_service.analyze_trigger_sensitivity(
+            relationship_id=relationship_id,
+            partner_a_name=names.get("partner_a", "Partner A"),
+            partner_b_name=names.get("partner_b", "Partner B")
+        )
+
+        return {
+            "relationship_id": relationship_id,
+            "has_data": True,
+            "partner_a_triggers": [t.model_dump() for t in result.partner_a_triggers],
+            "partner_b_triggers": [t.model_dump() for t in result.partner_b_triggers],
+            "cross_trigger_patterns": result.cross_trigger_patterns
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting trigger sensitivity: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/conflict-annotations/{conflict_id}")
+async def get_conflict_annotations(
+    conflict_id: str,
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
+    refresh: bool = Query(default=False, description="Force re-analysis")
+):
+    """
+    Get Conflict Replay Annotations for a specific conflict.
+    Marks escalation points, repair attempts, missed bids, and suggestions.
+    """
+    try:
+        logger.info(f"📝 Getting annotations for {conflict_id}")
+
+        if not refresh:
+            # Check for existing annotations
+            existing = await advanced_analytics_service.get_conflict_annotations(conflict_id)
+            if existing:
+                return {
+                    "conflict_id": conflict_id,
+                    "has_data": True,
+                    "annotations": existing
+                }
+
+        # Run analysis
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
+        if not transcript_data:
+            raise HTTPException(status_code=404, detail="No transcript found")
+
+        names = db_service.get_partner_names(relationship_id)
+        result = await advanced_analytics_service.generate_conflict_annotations(
+            conflict_id=conflict_id,
+            transcript=transcript_data.get("transcript_text", ""),
+            relationship_id=relationship_id,
+            messages=transcript_data.get("messages", []),
+            partner_a_name=names.get("partner_a", "Partner A"),
+            partner_b_name=names.get("partner_b", "Partner B")
+        )
+
+        return {
+            "conflict_id": conflict_id,
+            "has_data": True,
+            "annotations": [a.model_dump() for a in result.annotations],
+            "key_turning_points": result.key_turning_points,
+            "overall_assessment": result.overall_assessment,
+            "primary_improvement_area": result.primary_improvement_area
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting annotations: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/conflict-replay/{conflict_id}")
+async def get_conflict_replay(
+    conflict_id: str,
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Get full conflict replay data including transcript, emotional timeline, and annotations.
+    Used by the frontend for the interactive conflict replay feature.
+    """
+    try:
+        logger.info(f"🎬 Getting conflict replay for {conflict_id}")
+
+        # Get transcript with messages
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
+        if not transcript_data:
+            raise HTTPException(status_code=404, detail="No transcript found")
+
+        # Get emotional timeline
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT * FROM emotional_temperature
+                    WHERE conflict_id = %s
+                    ORDER BY message_sequence;
+                """, (conflict_id,))
+                emotional_data = [dict(r) for r in cursor.fetchall()]
+
+                cursor.execute("""
+                    SELECT * FROM conflict_annotations
+                    WHERE conflict_id = %s
+                    ORDER BY message_sequence_start;
+                """, (conflict_id,))
+                annotations = [dict(r) for r in cursor.fetchall()]
+
+                cursor.execute("""
+                    SELECT * FROM surface_underlying_mapping
+                    WHERE conflict_id = %s;
+                """, (conflict_id,))
+                surface_underlying = [dict(r) for r in cursor.fetchall()]
+
+        # Build replay data structure
+        messages = transcript_data.get("messages", [])
+        replay_messages = []
+        for i, msg in enumerate(messages):
+            seq = i + 1
+            emotion = next((e for e in emotional_data if e['message_sequence'] == seq), None)
+            msg_annotations = [a for a in annotations if a['message_sequence_start'] <= seq and (a['message_sequence_end'] is None or a['message_sequence_end'] >= seq)]
+
+            replay_messages.append({
+                "sequence": seq,
+                "speaker": msg.get("partner_id"),
+                "content": msg.get("content"),
+                "timestamp": msg.get("created_at"),
+                "emotional_intensity": emotion['emotional_intensity'] if emotion else None,
+                "primary_emotion": emotion['primary_emotion'] if emotion else None,
+                "is_escalation": emotion['is_escalation_point'] if emotion else False,
+                "is_repair_attempt": emotion['is_repair_attempt'] if emotion else False,
+                "annotations": msg_annotations
+            })
+
+        return {
+            "conflict_id": conflict_id,
+            "messages": replay_messages,
+            "surface_underlying": surface_underlying,
+            "summary": {
+                "total_messages": len(messages),
+                "has_emotional_data": len(emotional_data) > 0,
+                "has_annotations": len(annotations) > 0,
+                "annotation_count": len(annotations)
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting conflict replay: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/advanced/analyze-conflict/{conflict_id}")
+async def run_full_advanced_analysis(
+    conflict_id: str,
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Run all advanced analytics on a conflict.
+    Includes surface/underlying, emotional timeline, and annotations.
+    """
+    try:
+        logger.info(f"🚀 Running full advanced analysis for {conflict_id}")
+
+        names = db_service.get_partner_names(relationship_id)
+        result = await advanced_analytics_service.run_full_analysis(
+            conflict_id=conflict_id,
+            relationship_id=relationship_id,
+            partner_a_name=names.get("partner_a", "Partner A"),
+            partner_b_name=names.get("partner_b", "Partner B")
+        )
+
+        return {
+            "success": True,
+            "conflict_id": conflict_id,
+            "analyses_completed": {
+                "surface_underlying": result.get("surface_underlying") is not None,
+                "emotional_timeline": result.get("emotional_timeline") is not None,
+                "annotations": result.get("annotations") is not None
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ Error in full analysis: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
