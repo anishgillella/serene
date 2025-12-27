@@ -9,12 +9,10 @@ import {
   Shield,
   MessageCircle,
   Target,
-  Zap,
-  Layers
+  Zap
 } from 'lucide-react';
 import { useDashboardData } from '../hooks/useDashboardData';
 import { useGottmanData } from '../hooks/useGottmanData';
-import { useTriggerSensitivity, useEmotionalTrends } from '../hooks/useAdvancedAnalytics';
 
 // Premium components
 import {
@@ -32,16 +30,14 @@ import {
   GottmanRadar,
   RepairSuccessCard,
   CommunicationQuality,
-  TriggerSensitivityCard,
 } from '../components/premium';
 
-type TabId = 'overview' | 'communication' | 'patterns' | 'deep-insights';
+type TabId = 'overview' | 'communication' | 'patterns';
 
 const tabs = [
   { id: 'overview', label: 'Overview', icon: <Activity size={18} /> },
   { id: 'communication', label: 'Communication', icon: <MessageCircle size={18} /> },
   { id: 'patterns', label: 'Patterns', icon: <Target size={18} /> },
-  { id: 'deep-insights', label: 'Deep Insights', icon: <Layers size={18} /> },
 ];
 
 const Analytics: React.FC = () => {
@@ -54,16 +50,6 @@ const Analytics: React.FC = () => {
     runBackfill,
     backfillStatus
   } = useGottmanData(relationshipId);
-  const {
-    data: sensitivityData,
-    loading: sensitivityLoading,
-    fetchSensitivity
-  } = useTriggerSensitivity(relationshipId);
-  const {
-    data: trendsData,
-    loading: trendsLoading,
-    fetchTrends
-  } = useEmotionalTrends(relationshipId);
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -72,13 +58,6 @@ const Analytics: React.FC = () => {
     fetchGottmanData();
   }, []);
 
-  // Load deep insights data when tab is selected
-  useEffect(() => {
-    if (activeTab === 'deep-insights') {
-      fetchSensitivity();
-      fetchTrends();
-    }
-  }, [activeTab]);
 
   const handleRefresh = async () => {
     await refresh();
@@ -591,161 +570,6 @@ const Analytics: React.FC = () => {
               </motion.div>
             )}
 
-            {/* Deep Insights Tab - Trigger Sensitivity, Emotional Trends */}
-            {activeTab === 'deep-insights' && (
-              <motion.div
-                key="deep-insights"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-                className="space-y-6"
-              >
-                {/* Intro Banner */}
-                <motion.div
-                  initial={{ opacity: 0, y: -10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-2xl p-6 border border-purple-100"
-                >
-                  <div className="flex items-start gap-4">
-                    <div className="p-3 rounded-xl bg-purple-100">
-                      <Layers size={24} className="text-purple-600" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-warmGray-800 mb-1">
-                        Deep Relationship Insights
-                      </h3>
-                      <p className="text-sm text-warmGray-600">
-                        Personalized analysis of what triggers each partner, how emotional patterns evolve,
-                        and the hidden meanings behind surface-level complaints. Access detailed conflict
-                        replay with annotations from the History page.
-                      </p>
-                    </div>
-                  </div>
-                </motion.div>
-
-                {/* Trigger Sensitivity */}
-                <TriggerSensitivityCard
-                  partnerATriggers={sensitivityData?.partnerATriggers || []}
-                  partnerBTriggers={sensitivityData?.partnerBTriggers || []}
-                  crossTriggerPatterns={sensitivityData?.crossTriggerPatterns}
-                  partnerAName="Partner A"
-                  partnerBName="Partner B"
-                  delay={0.1}
-                />
-
-                {/* Emotional Trends Over Time */}
-                <GlassCard className="p-6" delay={0.2}>
-                  <div className="flex items-center gap-3 mb-5">
-                    <div className="p-2.5 rounded-xl bg-rose-50">
-                      <Activity size={20} className="text-rose-500" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-semibold text-warmGray-800">Emotional Trends</h3>
-                      <p className="text-xs text-warmGray-500">How your conflict intensity is changing over time</p>
-                    </div>
-                  </div>
-
-                  {trendsData && trendsData.length > 0 ? (
-                    <div className="space-y-4">
-                      {/* Trend Summary */}
-                      <div className="grid grid-cols-3 gap-4">
-                        <div className="p-4 rounded-xl bg-warmGray-50/50 text-center">
-                          <p className="text-2xl font-bold text-warmGray-800">
-                            {trendsData.reduce((sum, t) => sum + (t.conflicts_count || 0), 0)}
-                          </p>
-                          <p className="text-xs text-warmGray-500">Total Conflicts</p>
-                        </div>
-                        <div className="p-4 rounded-xl bg-warmGray-50/50 text-center">
-                          <p className="text-2xl font-bold text-warmGray-800">
-                            {(trendsData.reduce((sum, t) => sum + (t.avg_intensity || 0), 0) / trendsData.length).toFixed(1)}
-                          </p>
-                          <p className="text-xs text-warmGray-500">Avg Intensity</p>
-                        </div>
-                        <div className="p-4 rounded-xl bg-warmGray-50/50 text-center">
-                          <p className="text-2xl font-bold text-warmGray-800">
-                            {trendsData.reduce((sum, t) => sum + (t.total_repair_attempts || 0), 0)}
-                          </p>
-                          <p className="text-xs text-warmGray-500">Repair Attempts</p>
-                        </div>
-                      </div>
-
-                      {/* Weekly breakdown */}
-                      <div className="space-y-2">
-                        {trendsData.slice(0, 6).map((trend, idx) => (
-                          <motion.div
-                            key={idx}
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: 0.3 + idx * 0.05 }}
-                            className="flex items-center gap-4 p-3 rounded-xl bg-warmGray-50/50"
-                          >
-                            <div className="w-24 text-xs text-warmGray-500">
-                              {trend.period ? new Date(trend.period).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'Unknown'}
-                            </div>
-                            <div className="flex-1">
-                              <div className="h-2 bg-warmGray-100 rounded-full overflow-hidden">
-                                <div
-                                  className={`h-full rounded-full ${
-                                    (trend.avg_intensity || 0) >= 7 ? 'bg-red-400' :
-                                    (trend.avg_intensity || 0) >= 5 ? 'bg-orange-400' :
-                                    (trend.avg_intensity || 0) >= 3 ? 'bg-yellow-400' : 'bg-green-400'
-                                  }`}
-                                  style={{ width: `${((trend.avg_intensity || 0) / 10) * 100}%` }}
-                                />
-                              </div>
-                            </div>
-                            <div className="w-16 text-right text-xs text-warmGray-600">
-                              {trend.conflicts_count || 0} conflicts
-                            </div>
-                            <div className={`w-20 text-right text-xs font-medium ${
-                              trend.intensity_trend === 'improving' ? 'text-emerald-600' :
-                              trend.intensity_trend === 'worsening' ? 'text-red-600' : 'text-warmGray-400'
-                            }`}>
-                              {trend.intensity_trend || 'stable'}
-                            </div>
-                          </motion.div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-12">
-                      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-warmGray-100 flex items-center justify-center">
-                        <Activity size={24} className="text-warmGray-400" />
-                      </div>
-                      <p className="text-warmGray-500">No emotional trend data yet</p>
-                      <p className="text-xs text-warmGray-400 mt-1">
-                        Run advanced analysis on conflicts to see emotional trends
-                      </p>
-                    </div>
-                  )}
-                </GlassCard>
-
-                {/* Call to action for conflict replay */}
-                <GlassCard className="p-6" delay={0.3}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold text-warmGray-800 mb-1">
-                        Conflict Replay & Annotations
-                      </h3>
-                      <p className="text-sm text-warmGray-500">
-                        Step through past conflicts with detailed insights, see what was really meant,
-                        and learn what could have been said differently.
-                      </p>
-                    </div>
-                    <motion.a
-                      href="/history"
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      className="px-5 py-2.5 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors flex items-center gap-2"
-                    >
-                      <MessageCircle size={16} />
-                      View History
-                    </motion.a>
-                  </div>
-                </GlassCard>
-              </motion.div>
-            )}
           </AnimatePresence>
 
         </div>
