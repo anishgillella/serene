@@ -1,10 +1,20 @@
--- Migration: Gottman Analytics Schema
--- Run this in Supabase SQL Editor
--- Adds Four Horsemen tracking, repair attempts, and daily check-ins
+-- ============================================================================
+-- Migration 005: Gottman Analytics Schema
+-- ============================================================================
+-- Purpose: Implements Dr. John Gottman's relationship research framework
+--   - Four Horsemen tracking (Criticism, Contempt, Defensiveness, Stonewalling)
+--   - Repair attempt success tracking
+--   - Communication quality metrics (I/You statements)
+--   - Daily check-ins for 5:1 ratio tracking
+--
+-- Run this in Supabase SQL Editor ONCE.
+-- This is an idempotent script - safe to re-run.
+-- ============================================================================
 
 -- ============================================================================
 -- 1. GOTTMAN ANALYSIS TABLE (per-conflict analysis)
 -- ============================================================================
+-- Stores detailed Gottman metrics extracted from each conflict transcript.
 
 CREATE TABLE IF NOT EXISTS gottman_analysis (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -68,48 +78,50 @@ CREATE INDEX IF NOT EXISTS idx_gottman_analysis_relationship ON gottman_analysis
 CREATE INDEX IF NOT EXISTS idx_gottman_analysis_analyzed_at ON gottman_analysis(analyzed_at DESC);
 
 ALTER TABLE gottman_analysis ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public access to gottman_analysis" ON gottman_analysis;
 CREATE POLICY "Allow public access to gottman_analysis" ON gottman_analysis FOR ALL USING (true);
 
 -- ============================================================================
 -- 2. GOTTMAN RELATIONSHIP SCORES (aggregated metrics)
 -- ============================================================================
+-- Stores rolling averages and health scores for the entire relationship.
+-- Note: Using DECIMAL(5,2) for all scores to prevent overflow issues.
 
 CREATE TABLE IF NOT EXISTS gottman_relationship_scores (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     relationship_id UUID NOT NULL UNIQUE REFERENCES relationships(id) ON DELETE CASCADE,
 
-    -- Rolling Average Four Horsemen (last 30 days or all time)
-    avg_criticism_score DECIMAL(4,2) DEFAULT 0,
-    avg_contempt_score DECIMAL(4,2) DEFAULT 0,
-    avg_defensiveness_score DECIMAL(4,2) DEFAULT 0,
-    avg_stonewalling_score DECIMAL(4,2) DEFAULT 0,
+    -- Rolling Average Four Horsemen (0-10 scale)
+    avg_criticism_score DECIMAL(5,2) DEFAULT 0,
+    avg_contempt_score DECIMAL(5,2) DEFAULT 0,
+    avg_defensiveness_score DECIMAL(5,2) DEFAULT 0,
+    avg_stonewalling_score DECIMAL(5,2) DEFAULT 0,
 
     -- Combined Score (0-40, lower is better)
     total_horsemen_score DECIMAL(5,2) DEFAULT 0,
     horsemen_trend VARCHAR(20) DEFAULT 'stable',  -- 'improving', 'stable', 'worsening'
 
-    -- Repair Metrics
-    overall_repair_success_rate DECIMAL(4,2) DEFAULT 0,  -- 0-100%
+    -- Repair Metrics (0-100%)
+    overall_repair_success_rate DECIMAL(5,2) DEFAULT 0,
     total_repair_attempts INT DEFAULT 0,
     total_successful_repairs INT DEFAULT 0,
 
     -- Communication Quality
-    partner_a_i_to_you_ratio DECIMAL(4,2) DEFAULT 1.0,
-    partner_b_i_to_you_ratio DECIMAL(4,2) DEFAULT 1.0,
-    avg_active_listening_per_conflict DECIMAL(4,2) DEFAULT 0,
+    partner_a_i_to_you_ratio DECIMAL(5,2) DEFAULT 1.0,
+    partner_b_i_to_you_ratio DECIMAL(5,2) DEFAULT 1.0,
+    avg_active_listening_per_conflict DECIMAL(5,2) DEFAULT 0,
 
     -- Partner-Specific Patterns
     partner_a_dominant_horseman VARCHAR(20),  -- Their most-used horseman
     partner_b_dominant_horseman VARCHAR(20),
 
     -- Gottman Health Score (0-100, higher is better)
-    -- Calculated as: 100 - (total_horsemen * 2) + (repair_rate * 0.5)
     gottman_health_score DECIMAL(5,2) DEFAULT 50,
 
     -- Metadata
     conflicts_analyzed INT DEFAULT 0,
     last_calculated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    calculation_window_days INT DEFAULT 90,  -- How far back to look
+    calculation_window_days INT DEFAULT 90,
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -118,11 +130,13 @@ CREATE TABLE IF NOT EXISTS gottman_relationship_scores (
 CREATE INDEX IF NOT EXISTS idx_gottman_scores_relationship ON gottman_relationship_scores(relationship_id);
 
 ALTER TABLE gottman_relationship_scores ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public access to gottman_relationship_scores" ON gottman_relationship_scores;
 CREATE POLICY "Allow public access to gottman_relationship_scores" ON gottman_relationship_scores FOR ALL USING (true);
 
 -- ============================================================================
 -- 3. DAILY CHECK-INS (for 5:1 ratio tracking outside conflicts)
 -- ============================================================================
+-- Optional feature for partners to log daily positive/negative interactions.
 
 CREATE TABLE IF NOT EXISTS daily_checkins (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -135,7 +149,7 @@ CREATE TABLE IF NOT EXISTS daily_checkins (
     -- Simple mood/interaction rating
     day_rating VARCHAR(20) NOT NULL,  -- 'positive', 'neutral', 'negative'
 
-    -- Optional: Count of positive moments
+    -- Counts
     positive_moments INT DEFAULT 0,
     negative_moments INT DEFAULT 0,
 
@@ -144,14 +158,14 @@ CREATE TABLE IF NOT EXISTS daily_checkins (
     bids_received_positively INT DEFAULT 0,
     bids_ignored INT DEFAULT 0,
 
-    -- Optional: Appreciation expressed
+    -- Appreciation
     appreciation_given BOOLEAN DEFAULT FALSE,
     appreciation_received BOOLEAN DEFAULT FALSE,
 
-    -- Optional: Quality time
+    -- Quality time
     quality_time_minutes INT DEFAULT 0,
 
-    -- Optional notes
+    -- Notes
     notes TEXT,
 
     -- Metadata
@@ -167,6 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_checkins_date ON daily_checkins(checkin_dat
 CREATE INDEX IF NOT EXISTS idx_daily_checkins_partner ON daily_checkins(partner_id);
 
 ALTER TABLE daily_checkins ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public access to daily_checkins" ON daily_checkins;
 CREATE POLICY "Allow public access to daily_checkins" ON daily_checkins FOR ALL USING (true);
 
 -- ============================================================================
@@ -195,9 +210,9 @@ CREATE TABLE IF NOT EXISTS relationship_positivity_ratio (
     -- Bid for connection success rate
     bid_success_rate DECIMAL(4,2) DEFAULT 0,
 
-    -- Is ratio healthy? (>= 5:1)
-    is_ratio_healthy BOOLEAN DEFAULT FALSE,
-    ratio_trend VARCHAR(20) DEFAULT 'stable',  -- 'improving', 'stable', 'declining'
+    -- Health indicator
+    is_ratio_healthy BOOLEAN DEFAULT FALSE,  -- >= 5:1
+    ratio_trend VARCHAR(20) DEFAULT 'stable',
 
     -- Metadata
     last_calculated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -208,11 +223,14 @@ CREATE TABLE IF NOT EXISTS relationship_positivity_ratio (
 );
 
 ALTER TABLE relationship_positivity_ratio ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow public access to relationship_positivity_ratio" ON relationship_positivity_ratio;
 CREATE POLICY "Allow public access to relationship_positivity_ratio" ON relationship_positivity_ratio FOR ALL USING (true);
 
 -- ============================================================================
 -- 5. HELPER FUNCTION: Calculate Gottman Health Score
 -- ============================================================================
+-- Formula: 100 - horsemen_penalty + repair_bonus
+-- Contempt is weighted 2x (most damaging per Gottman research)
 
 CREATE OR REPLACE FUNCTION calculate_gottman_health_score(
     p_criticism DECIMAL,
@@ -226,22 +244,21 @@ DECLARE
     repair_bonus DECIMAL;
     health_score DECIMAL;
 BEGIN
-    -- Horsemen penalty: Each point reduces score
-    -- Contempt weighted 2x (most damaging per Gottman research)
+    -- Clamp input values to expected ranges
+    p_criticism := LEAST(GREATEST(p_criticism, 0), 10);
+    p_contempt := LEAST(GREATEST(p_contempt, 0), 10);
+    p_defensiveness := LEAST(GREATEST(p_defensiveness, 0), 10);
+    p_stonewalling := LEAST(GREATEST(p_stonewalling, 0), 10);
+    p_repair_rate := LEAST(GREATEST(p_repair_rate, 0), 100);
+
+    -- Horsemen penalty (contempt weighted 2x)
     horsemen_penalty := (p_criticism * 2) + (p_contempt * 4) + (p_defensiveness * 2) + (p_stonewalling * 2);
 
-    -- Repair bonus: High repair rate adds to score
+    -- Repair bonus
     repair_bonus := p_repair_rate * 0.3;
 
-    -- Calculate final score (0-100 range)
-    health_score := 100 - horsemen_penalty + repair_bonus;
-
-    -- Clamp to 0-100
-    IF health_score < 0 THEN
-        health_score := 0;
-    ELSIF health_score > 100 THEN
-        health_score := 100;
-    END IF;
+    -- Calculate and clamp final score
+    health_score := LEAST(GREATEST(100 - horsemen_penalty + repair_bonus, 0), 100);
 
     RETURN health_score;
 END;
@@ -254,45 +271,45 @@ $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION update_gottman_relationship_scores()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Insert or update relationship scores
+    -- Ensure relationship scores row exists
     INSERT INTO gottman_relationship_scores (relationship_id)
     VALUES (NEW.relationship_id)
     ON CONFLICT (relationship_id) DO NOTHING;
 
-    -- Update aggregated scores
+    -- Update aggregated scores with clamped values
     UPDATE gottman_relationship_scores grs
     SET
-        avg_criticism_score = sub.avg_criticism,
-        avg_contempt_score = sub.avg_contempt,
-        avg_defensiveness_score = sub.avg_defensiveness,
-        avg_stonewalling_score = sub.avg_stonewalling,
-        total_horsemen_score = sub.avg_criticism + sub.avg_contempt + sub.avg_defensiveness + sub.avg_stonewalling,
-        overall_repair_success_rate = CASE WHEN sub.total_repairs > 0
+        avg_criticism_score = LEAST(sub.avg_criticism, 10),
+        avg_contempt_score = LEAST(sub.avg_contempt, 10),
+        avg_defensiveness_score = LEAST(sub.avg_defensiveness, 10),
+        avg_stonewalling_score = LEAST(sub.avg_stonewalling, 10),
+        total_horsemen_score = LEAST(sub.avg_criticism + sub.avg_contempt + sub.avg_defensiveness + sub.avg_stonewalling, 40),
+        overall_repair_success_rate = LEAST(CASE WHEN sub.total_repairs > 0
             THEN (sub.successful_repairs::DECIMAL / sub.total_repairs) * 100
-            ELSE 0 END,
+            ELSE 0 END, 100),
         total_repair_attempts = sub.total_repairs,
         total_successful_repairs = sub.successful_repairs,
         conflicts_analyzed = sub.conflict_count,
         gottman_health_score = calculate_gottman_health_score(
-            sub.avg_criticism,
-            sub.avg_contempt,
-            sub.avg_defensiveness,
-            sub.avg_stonewalling,
-            CASE WHEN sub.total_repairs > 0
+            LEAST(sub.avg_criticism, 10),
+            LEAST(sub.avg_contempt, 10),
+            LEAST(sub.avg_defensiveness, 10),
+            LEAST(sub.avg_stonewalling, 10),
+            LEAST(CASE WHEN sub.total_repairs > 0
                 THEN (sub.successful_repairs::DECIMAL / sub.total_repairs) * 100
-                ELSE 0 END
+                ELSE 0 END, 100)
         ),
         last_calculated_at = NOW(),
         updated_at = NOW()
     FROM (
         SELECT
             relationship_id,
-            AVG(criticism_score) as avg_criticism,
-            AVG(contempt_score) as avg_contempt,
-            AVG(defensiveness_score) as avg_defensiveness,
-            AVG(stonewalling_score) as avg_stonewalling,
-            SUM(repair_attempts_count) as total_repairs,
-            SUM(successful_repairs_count) as successful_repairs,
+            COALESCE(AVG(criticism_score), 0) as avg_criticism,
+            COALESCE(AVG(contempt_score), 0) as avg_contempt,
+            COALESCE(AVG(defensiveness_score), 0) as avg_defensiveness,
+            COALESCE(AVG(stonewalling_score), 0) as avg_stonewalling,
+            COALESCE(SUM(repair_attempts_count), 0) as total_repairs,
+            COALESCE(SUM(successful_repairs_count), 0) as successful_repairs,
             COUNT(*) as conflict_count
         FROM gottman_analysis
         WHERE relationship_id = NEW.relationship_id
@@ -304,9 +321,28 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Create trigger
+-- Create trigger (drop first to ensure clean state)
 DROP TRIGGER IF EXISTS trigger_update_gottman_scores ON gottman_analysis;
 CREATE TRIGGER trigger_update_gottman_scores
     AFTER INSERT OR UPDATE ON gottman_analysis
     FOR EACH ROW
     EXECUTE FUNCTION update_gottman_relationship_scores();
+
+-- ============================================================================
+-- MIGRATION COMPLETE
+-- ============================================================================
+-- Tables created:
+--   - gottman_analysis (per-conflict Four Horsemen analysis)
+--   - gottman_relationship_scores (aggregated relationship health)
+--   - daily_checkins (optional 5:1 ratio tracking)
+--   - relationship_positivity_ratio (aggregated check-in data)
+--
+-- Functions created:
+--   - calculate_gottman_health_score()
+--   - update_gottman_relationship_scores() (trigger function)
+--
+-- Next steps:
+--   1. Restart backend to pick up new code
+--   2. Run backfill endpoint to analyze existing conflicts:
+--      POST /api/analytics/gottman/backfill
+-- ============================================================================
