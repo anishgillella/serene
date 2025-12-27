@@ -1,13 +1,9 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Home from './pages/Home';
 import FightCapture from './pages/FightCapture';
 import PostFightSession from './pages/PostFightSession';
 import Analytics from './pages/Analytics';
-import ConflictAnalysis from './pages/Analytics/ConflictAnalysis';
-import TriggerPhrases from './pages/Analytics/TriggerPhrases';
-import Timeline from './pages/Analytics/Timeline';
-import Dashboard from './pages/Analytics/Dashboard';
 import Upload from './pages/Upload';
 import History from './pages/History';
 import Calendar from './pages/Calendar';
@@ -33,10 +29,11 @@ export function App() {
                   <Route path="/fight-capture" element={<FightCapture />} />
                   <Route path="/post-fight" element={<PostFightSession />} />
                   <Route path="/analytics" element={<Analytics />} />
-                  <Route path="/analytics/dashboard" element={<Dashboard />} />
-                  <Route path="/analytics/conflicts" element={<ConflictAnalysis />} />
-                  <Route path="/analytics/triggers" element={<TriggerPhrases />} />
-                  <Route path="/analytics/timeline" element={<Timeline />} />
+                  {/* Redirect old analytics sub-routes to main analytics page */}
+                  <Route path="/analytics/dashboard" element={<Navigate to="/analytics" replace />} />
+                  <Route path="/analytics/conflicts" element={<Navigate to="/analytics" replace />} />
+                  <Route path="/analytics/triggers" element={<Navigate to="/analytics" replace />} />
+                  <Route path="/analytics/timeline" element={<Navigate to="/analytics" replace />} />
                   <Route path="/upload" element={<Upload />} />
                   <Route path="/history" element={<History />} />
                   <Route path="/calendar" element={<Calendar />} />

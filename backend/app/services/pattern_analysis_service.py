@@ -70,7 +70,8 @@ class PatternAnalysisService:
 
             # Factor 2: Resentment accumulation
             resentment_levels = [
-                c.get("resentment_level", 5) for c in recent_conflicts
+                c.get("resentment_level") if c.get("resentment_level") is not None else 5
+                for c in recent_conflicts
             ]
             avg_resentment = mean(resentment_levels) if resentment_levels else 5.0
             resentment_score = avg_resentment / 10.0

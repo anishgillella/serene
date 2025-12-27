@@ -1705,30 +1705,33 @@ class DatabaseService:
             with self.get_db_context() as conn:
                 with conn.cursor() as cursor:
                     updates = []
-                    values = [conflict_id]
+                    values = []
 
                     if parent_conflict_id is not None:
                         updates.append("parent_conflict_id = %s")
-                        values.insert(0, parent_conflict_id)
+                        values.append(parent_conflict_id)
 
                     if resentment_level is not None:
-                        updates.append(f"resentment_level = %s")
-                        values.insert(0, resentment_level)
+                        updates.append("resentment_level = %s")
+                        values.append(resentment_level)
 
                     if has_past_references is not None:
                         updates.append("has_past_references = %s")
-                        values.insert(0, has_past_references)
+                        values.append(has_past_references)
 
                     if is_continuation is not None:
                         updates.append("is_continuation = %s")
-                        values.insert(0, is_continuation)
+                        values.append(is_continuation)
 
                     if unmet_needs is not None:
                         updates.append("unmet_needs = %s")
-                        values.insert(0, unmet_needs)
+                        values.append(unmet_needs)
 
                     if not updates:
                         return True
+
+                    # Add conflict_id at the end for the WHERE clause
+                    values.append(conflict_id)
 
                     update_clause = ", ".join(updates)
                     cursor.execute(f"""

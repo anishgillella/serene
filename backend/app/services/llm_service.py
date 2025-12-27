@@ -44,6 +44,14 @@ class LLMService:
         except Exception as e:
             logger.error(f"❌ Error in chat completion: {e}")
             raise
+
+    def analyze_with_prompt(self, prompt: str, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+        """
+        Simple prompt-based analysis. Takes a prompt string and returns LLM response.
+        Used by conflict_enrichment_service for extracting trigger phrases and unmet needs.
+        """
+        messages = [{"role": "user", "content": prompt}]
+        return self.chat_completion(messages, temperature=temperature, max_tokens=max_tokens)
     
     def chat_completion_stream(
         self,

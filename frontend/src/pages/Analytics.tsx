@@ -1,380 +1,572 @@
 import React, { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Bar, XAxis, YAxis, ResponsiveContainer,
-  ComposedChart, Tooltip, Area, CartesianGrid, PieChart, Pie, Cell, Legend, Label
-} from 'recharts';
-import AnalyticsCard from '../components/AnalyticsCard';
-import VoiceButton from '../components/VoiceButton';
-import { Heart, Activity, Zap, TrendingUp, AlertTriangle } from 'lucide-react';
+  Activity,
+  BarChart3,
+  Target,
+  Lightbulb,
+  RefreshCw,
+  Heart,
+  Sparkles,
+  Shield,
+  Zap
+} from 'lucide-react';
+import { useDashboardData } from '../hooks/useDashboardData';
+import { useGottmanData } from '../hooks/useGottmanData';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Premium components
+import {
+  AnimatedBackground,
+  GlassCard,
+  GlassCardFeatured,
+  AnimatedHealthRing,
+  PremiumTabsFullWidth,
+  MetricCard,
+  RiskGauge,
+  RecommendationsList,
+  InsightsGrid,
+  TriggerPhrasesCard,
+  ChronicNeedsCard,
+  GottmanRadar,
+  RepairSuccessCard,
+  CommunicationQuality,
+} from '../components/premium';
 
-interface AnalyticsData {
-  health_score: {
-    value: number;
-    trend: 'improving' | 'declining' | 'stable';
-    status: string;
-  };
-  trends: Array<{
-    name: string;
-    conflicts: number;
-    intimacy: number;
-    date_start: string;
-    date_end: string;
-  }>;
-  cycle_correlation: number[];
-  tension_forecast: {
-    level: 'Low' | 'Medium' | 'High';
-    message: string;
-    next_high_risk_date: string | null;
-  };
-  stats: {
-    conflicts_30d: number;
-    intimacy_30d: number;
-    unresolved: number;
-  };
-  resolution_stats: {
-    resolved: number;
-    unresolved: number;
-    total: number;
-    rate: number;
-  };
-  interaction_ratio: {
-    value: number;
-    target: number;
-    status: string;
-  };
-  top_topics: Array<{
-    topic: string;
-    count: number;
-  }>;
-}
+type TabId = 'overview' | 'gottman' | 'patterns' | 'insights';
 
-const Analytics = () => {
-  const [data, setData] = useState<AnalyticsData | null>(null);
-  const [loading, setLoading] = useState(true);
+const tabs = [
+  { id: 'overview', label: 'Overview', icon: <Activity size={18} /> },
+  { id: 'gottman', label: 'Gottman', icon: <Shield size={18} /> },
+  { id: 'patterns', label: 'Patterns', icon: <Target size={18} /> },
+  { id: 'insights', label: 'Insights', icon: <Lightbulb size={18} /> },
+];
+
+const Analytics: React.FC = () => {
+  const relationshipId = "00000000-0000-0000-0000-000000000000";
+  const { dashboardData, loading, error, refresh } = useDashboardData(relationshipId);
+  const {
+    gottmanData,
+    loading: gottmanLoading,
+    fetchGottmanData,
+    runBackfill,
+    backfillStatus
+  } = useGottmanData(relationshipId);
+  const [activeTab, setActiveTab] = useState<TabId>('overview');
+  const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/analytics/dashboard?partner_id=partner_b`, {
-          headers: {
-            'ngrok-skip-browser-warning': 'true'
-          }
-        });
-        if (res.ok) {
-          setData(await res.json());
-        }
-      } catch (error) {
-        console.error('Error fetching analytics:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchData();
+    refresh();
+    fetchGottmanData();
   }, []);
 
-  if (loading) {
+  const handleRefresh = async () => {
+    await refresh();
+    await fetchGottmanData();
+    setLastRefresh(new Date());
+  };
+
+  // Calculate health score and trend
+  const getHealthData = () => {
+    if (!dashboardData) return { value: 0, trend: 'stable' as const };
+    const value = typeof dashboardData.health_score === 'number'
+      ? dashboardData.health_score
+      : 50;
+    const resolutionRate = dashboardData.metrics?.resolution_rate ?? 50;
+    const trend = resolutionRate > 50 ? 'up' as const :
+                  resolutionRate < 30 ? 'down' as const : 'stable' as const;
+    return { value, trend };
+  };
+
+  // Loading state
+  if (loading && !dashboardData) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-4 border-rose-200 border-t-rose-500"></div>
+      <div className="min-h-screen relative">
+        <AnimatedBackground />
+        <div className="relative z-10 flex items-center justify-center min-h-screen">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center"
+          >
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+              className="w-16 h-16 mx-auto mb-6"
+            >
+              <Heart className="w-full h-full text-rose-400" strokeWidth={1.5} />
+            </motion.div>
+            <p className="text-warmGray-600 font-medium">Loading your relationship insights...</p>
+          </motion.div>
+        </div>
       </div>
     );
   }
 
-  if (!data) return <div className="text-center p-8 text-slate-500">Failed to load analytics data.</div>;
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen relative">
+        <AnimatedBackground />
+        <div className="relative z-10 flex items-center justify-center min-h-screen p-8">
+          <GlassCard className="max-w-md w-full p-8 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-rose-100 flex items-center justify-center">
+              <Activity className="text-rose-500" size={32} />
+            </div>
+            <h2 className="text-xl font-semibold text-warmGray-800 mb-2">Unable to Load Data</h2>
+            <p className="text-warmGray-500 mb-6">{error}</p>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handleRefresh}
+              className="px-6 py-2.5 bg-rose-500 text-white rounded-xl font-medium hover:bg-rose-600 transition-colors"
+            >
+              Try Again
+            </motion.button>
+          </GlassCard>
+        </div>
+      </div>
+    );
+  }
 
-  const getHealthColor = (score: number) => {
-    if (score >= 80) return 'text-green-600';
-    if (score >= 60) return 'text-blue-600';
-    return 'text-accent';
-  };
+  // No data state
+  if (!dashboardData) {
+    return (
+      <div className="min-h-screen relative">
+        <AnimatedBackground />
+        <div className="relative z-10 flex items-center justify-center min-h-screen p-8">
+          <GlassCard className="max-w-md w-full p-8 text-center">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-lavender-100 flex items-center justify-center">
+              <Sparkles className="text-purple-500" size={32} />
+            </div>
+            <h2 className="text-xl font-semibold text-warmGray-800 mb-2">No Data Yet</h2>
+            <p className="text-warmGray-500">Start recording conversations to see your relationship analytics.</p>
+          </GlassCard>
+        </div>
+      </div>
+    );
+  }
 
-  const getTensionColor = (level: string) => {
-    switch (level) {
-      case 'High': return 'bg-red-50 text-red-700 border-red-100';
-      case 'Medium': return 'bg-amber-50 text-amber-700 border-amber-100';
-      default: return 'bg-green-50 text-green-700 border-green-100';
-    }
-  };
+  const healthData = getHealthData();
 
   return (
-    <div className="min-h-screen bg-bg-primary p-4 md:p-8 font-sans text-text-primary">
-      <div className="max-w-5xl mx-auto space-y-6">
+    <div className="min-h-screen relative">
+      {/* Animated background */}
+      <AnimatedBackground />
 
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h2 className="text-h2 text-text-primary flex items-center justify-center gap-3 mb-2">
-            <Activity className="text-accent" strokeWidth={1.5} />
-            Relationship Pulse
-          </h2>
-          <p className="text-body text-text-secondary">Real-time insights powered by your interactions</p>
-        </div>
+      {/* Content */}
+      <div className="relative z-10 px-4 py-8 md:px-8 lg:px-12">
+        <div className="max-w-7xl mx-auto">
 
-        {/* Top Row: Health Score & Forecast */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-          {/* Health Score Card */}
-          <AnalyticsCard title="Relationship Health" className="md:col-span-1">
-            <div className="flex flex-col items-center justify-center py-4">
-              <div className="relative w-32 h-32 flex items-center justify-center">
-                <svg className="w-full h-full transform -rotate-90">
-                  <circle cx="64" cy="64" r="56" stroke="#E4E4E7" strokeWidth="8" fill="none" />
-                  <circle
-                    cx="64" cy="64" r="56"
-                    stroke="currentColor"
-                    strokeWidth="8"
-                    fill="none"
-                    strokeDasharray={351}
-                    strokeDashoffset={351 - (351 * data.health_score.value) / 100}
-                    className={`${getHealthColor(data.health_score.value)} transition-all duration-1000 ease-out`}
-                    strokeLinecap="round"
-                  />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className={`text-4xl font-light ${getHealthColor(data.health_score.value)}`}>
-                    {data.health_score.value}
-                  </span>
-                </div>
+          {/* Header */}
+          <motion.header
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="mb-8"
+          >
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <motion.h1
+                  className="text-display-sm md:text-display text-warmGray-900 mb-2"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.5, delay: 0.1 }}
+                >
+                  Relationship Insights
+                </motion.h1>
+                <motion.p
+                  className="text-warmGray-500"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.5, delay: 0.2 }}
+                >
+                  Understanding your patterns, nurturing your connection
+                </motion.p>
               </div>
-              <div className="mt-4 text-center">
-                <div className="text-h3 text-text-primary mb-1">{data.health_score.status}</div>
-                <div className="text-tiny text-text-tertiary uppercase tracking-wider flex items-center gap-1 justify-center">
-                  <TrendingUp size={12} /> {data.health_score.trend} Trend
-                </div>
-              </div>
+
+              <motion.button
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleRefresh}
+                disabled={loading}
+                className="flex items-center gap-2 px-5 py-2.5 bg-white/70 backdrop-blur-lg border border-white/50 rounded-xl font-medium text-warmGray-700 hover:bg-white/90 transition-all shadow-subtle disabled:opacity-50"
+              >
+                <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                {loading ? 'Refreshing...' : 'Refresh'}
+              </motion.button>
             </div>
-          </AnalyticsCard>
 
-          {/* Tension Forecast & Stats */}
-          <div className="md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
-
-            {/* Tension Forecast */}
-            <AnalyticsCard title="Tension Forecast" className="bg-surface-elevated">
-              <div className="flex items-start gap-4">
-                <div className={`p-3 rounded-xl border ${getTensionColor(data.tension_forecast.level)} bg-opacity-20`}>
-                  <Zap size={24} strokeWidth={1.5} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-h3 text-text-primary">{data.tension_forecast.level} Risk</span>
-                  </div>
-                  <p className="text-body text-text-secondary leading-relaxed">
-                    {data.tension_forecast.message}
-                  </p>
-                  {data.tension_forecast.next_high_risk_date && (
-                    <div className="mt-3 text-tiny font-medium text-accent bg-surface-hover border border-border-subtle inline-block px-2 py-1 rounded-lg">
-                      Next potential spike: {new Date(data.tension_forecast.next_high_risk_date).toLocaleDateString()}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </AnalyticsCard>
-
-            {/* Quick Stats Grid */}
-            <div className="grid grid-rows-2 gap-4">
-              <AnalyticsCard title="Intimacy (30d)" value={data.stats.intimacy_30d} color="bg-surface-elevated">
-                <Heart className="absolute top-4 right-4 text-accent-light" size={20} strokeWidth={1.5} />
-              </AnalyticsCard>
-              <AnalyticsCard title="Conflicts (30d)" value={data.stats.conflicts_30d} subValue={`${data.stats.unresolved} unresolved`} color="bg-surface-elevated">
-                <AlertTriangle className="absolute top-4 right-4 text-amber-300" size={20} strokeWidth={1.5} />
-              </AnalyticsCard>
-            </div>
-          </div>
-        </div>
-
-        {/* Middle Row: Resolution & Ratio */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-
-          {/* Conflict Resolution Pie Chart */}
-          <AnalyticsCard title="Conflict Resolution" className="bg-surface-elevated h-80">
-            {data.resolution_stats.total > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={[
-                      { name: 'Resolved', value: data.resolution_stats.resolved },
-                      { name: 'Unresolved', value: data.resolution_stats.unresolved }
-                    ]}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    <Cell fill="#10B981" /> {/* Green for Resolved */}
-                    <Cell fill="#F59E0B" /> {/* Amber for Unresolved */}
-                    <Label
-                      value={`${data.resolution_stats.rate}%`}
-                      position="center"
-                      className="text-2xl font-bold"
-                      fill="#2C2C2C"
-                    />
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7' }}
-                  />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
-                <p>No conflicts recorded.</p>
-              </div>
+            {lastRefresh && (
+              <motion.p
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-xs text-warmGray-400 mt-2"
+              >
+                Last updated: {lastRefresh.toLocaleTimeString()}
+              </motion.p>
             )}
-          </AnalyticsCard>
+          </motion.header>
 
-          {/* Interaction Ratio */}
-          <AnalyticsCard title="Interaction Ratio (Gottman)" className="bg-surface-elevated h-80">
-            <div className="flex flex-col h-full justify-center items-center space-y-6">
-              <div className="text-center">
-                <div className="text-5xl font-light text-text-primary mb-2">
-                  {data.interaction_ratio.value}<span className="text-2xl text-text-tertiary"> : 1</span>
-                </div>
-                <div className={`inline-block px-3 py-1 rounded-full text-sm font-medium ${data.interaction_ratio.value >= 5 ? 'bg-green-100 text-green-700' :
-                  data.interaction_ratio.value >= 3 ? 'bg-blue-100 text-blue-700' :
-                    'bg-red-100 text-red-700'
-                  }`}>
-                  {data.interaction_ratio.status}
-                </div>
-              </div>
+          {/* Tab Navigation */}
+          <div className="mb-8">
+            <PremiumTabsFullWidth
+              tabs={tabs}
+              activeTab={activeTab}
+              onTabChange={(id) => setActiveTab(id as TabId)}
+            />
+          </div>
 
-              <div className="w-full max-w-xs space-y-2">
-                <div className="flex justify-between text-xs text-text-secondary">
-                  <span>Current</span>
-                  <span>Target (5:1)</span>
-                </div>
-                <div className="h-4 bg-surface-hover rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full transition-all duration-1000 ${data.interaction_ratio.value >= 5 ? 'bg-green-500' : 'bg-accent'
-                      }`}
-                    style={{ width: `${Math.min((data.interaction_ratio.value / 5) * 100, 100)}%` }}
-                  />
-                </div>
-                <p className="text-xs text-text-tertiary text-center mt-4">
-                  Aim for 5 positive interactions for every 1 negative interaction.
-                </p>
-              </div>
-            </div>
-          </AnalyticsCard>
-        </div>
-
-        {/* Top Conflict Topics */}
-        <AnalyticsCard title="Top Conflict Topics" className="bg-surface-elevated h-80">
-          {data.top_topics.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={data.top_topics}
-                layout="vertical"
-                margin={{ top: 20, right: 30, bottom: 20, left: 20 }}
+          {/* Tab Content */}
+          <AnimatePresence mode="wait">
+            {/* Overview Tab */}
+            {activeTab === 'overview' && (
+              <motion.div
+                key="overview"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="space-y-6"
               >
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E4E4E7" />
-                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} />
-                <YAxis
-                  type="category"
-                  dataKey="topic"
-                  axisLine={false}
-                  tickLine={false}
-                  tick={{ fill: '#2C2C2C', fontSize: 12 }}
-                  width={150}
-                />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7' }}
-                />
-                <Bar dataKey="count" fill="#A78295" radius={[0, 4, 4, 0]} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
-              <p>No conflict topics recorded yet.</p>
-            </div>
-          )}
-        </AnalyticsCard>
-
-        {/* Middle Row: Trends Chart */}
-        <AnalyticsCard title="Interaction Trends (Last 30 Days)" className="bg-surface-elevated h-80">
-          {data.trends.some(t => t.conflicts > 0 || t.intimacy > 0) ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={data.trends} margin={{ top: 20, right: 20, bottom: 20, left: 0 }}>
-                <defs>
-                  <linearGradient id="colorIntimacy" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#A78295" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#A78295" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E4E4E7" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#8E8E8E', fontSize: 12 }} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#FFFFFF', borderRadius: '12px', border: '1px solid #E4E4E7', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.05)' }}
-                  cursor={{ fill: '#F5F5F4' }}
-                />
-                <Area type="monotone" dataKey="intimacy" stroke="#A78295" fillOpacity={1} fill="url(#colorIntimacy)" strokeWidth={2} />
-                <Bar dataKey="conflicts" barSize={20} fill="#D4D4D8" radius={[4, 4, 0, 0]} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center text-text-tertiary">
-              <Activity size={48} strokeWidth={1} className="mb-4 opacity-50" />
-              <p>No interaction data recorded in the last 30 days.</p>
-            </div>
-          )}
-        </AnalyticsCard>
-
-        {/* Bottom Row: Cycle Heatmap */}
-        <AnalyticsCard title="Conflict Heatmap by Cycle Day" className="bg-surface-elevated">
-          <div className="space-y-4">
-            <div className="flex justify-between text-tiny text-text-tertiary font-medium uppercase tracking-wider px-1">
-              <span>Period</span>
-              <span>Follicular</span>
-              <span>Ovulation</span>
-              <span>Luteal</span>
-              <span>PMS</span>
-            </div>
-
-            {data.cycle_correlation.some(c => c > 0) ? (
-              <div
-                className="grid gap-1 h-12"
-                style={{ gridTemplateColumns: 'repeat(30, minmax(0, 1fr))' }}
-              >
-                {data.cycle_correlation.map((count, i) => {
-                  // Calculate intensity based on count (0-5 scale)
-                  const hasData = count > 0;
-
-                  return (
-                    <div key={i} className="flex flex-col items-center group relative">
-                      <div
-                        className={`w-full h-full rounded-sm transition-all ${hasData ? 'bg-accent' : 'bg-surface-hover'} hover:scale-125 hover:z-10`}
-                        style={hasData ? { opacity: Math.min(0.2 + (count * 0.15), 1) } : {}}
+                {/* Hero Section - Health Score */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                  {/* Health Score - Featured */}
+                  <GlassCardFeatured className="lg:col-span-5 p-8" delay={0}>
+                    <div className="flex flex-col items-center">
+                      <h3 className="text-lg font-semibold text-warmGray-700 mb-6">
+                        Relationship Health
+                      </h3>
+                      <AnimatedHealthRing
+                        value={healthData.value}
+                        trend={healthData.trend}
+                        size={220}
                       />
-                      {/* Tooltip */}
-                      <div className="absolute bottom-full mb-2 hidden group-hover:block bg-text-primary text-white text-tiny px-2 py-1 rounded whitespace-nowrap z-20">
-                        Day {i + 1}: {count} conflicts
+                      <p className="text-sm text-warmGray-500 mt-6 text-center max-w-[250px]">
+                        Based on conflict resolution, communication patterns, and emotional balance
+                      </p>
+                    </div>
+                  </GlassCardFeatured>
+
+                  {/* Right column - Risk + Metrics */}
+                  <div className="lg:col-span-7 space-y-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Risk Gauge */}
+                      <RiskGauge
+                        riskScore={dashboardData.escalation_risk?.risk_score ?? 0}
+                        interpretation={dashboardData.escalation_risk?.interpretation ?? 'unknown'}
+                        daysUntilPredicted={dashboardData.escalation_risk?.days_until_predicted_conflict ?? 0}
+                        unresolvedIssues={dashboardData.escalation_risk?.unresolved_issues ?? 0}
+                        delay={0.1}
+                      />
+
+                      {/* Quick Stats */}
+                      <div className="space-y-4">
+                        <MetricCard
+                          label="Resolution Rate"
+                          value={Math.round(dashboardData.metrics?.resolution_rate ?? 0)}
+                          suffix="%"
+                          trend={dashboardData.metrics?.resolution_rate > 50 ? 'up' : 'down'}
+                          icon={<BarChart3 size={18} />}
+                          color="emerald"
+                          delay={0.2}
+                        />
+                        <MetricCard
+                          label="Days of Peace"
+                          value={dashboardData.metrics?.days_since_last_conflict ?? 0}
+                          suffix=" days"
+                          icon={<Heart size={18} />}
+                          color="rose"
+                          delay={0.3}
+                        />
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="h-12 flex items-center justify-center bg-surface-hover rounded-lg border border-dashed border-border-subtle text-text-tertiary text-small">
-                Log period dates to see cycle correlation
-              </div>
+                  </div>
+                </div>
+
+                {/* Insights Grid */}
+                <InsightsGrid
+                  insights={dashboardData.insights || []}
+                  metrics={dashboardData.metrics || {
+                    total_conflicts: 0,
+                    resolved_conflicts: 0,
+                    unresolved_conflicts: 0,
+                    resolution_rate: 0,
+                    avg_resentment: 5,
+                    days_since_last_conflict: 0,
+                  }}
+                  delay={0.4}
+                />
+
+                {/* Recommendations */}
+                <RecommendationsList
+                  recommendations={dashboardData.escalation_risk?.recommendations || []}
+                  delay={0.5}
+                />
+              </motion.div>
             )}
-            <div className="text-center text-tiny text-text-tertiary mt-2">
-              Higher opacity indicates more frequent conflicts on this cycle day.
-            </div>
-          </div>
-        </AnalyticsCard>
 
-        {/* Voice Command Hint */}
-        <div className="flex flex-col items-center mt-8 space-y-4">
-          <VoiceButton size="lg" />
-          <p className="text-small text-text-secondary bg-surface-elevated px-4 py-2 rounded-full border border-border-subtle shadow-soft">
-            Try asking: "What's my relationship health score?"
-          </p>
+            {/* Gottman Tab */}
+            {activeTab === 'gottman' && (
+              <motion.div
+                key="gottman"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="space-y-6"
+              >
+                {/* Backfill Banner - show if no data */}
+                {gottmanData && !gottmanData.has_data && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="bg-gradient-to-r from-purple-50 to-rose-50 rounded-2xl p-6 border border-purple-100"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold text-warmGray-800 mb-1">
+                          Analyze Your Conflicts
+                        </h3>
+                        <p className="text-sm text-warmGray-600">
+                          Run Gottman analysis on your existing {dashboardData?.metrics?.total_conflicts || 0} conflicts to get Four Horsemen insights
+                        </p>
+                      </div>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={runBackfill}
+                        disabled={backfillStatus.running}
+                        className="px-5 py-2.5 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {backfillStatus.running ? (
+                          <>
+                            <RefreshCw size={16} className="animate-spin" />
+                            Analyzing...
+                          </>
+                        ) : (
+                          <>
+                            <Zap size={16} />
+                            Run Analysis
+                          </>
+                        )}
+                      </motion.button>
+                    </div>
+                    {backfillStatus.results && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="mt-4 p-3 bg-white/50 rounded-xl text-sm text-warmGray-600"
+                      >
+                        Analyzed {backfillStatus.results.analyzed} of {backfillStatus.results.total} conflicts
+                        {backfillStatus.results.failed > 0 && ` (${backfillStatus.results.failed} failed)`}
+                      </motion.div>
+                    )}
+                  </motion.div>
+                )}
+
+                {/* Main Gottman Content */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Four Horsemen Radar */}
+                  <GottmanRadar
+                    criticism={gottmanData?.four_horsemen?.criticism ?? 0}
+                    contempt={gottmanData?.four_horsemen?.contempt ?? 0}
+                    defensiveness={gottmanData?.four_horsemen?.defensiveness ?? 0}
+                    stonewalling={gottmanData?.four_horsemen?.stonewalling ?? 0}
+                    delay={0}
+                  />
+
+                  {/* Repair Success */}
+                  <RepairSuccessCard
+                    successRate={gottmanData?.repair_metrics?.success_rate ?? 0}
+                    totalAttempts={gottmanData?.repair_metrics?.total_attempts ?? 0}
+                    successfulRepairs={gottmanData?.repair_metrics?.successful ?? 0}
+                    delay={0.1}
+                  />
+                </div>
+
+                {/* Communication Quality */}
+                <CommunicationQuality
+                  partnerA={{
+                    iStatements: gottmanData?.communication_stats?.partner_a?.i_statements ?? 0,
+                    youStatements: gottmanData?.communication_stats?.partner_a?.you_statements ?? 0,
+                    name: 'Partner A'
+                  }}
+                  partnerB={{
+                    iStatements: gottmanData?.communication_stats?.partner_b?.i_statements ?? 0,
+                    youStatements: gottmanData?.communication_stats?.partner_b?.you_statements ?? 0,
+                    name: 'Partner B'
+                  }}
+                  interruptions={gottmanData?.communication_stats?.interruptions ?? 0}
+                  activeListening={gottmanData?.communication_stats?.active_listening ?? 0}
+                  delay={0.2}
+                />
+
+                {/* Gottman Health Score */}
+                {gottmanData?.has_data && (
+                  <GlassCard className="p-6" delay={0.3}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-semibold text-warmGray-800">Gottman Health Score</h3>
+                        <p className="text-sm text-warmGray-500 mt-1">
+                          Based on {gottmanData.conflicts_analyzed} analyzed conflicts
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-4xl font-bold text-warmGray-800">
+                          {Math.round(gottmanData.gottman_health_score || 0)}
+                        </p>
+                        <p className="text-sm text-warmGray-500">/ 100</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 h-3 bg-warmGray-100 rounded-full overflow-hidden">
+                      <motion.div
+                        className={`h-full rounded-full ${
+                          (gottmanData.gottman_health_score || 0) >= 70 ? 'bg-emerald-500' :
+                          (gottmanData.gottman_health_score || 0) >= 50 ? 'bg-amber-500' :
+                          (gottmanData.gottman_health_score || 0) >= 30 ? 'bg-orange-500' : 'bg-red-500'
+                        }`}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${gottmanData.gottman_health_score || 0}%` }}
+                        transition={{ duration: 1, ease: "easeOut" }}
+                      />
+                    </div>
+                    <p className="text-xs text-warmGray-400 mt-3 text-center">
+                      Higher is better. Score is calculated from Four Horsemen levels and repair success rate.
+                    </p>
+                  </GlassCard>
+                )}
+              </motion.div>
+            )}
+
+            {/* Patterns Tab */}
+            {activeTab === 'patterns' && (
+              <motion.div
+                key="patterns"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="space-y-6"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <TriggerPhrasesCard
+                    data={dashboardData.trigger_phrases || { most_impactful: [] }}
+                    delay={0}
+                  />
+                  <ChronicNeedsCard
+                    data={dashboardData.chronic_needs || []}
+                    delay={0.1}
+                  />
+                </div>
+
+                {/* Conflict Chains */}
+                <GlassCard className="p-6" delay={0.2}>
+                  <div className="flex items-center gap-3 mb-5">
+                    <div className="p-2.5 rounded-xl bg-blue-50">
+                      <BarChart3 size={20} className="text-blue-500" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-warmGray-800">Conflict Chains</h3>
+                      <p className="text-xs text-warmGray-500">Related conflicts over time</p>
+                    </div>
+                  </div>
+
+                  {dashboardData.conflict_chains && dashboardData.conflict_chains.length > 0 ? (
+                    <div className="space-y-3">
+                      {dashboardData.conflict_chains.map((chain: any, idx: number) => (
+                        <motion.div
+                          key={idx}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: 0.3 + idx * 0.1 }}
+                          className="p-4 rounded-xl bg-warmGray-50/50 hover:bg-warmGray-50 transition-colors"
+                        >
+                          <p className="font-medium text-warmGray-800">{chain.root_cause || 'Unknown cause'}</p>
+                          <p className="text-sm text-warmGray-500 mt-1">{chain.timeline || 'No timeline'}</p>
+                          <div className="flex gap-4 mt-2">
+                            <span className="text-xs text-warmGray-400">
+                              {chain.conflicts_in_chain || 0} conflicts
+                            </span>
+                            <span className={`text-xs font-medium ${chain.is_resolved ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {chain.is_resolved ? 'Resolved' : 'Ongoing'}
+                            </span>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-warmGray-100 flex items-center justify-center">
+                        <BarChart3 size={24} className="text-warmGray-400" />
+                      </div>
+                      <p className="text-warmGray-500">No conflict chains detected yet</p>
+                    </div>
+                  )}
+                </GlassCard>
+              </motion.div>
+            )}
+
+            {/* Insights Tab */}
+            {activeTab === 'insights' && (
+              <motion.div
+                key="insights"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+                className="space-y-6"
+              >
+                {/* Full Recommendations */}
+                <RecommendationsList
+                  recommendations={dashboardData.escalation_risk?.recommendations || []}
+                  delay={0}
+                />
+
+                {/* Detailed Metrics */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <MetricCard
+                    label="Total Conflicts"
+                    value={dashboardData.metrics?.total_conflicts ?? 0}
+                    icon={<Activity size={18} />}
+                    color="rose"
+                    delay={0.1}
+                  />
+                  <MetricCard
+                    label="Resolved"
+                    value={dashboardData.metrics?.resolved_conflicts ?? 0}
+                    icon={<Heart size={18} />}
+                    color="emerald"
+                    delay={0.2}
+                  />
+                  <MetricCard
+                    label="Unresolved"
+                    value={dashboardData.metrics?.unresolved_conflicts ?? 0}
+                    icon={<Target size={18} />}
+                    color="amber"
+                    delay={0.3}
+                  />
+                  <MetricCard
+                    label="Avg Resentment"
+                    value={Math.round(dashboardData.metrics?.avg_resentment ?? 5)}
+                    suffix="/10"
+                    icon={<BarChart3 size={18} />}
+                    color="lavender"
+                    delay={0.4}
+                  />
+                </div>
+
+                {/* Chronic Needs */}
+                <ChronicNeedsCard
+                  data={dashboardData.chronic_needs || []}
+                  delay={0.5}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
         </div>
-
       </div>
     </div>
   );
