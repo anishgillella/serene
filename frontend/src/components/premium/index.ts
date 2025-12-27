@@ -14,3 +14,9 @@ export { ChronicNeedsCard } from './ChronicNeedsCard';
 export { GottmanRadar } from './GottmanRadar';
 export { RepairSuccessCard } from './RepairSuccessCard';
 export { CommunicationQuality } from './CommunicationQuality';
+
+// Advanced Analytics Components
+export { SurfaceUnderlyingCard } from './SurfaceUnderlyingCard';
+export { EmotionalTimelineChart } from './EmotionalTimelineChart';
+export { TriggerSensitivityCard } from './TriggerSensitivityCard';
+export { ConflictReplayViewer } from './ConflictReplayViewer';
