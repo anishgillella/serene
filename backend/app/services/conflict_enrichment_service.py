@@ -2,12 +2,11 @@
 Conflict Enrichment Service - Phase 1
 Captures trigger phrases, conflict linkages, and unmet needs
 """
+import asyncio
 import logging
 import json
-from datetime import datetime
-from typing import List, Optional, Tuple
-from uuid import UUID
-
+import re
+from typing import List
 from app.models.schemas import (
     TriggerPhrase,
     UnmetNeed,
@@ -61,8 +60,6 @@ class ConflictEnrichmentService:
             )
 
             # Call LLM for analysis
-            import asyncio
-
             response_text = await asyncio.to_thread(
                 llm_service.analyze_with_prompt, enrichment_prompt
             )
@@ -146,10 +143,6 @@ Return ONLY valid JSON, no other text."""
     def _parse_enrichment_response(self, response_text: str) -> dict:
         """Parse LLM response into enrichment data"""
         try:
-            # Extract JSON from response
-            import json
-            import re
-
             # Try to find JSON block
             json_match = re.search(r"\{[\s\S]*\}", response_text)
             if not json_match:
@@ -198,7 +191,9 @@ Return ONLY valid JSON, no other text."""
         """Save trigger phrases to database"""
         try:
             for phrase in phrases:
-                await db_service.save_trigger_phrase(
+                # db_service.save_trigger_phrase is sync, wrap in thread
+                await asyncio.to_thread(
+                    db_service.save_trigger_phrase,
                     relationship_id=relationship_id,
                     conflict_id=conflict_id,
                     phrase_data=phrase.dict(),
@@ -214,7 +209,9 @@ Return ONLY valid JSON, no other text."""
         """Save unmet needs to database"""
         try:
             for need in needs:
-                await db_service.save_unmet_need(
+                # db_service.save_unmet_need is sync, wrap in thread
+                await asyncio.to_thread(
+                    db_service.save_unmet_need,
                     relationship_id=relationship_id,
                     conflict_id=conflict_id,
                     need_data=need.dict(),
@@ -229,7 +226,9 @@ Return ONLY valid JSON, no other text."""
     ) -> None:
         """Update conflict with enrichment data"""
         try:
-            await db_service.update_conflict(
+            # db_service.update_conflict is sync, wrap in thread
+            await asyncio.to_thread(
+                db_service.update_conflict,
                 conflict_id=conflict_id,
                 parent_conflict_id=enrichment.parent_conflict_id,
                 resentment_level=enrichment.resentment_level,

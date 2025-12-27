@@ -1,22 +1,21 @@
 import { useState, useCallback } from 'react';
 
 interface DashboardData {
-  health_score: {
-    value: number;
-    trend: 'up' | 'down' | 'stable';
-    breakdownFactors: {
-      unresolved_issues: number;
-      conflict_frequency: number;
-      escalation_risk: number;
-      resentment_level: number;
-    };
-  };
+  health_score: number;
   escalation_risk: {
     risk_score: number;
     interpretation: string;
     unresolved_issues: number;
     days_until_predicted_conflict: number;
     recommendations: string[];
+    factors?: {
+      unresolved_issues?: number;
+      resentment_accumulation?: number;
+      time_since_conflict?: number;
+      recurrence_pattern?: number;
+      avg_resentment?: number;
+      days_since_last?: number;
+    };
   };
   trigger_phrases: {
     most_impactful: Array<{
@@ -81,31 +80,10 @@ export const useDashboardData = (relationshipId: string) => {
     }
   }, [relationshipId]);
 
-  const getHealthStatus = useCallback(() => {
-    if (!dashboardData) return 'unknown';
-    const score = dashboardData.health_score.value;
-    if (score >= 80) return 'excellent';
-    if (score >= 60) return 'good';
-    if (score >= 40) return 'fair';
-    return 'poor';
-  }, [dashboardData]);
-
-  const getRiskLevel = useCallback(() => {
-    return dashboardData?.escalation_risk.interpretation ?? 'unknown';
-  }, [dashboardData]);
-
-  const getResolutionTrend = useCallback(() => {
-    if (!dashboardData) return 'stable';
-    return dashboardData.health_score.trend;
-  }, [dashboardData]);
-
   return {
     dashboardData,
     loading,
     error,
     refresh,
-    getHealthStatus,
-    getRiskLevel,
-    getResolutionTrend
   };
 };

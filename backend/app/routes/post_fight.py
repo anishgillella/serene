@@ -17,6 +17,7 @@ from app.services.s3_service import s3_service
 from app.services.llm_service import llm_service
 from app.services.transcript_chunker import TranscriptChunker
 from app.services.conflict_enrichment_service import conflict_enrichment_service
+from app.services.gottman_analysis_service import gottman_service
 from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
 from app.models.schemas import ConflictAnalysis, RepairPlan, ConflictTranscript, SpeakerSegment
@@ -104,7 +105,40 @@ async def generate_analysis_and_repair_plan_background(
             logger.error(f"⚠️ Conflict enrichment failed (non-blocking): {str(e)}")
             import traceback
             logger.error(traceback.format_exc())
-        
+
+        # ========================================================================
+        # Phase 1b: Gottman Analysis (Four Horsemen, Repair Attempts, etc.)
+        # ========================================================================
+        try:
+            logger.info(f"🔬 Starting Gottman analysis for {conflict_id}")
+
+            # Get partner names for the analysis
+            partner_names = db_service.get_partner_names(relationship_id)
+
+            gottman_result = await gottman_service.analyze_conflict(
+                conflict_id=conflict_id,
+                transcript=transcript_text,
+                relationship_id=relationship_id,
+                partner_a_name=partner_names.get("partner_a", "Partner A"),
+                partner_b_name=partner_names.get("partner_b", "Partner B")
+            )
+
+            # Calculate horsemen total for logging
+            fh = gottman_result.get("four_horsemen", {})
+            horsemen_total = sum([
+                fh.get("criticism", {}).get("score", 0),
+                fh.get("contempt", {}).get("score", 0),
+                fh.get("defensiveness", {}).get("score", 0),
+                fh.get("stonewalling", {}).get("score", 0)
+            ])
+            repairs = len(gottman_result.get("repair_attempts", []))
+
+            logger.info(f"✅ Gottman analysis complete: Horsemen={horsemen_total}/40, Repairs={repairs}")
+        except Exception as e:
+            logger.error(f"⚠️ Gottman analysis failed (non-blocking): {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+
         # Use RAG pipeline with reranker to get relevant profile information
         boyfriend_profile = None
         girlfriend_profile = None
