@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRightIcon, ArrowLeftIcon, MicIcon, CheckCircleIcon, HeartIcon, UserIcon, BookOpenIcon, UtensilsIcon, TrophyIcon, StarIcon, AlertCircleIcon, SparklesIcon, EyeIcon, PlayIcon } from 'lucide-react';
+import { ArrowRightIcon, ArrowLeftIcon, MicIcon, CheckCircleIcon, HeartIcon, UserIcon, BookOpenIcon, UtensilsIcon, TrophyIcon, StarIcon, AlertCircleIcon, SparklesIcon, EyeIcon, PlayIcon, RefreshCwIcon, ClockIcon, MessageCircleIcon, HandIcon, GiftIcon, UsersIcon, ShieldIcon, RotateCcwIcon } from 'lucide-react';
 import VoiceGuidanceModal from '../components/ui/VoiceGuidanceModal';
 
 // Types - Using gender-neutral terminology
@@ -23,11 +23,30 @@ interface PartnerProfile {
     partner_description: string;
     what_i_admire: string;
     what_frustrates_me: string;
-    // NEW: Repair-specific fields (Phase 1)
+    // Repair-specific fields (Phase 1)
     apology_preferences: string;
     post_conflict_need: 'space' | 'connection' | 'depends' | '';
     repair_gestures: string[];
     escalation_triggers: string[];
+    // NEW: Expanded profile fields (Phase 2)
+    relationship_duration: string;
+    how_you_met: string;
+    love_language: 'words' | 'acts' | 'gifts' | 'time' | 'touch' | '';
+    conflict_role: 'pursue' | 'withdraw' | 'varies' | '';
+    happiest_memory: string;
+    biggest_fear: string;
+    time_to_reconnect: 'minutes' | 'hours' | 'day' | 'depends' | '';
+    reconnection_activities: string[];
+    what_makes_you_feel_loved: string[];
+    how_you_know_resolved: string;
+    off_limit_topics: string[];
+}
+
+// Partner status from API
+interface PartnerStatus {
+    completed: boolean;
+    name: string | null;
+    updated_at: string | null;
 }
 
 interface RelationshipProfile {
@@ -243,11 +262,23 @@ const Onboarding = () => {
         partner_description: '',
         what_i_admire: '',
         what_frustrates_me: '',
-        // NEW: Repair-specific fields (Phase 1)
+        // Repair-specific fields (Phase 1)
         apology_preferences: '',
         post_conflict_need: '',
         repair_gestures: [],
-        escalation_triggers: []
+        escalation_triggers: [],
+        // Expanded profile fields (Phase 2)
+        relationship_duration: '',
+        how_you_met: '',
+        love_language: '',
+        conflict_role: '',
+        happiest_memory: '',
+        biggest_fear: '',
+        time_to_reconnect: '',
+        reconnection_activities: [],
+        what_makes_you_feel_loved: [],
+        how_you_know_resolved: '',
+        off_limit_topics: []
     });
 
     const [relationshipProfile, setRelationshipProfile] = useState<RelationshipProfile>({
@@ -258,6 +289,36 @@ const Onboarding = () => {
 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showVoiceModal, setShowVoiceModal] = useState(false);
+    const [showResetConfirm, setShowResetConfirm] = useState(false);
+    const [partnerStatus, setPartnerStatus] = useState<{
+        partner_a: PartnerStatus;
+        partner_b: PartnerStatus;
+    }>({
+        partner_a: { completed: false, name: null, updated_at: null },
+        partner_b: { completed: false, name: null, updated_at: null }
+    });
+    const [isLoadingStatus, setIsLoadingStatus] = useState(true);
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
+    // Fetch partner status on mount
+    useEffect(() => {
+        const fetchStatus = async () => {
+            try {
+                const response = await fetch(`${apiUrl}/api/onboarding/status?relationship_id=${relationshipId}`, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    setPartnerStatus(data);
+                }
+            } catch (error) {
+                console.error('Error fetching status:', error);
+            } finally {
+                setIsLoadingStatus(false);
+            }
+        };
+        fetchStatus();
+    }, [relationshipId, apiUrl]);
 
     // Show modal at start of Chapter 2 (Your Story)
     useEffect(() => {
@@ -268,48 +329,62 @@ const Onboarding = () => {
         }
     }, [currentStepIndex]);
 
-    // Step Configuration
+    // Step Configuration - 32 questions across 6 chapters
     const steps = [
-        { type: 'welcome', title: "Welcome to Luna", description: "Let's get to know you better so we can help you build a stronger relationship." },
+        // Partner Selection Hub (new welcome)
+        { type: 'partner_select', title: "Who's filling this out?", description: "Each partner completes their own profile separately." },
 
+        // Chapter 1: The Basics (3 questions)
         { type: 'chapter_start', chapter: 1, title: "The Basics", description: "First, tell us a bit about yourself." },
         { type: 'partner', field: 'name', label: "What's your name?", placeholder: "e.g., Alex", icon: UserIcon, chapter: 1 },
         { type: 'partner', field: 'age', label: "How old are you?", placeholder: "e.g., 28", icon: UserIcon, chapter: 1 },
-        { type: 'partner', field: 'role', label: "What is your role in the relationship?", placeholder: "e.g., Partner A, Partner B", icon: UserIcon, chapter: 1 },
+        { type: 'partner', field: 'relationship_duration', label: "How long have you been together?", placeholder: "e.g., 2 years, 6 months", icon: ClockIcon, chapter: 1 },
 
+        // Chapter 2: Your Story (6 questions)
         { type: 'chapter_start', chapter: 2, title: "Your Story", description: "Your past shapes who you are today." },
-        { type: 'partner', field: 'background_story', label: "Tell us your story.", sublabel: "Where did you grow up? What was your childhood like? How did you get to where you are now?", placeholder: "I grew up in...", multiline: true, icon: BookOpenIcon, chapter: 2 },
+        { type: 'partner', field: 'background_story', label: "Tell us your story.", sublabel: "Where did you grow up? What was your childhood like?", placeholder: "I grew up in...", multiline: true, icon: BookOpenIcon, chapter: 2 },
         { type: 'partner', field: 'key_life_experiences', label: "What are the pivotal moments in your life?", sublabel: "Events that changed your perspective or defined your character.", placeholder: "Moving to a new city...", multiline: true, icon: StarIcon, chapter: 2 },
         { type: 'partner', field: 'hobbies', label: "What lights you up?", sublabel: "Hobbies, passions, or activities where you lose track of time.", placeholder: "Photography, Hiking...", isList: true, icon: TrophyIcon, chapter: 2 },
         { type: 'partner', field: 'favorite_food', label: "What's your ultimate comfort food?", sublabel: "The meal that makes everything better.", placeholder: "Spicy Tuna Roll...", icon: UtensilsIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_cuisine', label: "Favorite cuisine?", placeholder: "Japanese, Italian...", icon: UtensilsIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_books', label: "Books that impacted you?", sublabel: "Stories or ideas that stuck with you.", placeholder: "The Alchemist...", isList: true, icon: BookOpenIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_sports', label: "Sports you play or watch?", placeholder: "Basketball...", isList: true, icon: TrophyIcon, chapter: 2 },
-        { type: 'partner', field: 'favorite_celebrities', label: "Public figures you admire?", placeholder: "Keanu Reeves...", isList: true, icon: StarIcon, chapter: 2 },
+        { type: 'partner', field: 'favorite_books', label: "Books, movies, or shows that impacted you?", sublabel: "Stories or ideas that stuck with you.", placeholder: "The Alchemist, Breaking Bad...", isList: true, icon: BookOpenIcon, chapter: 2 },
+        { type: 'partner', field: 'how_you_met', label: "How did you two meet?", sublabel: "The story of how your paths crossed.", placeholder: "We met at a friend's party...", multiline: true, icon: HeartIcon, chapter: 2 },
 
+        // Chapter 3: Inner World (10 questions)
         { type: 'chapter_start', chapter: 3, title: "Inner World", description: "Help us understand how you process emotions." },
-        { type: 'partner', field: 'communication_style', label: "How do you communicate under pressure?", sublabel: "Do you need space? Do you want to solve it now? Are you direct or indirect?", placeholder: "I tend to go quiet...", multiline: true, icon: SparklesIcon, chapter: 3 },
+        { type: 'partner', field: 'communication_style', label: "How do you communicate under pressure?", sublabel: "Do you need space? Do you want to solve it now? Are you direct or indirect?", placeholder: "I tend to go quiet...", multiline: true, icon: MessageCircleIcon, chapter: 3 },
         { type: 'partner', field: 'stress_triggers', label: "What triggers your stress?", sublabel: "Specific situations or behaviors that set you off.", placeholder: "Being interrupted...", isList: true, icon: AlertCircleIcon, chapter: 3 },
         { type: 'partner', field: 'soothing_mechanisms', label: "What calms you down?", sublabel: "What helps you return to a baseline state?", placeholder: "Deep breathing, a walk...", isList: true, icon: HeartIcon, chapter: 3 },
-        { type: 'partner', field: 'traumatic_experiences', label: "Any past experiences that affect you today?", sublabel: "Optional. Things that might make you sensitive to certain conflicts.", placeholder: "My parents divorce...", multiline: true, icon: AlertCircleIcon, chapter: 3 },
+        { type: 'partner', field: 'traumatic_experiences', label: "Any past experiences that affect you today?", sublabel: "Optional. Things that might make you sensitive to certain conflicts.", placeholder: "My parents divorce...", multiline: true, icon: ShieldIcon, chapter: 3 },
+        { type: 'partner', field: 'love_language', label: "How do you prefer to receive love?", sublabel: "What makes you feel most appreciated and cared for?", icon: HeartIcon, chapter: 3, isChoice: true, choices: ['words', 'acts', 'gifts', 'time', 'touch'] },
+        { type: 'partner', field: 'conflict_role', label: "In conflicts, do you tend to pursue or withdraw?", sublabel: "Do you want to talk it out immediately, or do you need space first?", icon: UsersIcon, chapter: 3, isChoice: true, choices: ['pursue', 'withdraw', 'varies'] },
+        { type: 'partner', field: 'apology_preferences', label: "What makes an apology feel genuine to you?", sublabel: "What do you need to hear or see to feel truly understood?", placeholder: "I need them to acknowledge specifically what they did wrong...", multiline: true, icon: HeartIcon, chapter: 3 },
+        { type: 'partner', field: 'post_conflict_need', label: "After a conflict, what do you need first?", sublabel: "Do you need time alone to process, or connection right away?", icon: SparklesIcon, chapter: 3, isChoice: true, choices: ['space', 'connection', 'depends'] },
+        { type: 'partner', field: 'repair_gestures', label: "What small gestures help you feel better after a fight?", sublabel: "Things your partner can do that help you calm down or feel cared for.", placeholder: "Making me tea, a genuine hug, giving me space for 20 minutes...", isList: true, icon: GiftIcon, chapter: 3 },
+        { type: 'partner', field: 'escalation_triggers', label: "What makes fights worse for you?", sublabel: "Behaviors or phrases that escalate the conflict.", placeholder: "Saying 'calm down', walking away mid-sentence...", isList: true, icon: AlertCircleIcon, chapter: 3 },
 
-        // NEW: Repair-specific questions (Phase 1)
-        { type: 'partner', field: 'apology_preferences', label: "What makes an apology feel genuine to you?", sublabel: "What do you need to hear or see to feel like your partner truly understands?", placeholder: "I need them to acknowledge specifically what they did wrong...", multiline: true, icon: HeartIcon, chapter: 3 },
-        { type: 'partner', field: 'post_conflict_need', label: "After a conflict, what do you need first?", sublabel: "Do you need time alone to process, or do you need connection right away?", placeholder: "Space to cool down / Connection right away / Depends on situation", icon: SparklesIcon, chapter: 3, isChoice: true, choices: ['space', 'connection', 'depends'] },
-        { type: 'partner', field: 'repair_gestures', label: "What small gestures help you feel better after a fight?", sublabel: "Things your partner can do that help you calm down or feel cared for.", placeholder: "Making me tea, a genuine hug, giving me space for 20 minutes...", isList: true, icon: HeartIcon, chapter: 3 },
-        { type: 'partner', field: 'escalation_triggers', label: "What does your partner do during fights that makes things worse?", sublabel: "Behaviors or phrases that escalate the conflict for you.", placeholder: "Saying 'calm down', walking away mid-sentence, bringing up past issues...", isList: true, icon: AlertCircleIcon, chapter: 3 },
-
+        // Chapter 4: Your Partner (5 questions)
         { type: 'chapter_start', chapter: 4, title: "Your Partner", description: "Tell us about the person you love." },
-        { type: 'partner', field: 'partner_description', label: "How would you describe your partner?", sublabel: "Their personality, their vibe, their essence.", placeholder: "She is creative and...", multiline: true, icon: EyeIcon, chapter: 4 },
-        { type: 'partner', field: 'what_i_admire', label: "What do you admire most about them?", sublabel: "The qualities that made you fall for them.", placeholder: "Her empathy...", multiline: true, icon: HeartIcon, chapter: 4 },
-        { type: 'partner', field: 'what_frustrates_me', label: "What challenges do you face with them?", sublabel: "Be honest. What behaviors or traits are difficult for you?", placeholder: "She can be disorganized...", multiline: true, icon: AlertCircleIcon, chapter: 4 },
+        { type: 'partner', field: 'partner_description', label: "How would you describe your partner?", sublabel: "Their personality, their vibe, their essence.", placeholder: "They are creative and...", multiline: true, icon: EyeIcon, chapter: 4 },
+        { type: 'partner', field: 'what_i_admire', label: "What do you admire most about them?", sublabel: "The qualities that made you fall for them.", placeholder: "Their empathy...", multiline: true, icon: HeartIcon, chapter: 4 },
+        { type: 'partner', field: 'what_frustrates_me', label: "What challenges do you face with them?", sublabel: "Be honest. What behaviors or traits are difficult for you?", placeholder: "They can be disorganized...", multiline: true, icon: AlertCircleIcon, chapter: 4 },
+        { type: 'partner', field: 'happiest_memory', label: "Your happiest memory together?", sublabel: "A moment that captures the best of your relationship.", placeholder: "That trip we took to...", multiline: true, icon: StarIcon, chapter: 4 },
+        { type: 'partner', field: 'biggest_fear', label: "Your biggest fear about this relationship?", sublabel: "What worries you most? Being honest helps us help you.", placeholder: "I worry that...", multiline: true, icon: ShieldIcon, chapter: 4 },
 
-        { type: 'chapter_start', chapter: 5, title: "Us", description: "The dynamics of your relationship." },
-        { type: 'relationship', field: 'relationship_dynamic', label: "How do you two interact?", sublabel: "Are you opposites? Two peas in a pod? Who leads, who follows?", placeholder: "We are opposites...", multiline: true, icon: HeartIcon, chapter: 5 },
-        { type: 'relationship', field: 'recurring_arguments', label: "What do you fight about most?", sublabel: "The topics that keep coming up.", placeholder: "Chores, Money...", isList: true, icon: AlertCircleIcon, chapter: 5 },
-        { type: 'relationship', field: 'shared_goals', label: "What are you building together?", sublabel: "Your shared vision for the future.", placeholder: "Buying a house...", isList: true, icon: TrophyIcon, chapter: 5 },
+        // Chapter 5: Reconnection (4 questions)
+        { type: 'chapter_start', chapter: 5, title: "Reconnection", description: "How you come back together after conflict." },
+        { type: 'partner', field: 'time_to_reconnect', label: "How long do you typically need before you're ready to reconnect?", sublabel: "After a conflict, how much time do you need?", icon: ClockIcon, chapter: 5, isChoice: true, choices: ['minutes', 'hours', 'day', 'depends'] },
+        { type: 'partner', field: 'reconnection_activities', label: "Activities that help you two reconnect?", sublabel: "Things you do together that rebuild closeness.", placeholder: "Going for a walk, cooking together, watching a show...", isList: true, icon: RefreshCwIcon, chapter: 5 },
+        { type: 'partner', field: 'what_makes_you_feel_loved', label: "Small gestures that make you feel loved?", sublabel: "The little things that show your partner cares.", placeholder: "A random text, coffee in bed, a long hug...", isList: true, icon: HeartIcon, chapter: 5 },
+        { type: 'partner', field: 'how_you_know_resolved', label: "How do you know a conflict is truly resolved?", sublabel: "What signals to you that things are okay again?", placeholder: "When we can laugh about it...", multiline: true, icon: CheckCircleIcon, chapter: 5 },
 
-        { type: 'success', chapter: 6 }
+        // Chapter 6: Us Together (4 questions)
+        { type: 'chapter_start', chapter: 6, title: "Us Together", description: "The dynamics of your relationship." },
+        { type: 'relationship', field: 'relationship_dynamic', label: "How do you two interact?", sublabel: "Are you opposites? Two peas in a pod? Who leads, who follows?", placeholder: "We are opposites...", multiline: true, icon: UsersIcon, chapter: 6 },
+        { type: 'relationship', field: 'recurring_arguments', label: "What do you fight about most?", sublabel: "The topics that keep coming up.", placeholder: "Chores, Money...", isList: true, icon: AlertCircleIcon, chapter: 6 },
+        { type: 'partner', field: 'off_limit_topics', label: "Topics that should never come up during fights?", sublabel: "Things that are off-limits when you're arguing.", placeholder: "Past relationships, family issues...", isList: true, icon: ShieldIcon, chapter: 6 },
+        { type: 'relationship', field: 'shared_goals', label: "What are you building together?", sublabel: "Your shared vision for the future.", placeholder: "Buying a house...", isList: true, icon: TrophyIcon, chapter: 6 },
+
+        { type: 'success', chapter: 7 }
     ];
 
     const handleNext = () => {
@@ -327,7 +402,6 @@ const Onboarding = () => {
     const handleSubmit = async () => {
         setIsSubmitting(true);
         try {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
             const response = await fetch(`${apiUrl}/api/onboarding/submit`, {
                 method: 'POST',
                 headers: {
@@ -346,6 +420,15 @@ const Onboarding = () => {
             });
 
             if (response.ok) {
+                // Update local status
+                setPartnerStatus(prev => ({
+                    ...prev,
+                    [partnerId]: {
+                        completed: true,
+                        name: partnerProfile.name,
+                        updated_at: new Date().toISOString()
+                    }
+                }));
                 handleNext(); // Go to success step
             } else {
                 console.error('Submission failed');
@@ -357,25 +440,212 @@ const Onboarding = () => {
         }
     };
 
+    const handleReset = async (partnerToReset: 'partner_a' | 'partner_b') => {
+        try {
+            const response = await fetch(
+                `${apiUrl}/api/onboarding/profile/${partnerToReset}?relationship_id=${relationshipId}`,
+                {
+                    method: 'DELETE',
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                }
+            );
+            if (response.ok) {
+                setPartnerStatus(prev => ({
+                    ...prev,
+                    [partnerToReset]: { completed: false, name: null, updated_at: null }
+                }));
+                setShowResetConfirm(false);
+            }
+        } catch (error) {
+            console.error('Error resetting profile:', error);
+        }
+    };
+
+    const selectPartner = (role: 'partner_a' | 'partner_b') => {
+        setPartnerId(role);
+        setPartnerProfile(p => ({ ...p, role }));
+        handleNext();
+    };
+
     const currentStep = steps[currentStepIndex];
+    const totalChapters = 6;
+
+    // Format date for display
+    const formatDate = (dateStr: string | null) => {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
 
     // Renderers
-    const renderWelcome = () => (
-        <div className="text-center max-w-lg mx-auto animate-fade-in">
-            <div className="w-24 h-24 bg-surface-hover rounded-full flex items-center justify-center mx-auto mb-8">
-                <HeartIcon size={48} className="text-accent" />
+    const renderPartnerSelect = () => (
+        <div className="max-w-4xl mx-auto animate-fade-in">
+            <div className="text-center mb-12">
+                <div className="w-20 h-20 bg-accent/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <HeartIcon size={36} className="text-accent" />
+                </div>
+                <h1 className="text-h1 text-text-primary mb-4">Welcome to Serene</h1>
+                <p className="text-body-lg text-text-secondary max-w-xl mx-auto">
+                    Each partner fills out their own profile. This helps us understand both perspectives
+                    and provide personalized guidance for your relationship.
+                </p>
             </div>
-            <h2 className="text-h1 text-text-primary mb-6">Welcome to Serene</h2>
-            <p className="text-body-lg text-text-secondary mb-10 leading-relaxed">
-                Let's build a deep understanding of you and your relationship.
-                We've broken this down into 5 short chapters.
-            </p>
-            <button
-                onClick={handleNext}
-                className="px-10 py-4 bg-accent text-white rounded-2xl font-medium hover:bg-accent-hover transition-all shadow-lg hover:shadow-xl hover:-translate-y-1 text-lg"
-            >
-                Start Chapter 1
-            </button>
+
+            {isLoadingStatus ? (
+                <div className="text-center text-text-secondary py-12">Loading...</div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Partner A Card */}
+                    <div className={`relative p-8 rounded-3xl border-2 transition-all ${
+                        partnerStatus.partner_a.completed
+                            ? 'bg-blue-50/50 border-blue-200'
+                            : 'bg-surface-elevated border-transparent hover:border-blue-300'
+                    }`}>
+                        {partnerStatus.partner_a.completed && (
+                            <div className="absolute top-4 right-4">
+                                <CheckCircleIcon size={24} className="text-green-500" />
+                            </div>
+                        )}
+                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-6">
+                            <UserIcon size={32} />
+                        </div>
+                        <h3 className="text-h3 text-text-primary mb-2">
+                            {partnerStatus.partner_a.name || 'Partner A'}
+                        </h3>
+                        {partnerStatus.partner_a.completed ? (
+                            <>
+                                <p className="text-small text-text-tertiary mb-4">
+                                    Completed {formatDate(partnerStatus.partner_a.updated_at)}
+                                </p>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => selectPartner('partner_a')}
+                                        className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
+                                    >
+                                        Edit Profile
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setPartnerId('partner_a');
+                                            setShowResetConfirm(true);
+                                        }}
+                                        className="px-4 py-3 border border-red-200 text-red-600 rounded-xl hover:bg-red-50 transition-colors"
+                                        title="Reset profile"
+                                    >
+                                        <RotateCcwIcon size={18} />
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <p className="text-body text-text-secondary mb-6">First partner</p>
+                                <button
+                                    onClick={() => selectPartner('partner_a')}
+                                    className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors"
+                                >
+                                    Start Profile
+                                </button>
+                            </>
+                        )}
+                    </div>
+
+                    {/* Partner B Card */}
+                    <div className={`relative p-8 rounded-3xl border-2 transition-all ${
+                        partnerStatus.partner_b.completed
+                            ? 'bg-purple-50/50 border-purple-200'
+                            : 'bg-surface-elevated border-transparent hover:border-purple-300'
+                    }`}>
+                        {partnerStatus.partner_b.completed && (
+                            <div className="absolute top-4 right-4">
+                                <CheckCircleIcon size={24} className="text-green-500" />
+                            </div>
+                        )}
+                        <div className="w-16 h-16 bg-purple-100 text-purple-600 rounded-2xl flex items-center justify-center mb-6">
+                            <UserIcon size={32} />
+                        </div>
+                        <h3 className="text-h3 text-text-primary mb-2">
+                            {partnerStatus.partner_b.name || 'Partner B'}
+                        </h3>
+                        {partnerStatus.partner_b.completed ? (
+                            <>
+                                <p className="text-small text-text-tertiary mb-4">
+                                    Completed {formatDate(partnerStatus.partner_b.updated_at)}
+                                </p>
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => selectPartner('partner_b')}
+                                        className="flex-1 px-6 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors"
+                                    >
+                                        Edit Profile
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setPartnerId('partner_b');
+                                            setShowResetConfirm(true);
+                                        }}
+                                        className="px-4 py-3 border border-red-200 text-red-600 rounded-xl hover:bg-red-50 transition-colors"
+                                        title="Reset profile"
+                                    >
+                                        <RotateCcwIcon size={18} />
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <p className="text-body text-text-secondary mb-6">Second partner</p>
+                                <button
+                                    onClick={() => selectPartner('partner_b')}
+                                    className="w-full px-6 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 transition-colors"
+                                >
+                                    Start Profile
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Both completed message */}
+            {partnerStatus.partner_a.completed && partnerStatus.partner_b.completed && (
+                <div className="mt-8 text-center">
+                    <p className="text-body text-green-600 mb-4">
+                        Both profiles are complete! You're ready for personalized guidance.
+                    </p>
+                    <button
+                        onClick={() => navigate('/')}
+                        className="px-8 py-3 bg-accent text-white rounded-xl hover:bg-accent-hover transition-colors"
+                    >
+                        Go to Home
+                    </button>
+                </div>
+            )}
+
+            {/* Reset Confirmation Modal */}
+            {showResetConfirm && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-2xl p-8 max-w-md mx-4">
+                        <h3 className="text-h3 text-text-primary mb-4">Reset Profile?</h3>
+                        <p className="text-body text-text-secondary mb-6">
+                            This will delete all answers for {partnerId === 'partner_a' ? 'Partner A' : 'Partner B'}.
+                            This action cannot be undone.
+                        </p>
+                        <div className="flex gap-4">
+                            <button
+                                onClick={() => setShowResetConfirm(false)}
+                                className="flex-1 px-6 py-3 border border-border-subtle rounded-xl hover:bg-surface-hover transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={() => handleReset(partnerId)}
+                                className="flex-1 px-6 py-3 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors"
+                            >
+                                Reset
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 
@@ -398,44 +668,47 @@ const Onboarding = () => {
         </div>
     );
 
-    const renderRoleSelect = () => (
-        <div className="max-w-3xl mx-auto animate-fade-in">
-            <h2 className="text-h2 text-text-primary mb-4 text-center">Who are you?</h2>
-            <p className="text-body text-text-secondary mb-12 text-center">Select your role in the relationship.</p>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                <button
-                    onClick={() => { setPartnerId('partner_a'); setPartnerProfile(p => ({ ...p, role: 'partner_a' })); handleNext(); }}
-                    className="p-10 bg-surface-elevated border-2 border-transparent rounded-3xl hover:border-accent hover:shadow-lg transition-all text-left group"
-                >
-                    <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                        <UserIcon size={32} />
-                    </div>
-                    <h3 className="text-h3 text-text-primary mb-2">Partner A</h3>
-                    <p className="text-body text-text-secondary">First partner (default)</p>
-                </button>
-
-                <button
-                    onClick={() => { setPartnerId('partner_b'); setPartnerProfile(p => ({ ...p, role: 'partner_b' })); handleNext(); }}
-                    className="p-10 bg-surface-elevated border-2 border-transparent rounded-3xl hover:border-accent hover:shadow-lg transition-all text-left group"
-                >
-                    <div className="w-16 h-16 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                        <UserIcon size={32} />
-                    </div>
-                    <h3 className="text-h3 text-text-primary mb-2">Partner B</h3>
-                    <p className="text-body text-text-secondary">Second partner</p>
-                </button>
-            </div>
-        </div>
-    );
+    // All choice labels for different question types
+    const allChoiceLabels: Record<string, { title: string; description: string; icon?: any }> = {
+        // Post-conflict need
+        'space': { title: 'Space First', description: 'I need time alone to cool down and process', icon: SparklesIcon },
+        'connection': { title: 'Connection First', description: 'I need to feel close again right away', icon: HeartIcon },
+        'depends': { title: 'It Depends', description: 'It varies by situation', icon: AlertCircleIcon },
+        // Love languages
+        'words': { title: 'Words of Affirmation', description: 'Hearing "I love you" and compliments', icon: MessageCircleIcon },
+        'acts': { title: 'Acts of Service', description: 'Actions speak louder than words', icon: HandIcon },
+        'gifts': { title: 'Receiving Gifts', description: 'Thoughtful presents and surprises', icon: GiftIcon },
+        'time': { title: 'Quality Time', description: 'Undivided attention and presence', icon: ClockIcon },
+        'touch': { title: 'Physical Touch', description: 'Hugs, holding hands, closeness', icon: HeartIcon },
+        // Conflict role
+        'pursue': { title: 'Pursue', description: 'I want to talk it out right away', icon: MessageCircleIcon },
+        'withdraw': { title: 'Withdraw', description: 'I need space to process first', icon: ShieldIcon },
+        'varies': { title: 'It Varies', description: 'Depends on the situation', icon: AlertCircleIcon },
+        // Time to reconnect
+        'minutes': { title: 'A Few Minutes', description: 'I bounce back quickly', icon: ClockIcon },
+        'hours': { title: 'A Few Hours', description: 'I need some time to decompress', icon: ClockIcon },
+        'day': { title: 'About a Day', description: 'I need to sleep on it', icon: ClockIcon }
+    };
 
     const renderQuestion = () => {
         const Icon = currentStep.icon || SparklesIcon;
         const isLast = currentStepIndex === steps.length - 2; // -2 because last is success
         const isChoiceQuestion = currentStep.isChoice && currentStep.choices;
+        const numChoices = currentStep.choices?.length || 3;
+        const gridCols = numChoices === 5 ? 'md:grid-cols-5' : numChoices === 4 ? 'md:grid-cols-4' : 'md:grid-cols-3';
 
         return (
             <div className="max-w-3xl mx-auto animate-fade-in">
+                {/* Partner Identity Badge */}
+                <div className={`mb-6 flex items-center justify-center gap-2 px-4 py-2 rounded-full mx-auto w-fit ${
+                    partnerId === 'partner_a' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
+                }`}>
+                    <UserIcon size={16} />
+                    <span className="text-sm font-medium">
+                        {partnerProfile.name || (partnerId === 'partner_a' ? 'Partner A' : 'Partner B')}
+                    </span>
+                </div>
+
                 <div className="mb-8 text-center">
                     <div className="w-16 h-16 bg-surface-hover rounded-2xl flex items-center justify-center mx-auto mb-6 text-accent">
                         <Icon size={32} />
@@ -448,19 +721,14 @@ const Onboarding = () => {
 
                 <div className="mb-12">
                     {isChoiceQuestion ? (
-                        // Choice-based input for post_conflict_need
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
+                        <div className={`grid grid-cols-1 ${gridCols} gap-4 max-w-4xl mx-auto`}>
                             {currentStep.choices!.map((choice: string) => {
                                 const currentValue = currentStep.type === 'partner'
                                     ? (partnerProfile as any)[currentStep.field!]
                                     : (relationshipProfile as any)[currentStep.field!];
                                 const isSelected = currentValue === choice;
-                                const choiceLabels: Record<string, { title: string; description: string }> = {
-                                    'space': { title: 'Space First', description: 'I need time alone to cool down and process' },
-                                    'connection': { title: 'Connection First', description: 'I need to feel close again right away' },
-                                    'depends': { title: 'It Depends', description: 'It depends on the situation' }
-                                };
-                                const label = choiceLabels[choice] || { title: choice, description: '' };
+                                const label = allChoiceLabels[choice] || { title: choice, description: '' };
+                                const ChoiceIcon = label.icon || SparklesIcon;
 
                                 return (
                                     <button
@@ -472,23 +740,21 @@ const Onboarding = () => {
                                                 setRelationshipProfile(p => ({ ...p, [currentStep.field!]: choice }));
                                             }
                                         }}
-                                        className={`p-6 rounded-2xl border-2 transition-all text-left ${
+                                        className={`p-5 rounded-2xl border-2 transition-all text-center ${
                                             isSelected
                                                 ? 'border-accent bg-accent/5 shadow-lg'
                                                 : 'border-border-subtle bg-surface-elevated hover:border-accent/50 hover:shadow-md'
                                         }`}
                                     >
-                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${
+                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3 ${
                                             isSelected ? 'bg-accent text-white' : 'bg-surface-hover text-text-tertiary'
                                         }`}>
-                                            {choice === 'space' && <SparklesIcon size={20} />}
-                                            {choice === 'connection' && <HeartIcon size={20} />}
-                                            {choice === 'depends' && <AlertCircleIcon size={20} />}
+                                            <ChoiceIcon size={20} />
                                         </div>
-                                        <h3 className={`font-semibold mb-1 ${isSelected ? 'text-accent' : 'text-text-primary'}`}>
+                                        <h3 className={`font-semibold mb-1 text-sm ${isSelected ? 'text-accent' : 'text-text-primary'}`}>
                                             {label.title}
                                         </h3>
-                                        <p className="text-small text-text-secondary">{label.description}</p>
+                                        <p className="text-xs text-text-secondary">{label.description}</p>
                                     </button>
                                 );
                             })}
@@ -546,35 +812,58 @@ const Onboarding = () => {
         );
     };
 
-    const renderSuccess = () => (
-        <div className="text-center max-w-lg mx-auto animate-fade-in">
-            <div className="w-24 h-24 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-8">
-                <CheckCircleIcon size={48} />
+    const renderSuccess = () => {
+        const otherPartner = partnerId === 'partner_a' ? 'partner_b' : 'partner_a';
+        const otherPartnerStatus = partnerStatus[otherPartner];
+        const otherPartnerName = otherPartnerStatus.name || (otherPartner === 'partner_a' ? 'Partner A' : 'Partner B');
+
+        return (
+            <div className="text-center max-w-lg mx-auto animate-fade-in">
+                <div className="w-24 h-24 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-8">
+                    <CheckCircleIcon size={48} />
+                </div>
+                <h2 className="text-h2 text-text-primary mb-4">Profile Complete!</h2>
+                <p className="text-body text-text-secondary mb-6">
+                    {partnerProfile.name}'s profile has been saved. Serene now has a deep understanding of you.
+                </p>
+
+                {!otherPartnerStatus.completed && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-8">
+                        <p className="text-amber-800 text-sm">
+                            {otherPartnerName} hasn't completed their profile yet.
+                            For the best experience, have them fill out their questionnaire too.
+                        </p>
+                    </div>
+                )}
+
+                {otherPartnerStatus.completed && (
+                    <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-8">
+                        <p className="text-green-800 text-sm">
+                            Both profiles are complete! You're all set for personalized guidance.
+                        </p>
+                    </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row justify-center gap-4">
+                    <button
+                        onClick={() => setCurrentStepIndex(0)}
+                        className="px-8 py-3 border border-border-subtle rounded-xl hover:bg-surface-hover transition-colors"
+                    >
+                        Back to Partner Select
+                    </button>
+                    <button
+                        onClick={() => navigate('/')}
+                        className="px-8 py-3 bg-accent text-white rounded-xl hover:bg-accent-hover transition-colors shadow-soft"
+                    >
+                        Go to Home
+                    </button>
+                </div>
             </div>
-            <h2 className="text-h2 text-text-primary mb-4">All Set!</h2>
-            <p className="text-body text-text-secondary mb-10">
-                Your comprehensive profile has been created. Luna now has a deep understanding of you.
-            </p>
-            <div className="flex justify-center space-x-4">
-                <button
-                    onClick={() => navigate('/')}
-                    className="px-8 py-3 border border-border-subtle rounded-xl hover:bg-surface-hover transition-colors"
-                >
-                    Go Home
-                </button>
-                <button
-                    onClick={() => navigate('/library')}
-                    className="px-8 py-3 bg-accent text-white rounded-xl hover:bg-accent-hover transition-colors shadow-soft"
-                >
-                    Upload Books
-                </button>
-            </div>
-        </div>
-    );
+        );
+    };
 
     // Calculate progress
     const currentChapter = currentStep.chapter || 0;
-    const totalChapters = 5;
 
     return (
         <div className="min-h-screen py-12 px-4 flex flex-col">
@@ -595,9 +884,8 @@ const Onboarding = () => {
             )}
 
             <div className="flex-1 flex flex-col justify-center">
-                {currentStep.type === 'welcome' && renderWelcome()}
+                {currentStep.type === 'partner_select' && renderPartnerSelect()}
                 {currentStep.type === 'chapter_start' && renderChapterStart()}
-                {currentStep.type === 'role_select' && renderRoleSelect()}
                 {(currentStep.type === 'partner' || currentStep.type === 'relationship') && renderQuestion()}
                 {currentStep.type === 'success' && renderSuccess()}
             </div>

@@ -67,7 +67,8 @@ class ProfileService:
                 "interests": "",
                 "partner_view": "",
                 "relationship": "",
-                "repair_preferences": ""
+                "repair_preferences": "",
+                "reconnection": ""  # NEW: Phase 2
             }
 
             name = "Partner"  # Default name
@@ -151,6 +152,12 @@ class ProfileService:
         if profile.get("repair_preferences"):
             sections.append("REPAIR & CONFLICT PREFERENCES (CRITICAL FOR REPAIR PLAN):")
             sections.append(profile["repair_preferences"])
+            sections.append("")
+
+        # Reconnection preferences (also critical for repair)
+        if profile.get("reconnection"):
+            sections.append("RECONNECTION & LOVE (HOW THEY COME BACK TOGETHER):")
+            sections.append(profile["reconnection"])
             sections.append("")
 
         # Inner world / personality (communication style, triggers)
