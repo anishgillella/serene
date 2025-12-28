@@ -26,20 +26,32 @@ class PartnerProfile(BaseModel):
     background_story: str
     hobbies: List[str]
     favorite_food: str
-    favorite_cuisine: str
-    favorite_sports: List[str]
+    favorite_cuisine: Optional[str] = ""  # Made optional (consolidated)
+    favorite_sports: Optional[List[str]] = []  # Made optional (consolidated)
     favorite_books: List[str]
-    favorite_celebrities: List[str]
+    favorite_celebrities: Optional[List[str]] = []  # Made optional (consolidated)
     traumatic_experiences: Optional[str] = ""
     key_life_experiences: str
     partner_description: str
     what_i_admire: str
     what_frustrates_me: str
-    # NEW: Repair-specific fields (Phase 1)
+    # Repair-specific fields (Phase 1)
     apology_preferences: Optional[str] = ""
     post_conflict_need: Optional[str] = ""  # 'space' | 'connection' | 'depends'
     repair_gestures: Optional[List[str]] = []
     escalation_triggers: Optional[List[str]] = []
+    # NEW: Expanded profile fields (Phase 2)
+    relationship_duration: Optional[str] = ""  # How long together
+    how_you_met: Optional[str] = ""  # Their meet story
+    love_language: Optional[str] = ""  # words/acts/gifts/time/touch
+    conflict_role: Optional[str] = ""  # pursue/withdraw/varies
+    happiest_memory: Optional[str] = ""  # Best memory together
+    biggest_fear: Optional[str] = ""  # Fear about relationship
+    time_to_reconnect: Optional[str] = ""  # minutes/hours/day/depends
+    reconnection_activities: Optional[List[str]] = []  # What helps reconnect
+    what_makes_you_feel_loved: Optional[List[str]] = []  # Small gestures
+    how_you_know_resolved: Optional[str] = ""  # How they know conflict is over
+    off_limit_topics: Optional[List[str]] = []  # Topics to avoid in fights
 
 class RelationshipProfile(BaseModel):
     recurring_arguments: List[str]
@@ -70,6 +82,8 @@ def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]
     identity_lines.append(f"Name: {p.name}")
     identity_lines.append(f"Age: {p.age}")
     identity_lines.append(f"Role: {p.role}")
+    if p.relationship_duration:
+        identity_lines.append(f"Together for: {p.relationship_duration}")
     chunks.append({"section": "identity", "text": "\n".join(identity_lines)})
     
     # Chunk 2: Background & Life Story
@@ -79,6 +93,8 @@ def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]
     background_lines.append(f"Key Life Experiences: {p.key_life_experiences}")
     if p.traumatic_experiences:
         background_lines.append(f"Traumatic Experiences: {p.traumatic_experiences}")
+    if p.how_you_met:
+        background_lines.append(f"How they met: {p.how_you_met}")
     chunks.append({"section": "background", "text": "\n".join(background_lines)})
         
     # Chunk 3: Inner World & Personality
@@ -87,16 +103,36 @@ def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]
     personality_lines.append(f"Communication Style: {p.communication_style}")
     personality_lines.append(f"Stress Triggers: {', '.join(p.stress_triggers)}")
     personality_lines.append(f"Soothing Mechanisms: {', '.join(p.soothing_mechanisms)}")
+    if p.love_language:
+        love_language_labels = {
+            'words': 'Words of Affirmation',
+            'acts': 'Acts of Service',
+            'gifts': 'Receiving Gifts',
+            'time': 'Quality Time',
+            'touch': 'Physical Touch'
+        }
+        personality_lines.append(f"Love Language: {love_language_labels.get(p.love_language, p.love_language)}")
+    if p.conflict_role:
+        conflict_role_labels = {
+            'pursue': 'tends to pursue and engage during conflicts',
+            'withdraw': 'tends to withdraw and need space during conflicts',
+            'varies': 'conflict response varies depending on the situation'
+        }
+        personality_lines.append(f"Conflict Style: {p.name} {conflict_role_labels.get(p.conflict_role, p.conflict_role)}")
     chunks.append({"section": "personality", "text": "\n".join(personality_lines)})
     
     # Chunk 4: Interests & Favorites
     interests_lines = []
     interests_lines.append(f"## Interests & Favorites ({p.name})")
     interests_lines.append(f"Hobbies: {', '.join(p.hobbies)}")
-    interests_lines.append(f"Favorite Food: {p.favorite_food} ({p.favorite_cuisine})")
-    interests_lines.append(f"Favorite Books: {', '.join(p.favorite_books)}")
-    interests_lines.append(f"Favorite Sports: {', '.join(p.favorite_sports)}")
-    interests_lines.append(f"Favorite Celebrities: {', '.join(p.favorite_celebrities)}")
+    interests_lines.append(f"Favorite Food: {p.favorite_food}")
+    if p.favorite_cuisine:
+        interests_lines.append(f"Favorite Cuisine: {p.favorite_cuisine}")
+    interests_lines.append(f"Favorite Books/Media: {', '.join(p.favorite_books)}")
+    if p.favorite_sports:
+        interests_lines.append(f"Favorite Sports: {', '.join(p.favorite_sports)}")
+    if p.favorite_celebrities:
+        interests_lines.append(f"Favorite Celebrities: {', '.join(p.favorite_celebrities)}")
     chunks.append({"section": "interests", "text": "\n".join(interests_lines)})
     
     # Chunk 5: View on Partner
@@ -105,6 +141,10 @@ def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]
     partner_view_lines.append(f"Description of Partner: {p.partner_description}")
     partner_view_lines.append(f"Admired Qualities: {p.what_i_admire}")
     partner_view_lines.append(f"Frustrations: {p.what_frustrates_me}")
+    if p.happiest_memory:
+        partner_view_lines.append(f"Happiest Memory Together: {p.happiest_memory}")
+    if p.biggest_fear:
+        partner_view_lines.append(f"Biggest Fear About Relationship: {p.biggest_fear}")
     chunks.append({"section": "partner_view", "text": "\n".join(partner_view_lines)})
     
     # Chunk 6: Relationship Dynamics
@@ -113,6 +153,8 @@ def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]
     dynamics_lines.append(f"Dynamic: {r.relationship_dynamic}")
     dynamics_lines.append(f"Recurring Arguments: {', '.join(r.recurring_arguments)}")
     dynamics_lines.append(f"Shared Goals: {', '.join(r.shared_goals)}")
+    if p.off_limit_topics:
+        dynamics_lines.append(f"Topics to AVOID during fights: {', '.join(p.off_limit_topics)}")
     chunks.append({"section": "relationship", "text": "\n".join(dynamics_lines)})
 
     # Chunk 7: Repair & Conflict Preferences (NEW - Phase 1)
@@ -139,6 +181,27 @@ def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]
 
     if len(repair_lines) > 1:  # More than just the header
         chunks.append({"section": "repair_preferences", "text": "\n".join(repair_lines)})
+
+    # Chunk 8: Reconnection & Love (NEW - Phase 2)
+    reconnection_lines = []
+    reconnection_lines.append(f"## Reconnection & Love ({p.name})")
+    if p.time_to_reconnect:
+        time_labels = {
+            'minutes': 'typically needs just a few minutes before being ready to reconnect',
+            'hours': 'typically needs a few hours before being ready to reconnect',
+            'day': 'typically needs about a day before being ready to reconnect',
+            'depends': 'reconnection time depends on the situation'
+        }
+        reconnection_lines.append(f"{p.name} {time_labels.get(p.time_to_reconnect, p.time_to_reconnect)}")
+    if p.reconnection_activities:
+        reconnection_lines.append(f"Activities that help reconnect: {', '.join(p.reconnection_activities)}")
+    if p.what_makes_you_feel_loved:
+        reconnection_lines.append(f"Small gestures that make {p.name} feel loved: {', '.join(p.what_makes_you_feel_loved)}")
+    if p.how_you_know_resolved:
+        reconnection_lines.append(f"How {p.name} knows a conflict is truly resolved: {p.how_you_know_resolved}")
+
+    if len(reconnection_lines) > 1:  # More than just the header
+        chunks.append({"section": "reconnection", "text": "\n".join(reconnection_lines)})
 
     return chunks
 
@@ -354,9 +417,123 @@ async def update_profile(
         background_tasks.add_task(process_onboarding_task, submission, pdf_id)
         
         return {"success": True, "message": "Profile updating in background"}
-        
+
     except HTTPException as he:
         raise he
     except Exception as e:
         logger.error(f"❌ Error updating profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/status")
+async def get_onboarding_status(relationship_id: str = "00000000-0000-0000-0000-000000000000"):
+    """
+    Returns completion status for both partners.
+    Used by frontend to show Partner Selection Hub.
+    """
+    try:
+        result = {
+            "partner_a": {"completed": False, "name": None, "updated_at": None},
+            "partner_b": {"completed": False, "name": None, "updated_at": None}
+        }
+
+        # Query Pinecone for existing profiles
+        for role in ["partner_a", "partner_b"]:
+            try:
+                # Use dummy vector to fetch by metadata filter
+                query_result = pinecone_service.index.query(
+                    vector=[0.0] * 1024,
+                    top_k=1,
+                    namespace="profiles",
+                    filter={
+                        "$and": [
+                            {"relationship_id": {"$eq": relationship_id}},
+                            {"role": {"$eq": role}}
+                        ]
+                    },
+                    include_metadata=True
+                )
+
+                if query_result.matches and len(query_result.matches) > 0:
+                    match = query_result.matches[0]
+                    metadata = match.metadata or {}
+                    result[role] = {
+                        "completed": True,
+                        "name": metadata.get("name"),
+                        "updated_at": metadata.get("updated_at") or datetime.now().isoformat()
+                    }
+            except Exception as e:
+                logger.warning(f"Error querying {role} profile: {e}")
+                continue
+
+        return result
+
+    except Exception as e:
+        logger.error(f"❌ Error getting onboarding status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/profile/{partner_id}")
+async def reset_partner_profile(
+    partner_id: str,
+    relationship_id: str = "00000000-0000-0000-0000-000000000000"
+):
+    """
+    Deletes a partner's profile data from Pinecone and S3.
+    Used for demo reset functionality.
+    """
+    try:
+        if partner_id not in ["partner_a", "partner_b"]:
+            raise HTTPException(status_code=400, detail="Invalid partner_id. Must be 'partner_a' or 'partner_b'")
+
+        deleted_vectors = 0
+
+        # 1. Delete from Pinecone - find all vectors for this partner
+        try:
+            # Query to find all vector IDs for this partner
+            query_result = pinecone_service.index.query(
+                vector=[0.0] * 1024,
+                top_k=100,  # Get all chunks
+                namespace="profiles",
+                filter={
+                    "$and": [
+                        {"relationship_id": {"$eq": relationship_id}},
+                        {"partner_id": {"$eq": partner_id}}
+                    ]
+                },
+                include_metadata=True
+            )
+
+            if query_result.matches:
+                vector_ids = [match.id for match in query_result.matches]
+                if vector_ids:
+                    pinecone_service.index.delete(ids=vector_ids, namespace="profiles")
+                    deleted_vectors = len(vector_ids)
+                    logger.info(f"🗑️ Deleted {deleted_vectors} vectors for {partner_id}")
+        except Exception as e:
+            logger.error(f"Error deleting from Pinecone: {e}")
+
+        # 2. Delete from DB if service exists
+        if db_service:
+            try:
+                # Find and delete the profile record
+                profiles = db_service.get_profiles(relationship_id, pdf_type="onboarding_profile")
+                for profile in profiles:
+                    if profile.get("partner_id") == partner_id:
+                        db_service.delete_profile(profile["pdf_id"])
+                        logger.info(f"🗑️ Deleted DB record for {partner_id}")
+            except Exception as e:
+                logger.warning(f"Error deleting from DB: {e}")
+
+        # 3. Delete from S3 (optional - files are cheap to keep)
+        # Could add S3 deletion here if needed
+
+        return {
+            "success": True,
+            "message": f"Profile reset for {partner_id}",
+            "deleted_vectors": deleted_vectors
+        }
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        logger.error(f"❌ Error resetting profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
