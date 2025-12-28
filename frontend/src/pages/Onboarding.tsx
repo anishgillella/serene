@@ -23,6 +23,11 @@ interface PartnerProfile {
     partner_description: string;
     what_i_admire: string;
     what_frustrates_me: string;
+    // NEW: Repair-specific fields (Phase 1)
+    apology_preferences: string;
+    post_conflict_need: 'space' | 'connection' | 'depends' | '';
+    repair_gestures: string[];
+    escalation_triggers: string[];
 }
 
 interface RelationshipProfile {
@@ -237,7 +242,12 @@ const Onboarding = () => {
         key_life_experiences: '',
         partner_description: '',
         what_i_admire: '',
-        what_frustrates_me: ''
+        what_frustrates_me: '',
+        // NEW: Repair-specific fields (Phase 1)
+        apology_preferences: '',
+        post_conflict_need: '',
+        repair_gestures: [],
+        escalation_triggers: []
     });
 
     const [relationshipProfile, setRelationshipProfile] = useState<RelationshipProfile>({
@@ -282,6 +292,12 @@ const Onboarding = () => {
         { type: 'partner', field: 'stress_triggers', label: "What triggers your stress?", sublabel: "Specific situations or behaviors that set you off.", placeholder: "Being interrupted...", isList: true, icon: AlertCircleIcon, chapter: 3 },
         { type: 'partner', field: 'soothing_mechanisms', label: "What calms you down?", sublabel: "What helps you return to a baseline state?", placeholder: "Deep breathing, a walk...", isList: true, icon: HeartIcon, chapter: 3 },
         { type: 'partner', field: 'traumatic_experiences', label: "Any past experiences that affect you today?", sublabel: "Optional. Things that might make you sensitive to certain conflicts.", placeholder: "My parents divorce...", multiline: true, icon: AlertCircleIcon, chapter: 3 },
+
+        // NEW: Repair-specific questions (Phase 1)
+        { type: 'partner', field: 'apology_preferences', label: "What makes an apology feel genuine to you?", sublabel: "What do you need to hear or see to feel like your partner truly understands?", placeholder: "I need them to acknowledge specifically what they did wrong...", multiline: true, icon: HeartIcon, chapter: 3 },
+        { type: 'partner', field: 'post_conflict_need', label: "After a conflict, what do you need first?", sublabel: "Do you need time alone to process, or do you need connection right away?", placeholder: "Space to cool down / Connection right away / Depends on situation", icon: SparklesIcon, chapter: 3, isChoice: true, choices: ['space', 'connection', 'depends'] },
+        { type: 'partner', field: 'repair_gestures', label: "What small gestures help you feel better after a fight?", sublabel: "Things your partner can do that help you calm down or feel cared for.", placeholder: "Making me tea, a genuine hug, giving me space for 20 minutes...", isList: true, icon: HeartIcon, chapter: 3 },
+        { type: 'partner', field: 'escalation_triggers', label: "What does your partner do during fights that makes things worse?", sublabel: "Behaviors or phrases that escalate the conflict for you.", placeholder: "Saying 'calm down', walking away mid-sentence, bringing up past issues...", isList: true, icon: AlertCircleIcon, chapter: 3 },
 
         { type: 'chapter_start', chapter: 4, title: "Your Partner", description: "Tell us about the person you love." },
         { type: 'partner', field: 'partner_description', label: "How would you describe your partner?", sublabel: "Their personality, their vibe, their essence.", placeholder: "She is creative and...", multiline: true, icon: EyeIcon, chapter: 4 },
@@ -416,6 +432,7 @@ const Onboarding = () => {
     const renderQuestion = () => {
         const Icon = currentStep.icon || SparklesIcon;
         const isLast = currentStepIndex === steps.length - 2; // -2 because last is success
+        const isChoiceQuestion = currentStep.isChoice && currentStep.choices;
 
         return (
             <div className="max-w-3xl mx-auto animate-fade-in">
@@ -430,26 +447,74 @@ const Onboarding = () => {
                 </div>
 
                 <div className="mb-12">
-                    <HybridInput
-                        key={currentStep.field} // Force re-render on step change
-                        value={
-                            currentStep.type === 'partner'
-                                ? (partnerProfile as any)[currentStep.field!]
-                                : (relationshipProfile as any)[currentStep.field!]
-                        }
-                        onChange={(val) => {
-                            if (currentStep.type === 'partner') {
-                                setPartnerProfile(p => ({ ...p, [currentStep.field!]: val }));
-                            } else {
-                                setRelationshipProfile(p => ({ ...p, [currentStep.field!]: val }));
+                    {isChoiceQuestion ? (
+                        // Choice-based input for post_conflict_need
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
+                            {currentStep.choices!.map((choice: string) => {
+                                const currentValue = currentStep.type === 'partner'
+                                    ? (partnerProfile as any)[currentStep.field!]
+                                    : (relationshipProfile as any)[currentStep.field!];
+                                const isSelected = currentValue === choice;
+                                const choiceLabels: Record<string, { title: string; description: string }> = {
+                                    'space': { title: 'Space First', description: 'I need time alone to cool down and process' },
+                                    'connection': { title: 'Connection First', description: 'I need to feel close again right away' },
+                                    'depends': { title: 'It Depends', description: 'It depends on the situation' }
+                                };
+                                const label = choiceLabels[choice] || { title: choice, description: '' };
+
+                                return (
+                                    <button
+                                        key={choice}
+                                        onClick={() => {
+                                            if (currentStep.type === 'partner') {
+                                                setPartnerProfile(p => ({ ...p, [currentStep.field!]: choice }));
+                                            } else {
+                                                setRelationshipProfile(p => ({ ...p, [currentStep.field!]: choice }));
+                                            }
+                                        }}
+                                        className={`p-6 rounded-2xl border-2 transition-all text-left ${
+                                            isSelected
+                                                ? 'border-accent bg-accent/5 shadow-lg'
+                                                : 'border-border-subtle bg-surface-elevated hover:border-accent/50 hover:shadow-md'
+                                        }`}
+                                    >
+                                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${
+                                            isSelected ? 'bg-accent text-white' : 'bg-surface-hover text-text-tertiary'
+                                        }`}>
+                                            {choice === 'space' && <SparklesIcon size={20} />}
+                                            {choice === 'connection' && <HeartIcon size={20} />}
+                                            {choice === 'depends' && <AlertCircleIcon size={20} />}
+                                        </div>
+                                        <h3 className={`font-semibold mb-1 ${isSelected ? 'text-accent' : 'text-text-primary'}`}>
+                                            {label.title}
+                                        </h3>
+                                        <p className="text-small text-text-secondary">{label.description}</p>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <HybridInput
+                            key={currentStep.field} // Force re-render on step change
+                            value={
+                                currentStep.type === 'partner'
+                                    ? (partnerProfile as any)[currentStep.field!]
+                                    : (relationshipProfile as any)[currentStep.field!]
                             }
-                        }}
-                        placeholder={currentStep.placeholder || ''}
-                        multiline={currentStep.multiline}
-                        isList={currentStep.isList}
-                        autoFocus
-                        onEnter={isLast ? handleSubmit : handleNext}
-                    />
+                            onChange={(val) => {
+                                if (currentStep.type === 'partner') {
+                                    setPartnerProfile(p => ({ ...p, [currentStep.field!]: val }));
+                                } else {
+                                    setRelationshipProfile(p => ({ ...p, [currentStep.field!]: val }));
+                                }
+                            }}
+                            placeholder={currentStep.placeholder || ''}
+                            multiline={currentStep.multiline}
+                            isList={currentStep.isList}
+                            autoFocus
+                            onEnter={isLast ? handleSubmit : handleNext}
+                        />
+                    )}
                 </div>
 
                 <div className="flex justify-between items-center">

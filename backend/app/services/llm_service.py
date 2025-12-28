@@ -498,6 +498,248 @@ TITLE REQUIREMENTS:
             logger.error(f"❌ Error generating conflict title: {e}")
             return "Untitled Conflict"
 
+    def generate_fight_debrief(
+        self,
+        transcript_text: str,
+        conflict_id: str,
+        relationship_id: str,
+        response_model: Type[T],
+        partner_a_name: str = "Partner A",
+        partner_b_name: str = "Partner B",
+        past_fights_summary: Optional[str] = None
+    ) -> T:
+        """
+        Generate comprehensive post-fight debrief (Phase 3).
+        Extracts repair attempts, escalation triggers, and resolution status.
+        """
+        past_context = ""
+        if past_fights_summary:
+            past_context = f"""
+PAST FIGHTS CONTEXT (for pattern detection):
+{past_fights_summary}
+
+When analyzing this fight, compare it to past patterns:
+- Does this topic recur?
+- Are the same triggers causing escalation?
+- Have repair attempts that worked before been tried again?
+"""
+
+        prompt = f"""Analyze this conflict transcript comprehensively to generate a Fight Debrief.
+
+Conflict ID: {conflict_id}
+Relationship ID: {relationship_id}
+Partner A: {partner_a_name}
+Partner B: {partner_b_name}
+
+TRANSCRIPT:
+{transcript_text}
+{past_context}
+
+ANALYSIS REQUIREMENTS:
+
+1. **WHAT HAPPENED**:
+   - topic: Main issue in 2-5 words
+   - summary: What happened in 2-3 sentences
+   - duration_estimate: Estimate the length (e.g., "15 minutes")
+   - intensity_peak: 'low', 'medium', 'high', or 'explosive'
+   - key_moments: 3-5 pivotal moments with approximate timestamps
+
+2. **REPAIR DYNAMICS** (CRITICAL):
+   For EVERY repair attempt in the transcript, identify:
+   - Who made it (partner_a or partner_b)
+   - What they said/did (quote if possible)
+   - The action type: apologized, validated_feelings, took_responsibility, offered_solution, used_humor, physical_affection, asked_for_break, redirected_topic, expressed_love, other
+   - The outcome: 'helped', 'hurt', or 'neutral'
+   - What happened next (the evidence for the outcome)
+   - Why it worked or failed
+
+   Also identify:
+   - who_initiated_repairs: 'partner_a', 'partner_b', 'both', or 'neither'
+   - most_effective_moment: The moment that helped most (with quote)
+   - most_damaging_moment: The moment that hurt most (with quote)
+
+3. **RESOLUTION**:
+   - resolution_status: 'resolved', 'unresolved', or 'temporary_truce'
+   - what_resolved_it: If resolved, what worked
+   - what_remains_unresolved: Issues still open
+
+4. **LEARNINGS**:
+   - phrases_to_avoid: Specific things said that made it worse
+   - phrases_that_helped: Specific things said that helped
+   - unmet_needs_partner_a: {partner_a_name}'s unmet needs
+   - unmet_needs_partner_b: {partner_b_name}'s unmet needs
+   - what_would_have_helped: What could have prevented escalation
+
+5. **CONNECTION TO PAST** (if past context provided):
+   - similar_to_past_topics: Topics from past fights this resembles
+   - recurring_pattern_detected: If this follows a pattern seen before
+
+Be SPECIFIC. Quote the transcript. Identify exact moments and phrases."""
+
+        messages = [{"role": "user", "content": prompt}]
+
+        logger.info(f"📊 Generating Fight Debrief for conflict {conflict_id}")
+        start_time = __import__('time').time()
+
+        result = self.structured_output(
+            messages=messages,
+            response_model=response_model,
+            temperature=0.5,  # Lower temp for more accurate extraction
+            max_tokens=3000  # Debriefs can be long
+        )
+
+        elapsed = __import__('time').time() - start_time
+        logger.info(f"✅ Fight Debrief complete in {elapsed:.2f}s")
+        return result
+
+    def generate_personalized_repair_plan(
+        self,
+        transcript_text: str,
+        conflict_id: str,
+        requesting_partner: str,
+        target_partner: str,
+        response_model: Type[T],
+        requesting_profile: Optional[str] = None,
+        target_profile: Optional[str] = None,
+        fight_debrief: Optional[str] = None,
+        past_fights_intelligence: Optional[str] = None,
+        calendar_context: Optional[str] = None
+    ) -> T:
+        """
+        Generate HIGHLY personalized repair plan with mandatory citations (Phase 2).
+
+        Args:
+            transcript_text: Full conflict transcript
+            conflict_id: Conflict UUID
+            requesting_partner: Name of partner initiating repair
+            target_partner: Name of partner being approached
+            response_model: Pydantic model for structured output
+            requesting_profile: Full profile of requesting partner
+            target_profile: Full profile of target partner (CRITICAL for personalization)
+            fight_debrief: Summary of this fight's dynamics
+            past_fights_intelligence: Patterns from past fights
+            calendar_context: Cycle/calendar awareness
+        """
+        # Build comprehensive context
+        profile_context = ""
+        if target_profile:
+            profile_context += f"""
+TARGET PARTNER PROFILE (CRITICAL - {target_partner}):
+{target_profile}
+
+PERSONALIZATION REQUIREMENTS based on {target_partner}'s profile:
+- Check their post_conflict_need: Do they need 'space', 'connection', or 'depends'? CITE THIS.
+- Check their apology_preferences: What makes an apology genuine to them? CITE THIS.
+- Check their repair_gestures: What small gestures help? USE ONE OF THESE.
+- Check their escalation_triggers: What makes things worse? AVOID THESE.
+"""
+
+        if requesting_profile:
+            profile_context += f"""
+REQUESTING PARTNER PROFILE ({requesting_partner}):
+{requesting_profile}
+"""
+
+        debrief_context = ""
+        if fight_debrief:
+            debrief_context = f"""
+THIS FIGHT'S DYNAMICS:
+{fight_debrief}
+
+Use repair attempts that worked. Avoid what made things worse.
+"""
+
+        history_context = ""
+        if past_fights_intelligence:
+            history_context = f"""
+INTELLIGENCE FROM PAST FIGHTS:
+{past_fights_intelligence}
+
+Reference what has worked/failed in similar past conflicts.
+"""
+
+        calendar_section = ""
+        if calendar_context:
+            calendar_section = f"""
+CALENDAR & CYCLE AWARENESS:
+{calendar_context}
+"""
+
+        prompt = f"""Generate a DEEPLY PERSONALIZED repair plan for {requesting_partner} approaching {target_partner}.
+
+Conflict ID: {conflict_id}
+
+TRANSCRIPT:
+{transcript_text}
+
+{profile_context}
+{debrief_context}
+{history_context}
+{calendar_section}
+
+CRITICAL REQUIREMENTS - EVERY recommendation must cite its source:
+
+1. **TIMING (when_to_approach)**:
+   - Check {target_partner}'s post_conflict_need profile field
+   - If 'space': Recommend waiting, specify how long
+   - If 'connection': Recommend approaching soon
+   - If 'depends': Consider the fight intensity
+   - MUST cite: "{target_partner}'s profile says they need [space/connection/depends]"
+
+2. **STEPS** (3-6 action steps):
+   Each step MUST include:
+   - action: What to do
+   - rationale: Why this helps
+   - citation_type: 'profile', 'transcript', 'pattern', or 'calendar'
+   - citation_detail: Specific quote/reference
+
+3. **APOLOGY SCRIPT**:
+   - Reference {target_partner}'s apology_preferences
+   - Include acknowledgment of specific things from the transcript
+   - MUST cite what makes apologies genuine to them
+
+4. **SUGGESTED GESTURE**:
+   - Pick ONE from {target_partner}'s repair_gestures list
+   - If list is empty, suggest based on their soothing_mechanisms
+   - MUST cite the profile field
+
+5. **THINGS TO AVOID** (minimum 2):
+   - Check {target_partner}'s escalation_triggers
+   - Reference what escalated THIS fight from the transcript
+   - Each must have citation_type and citation_detail
+
+6. **LESSONS FROM PAST** (if history provided):
+   - Reference similar past fights
+   - What worked/failed before
+
+7. **META ASSESSMENT**:
+   - personalization_score: 'high' if you cited profile fields, 'medium' if mostly transcript, 'low' if generic
+   - missing_data: List any profile fields that were empty/missing
+
+REMEMBER: Every single recommendation must trace back to:
+- A specific profile field (apology_preferences, post_conflict_need, repair_gestures, escalation_triggers)
+- A specific transcript quote
+- A pattern from past fights
+- Calendar data
+
+Generic advice = FAIL. Everything must be personalized and cited."""
+
+        messages = [{"role": "user", "content": prompt}]
+
+        logger.info(f"💝 Generating personalized repair plan for {requesting_partner} → {target_partner}")
+        start_time = __import__('time').time()
+
+        result = self.structured_output(
+            messages=messages,
+            response_model=response_model,
+            temperature=0.7,
+            max_tokens=3000
+        )
+
+        elapsed = __import__('time').time() - start_time
+        logger.info(f"✅ Personalized repair plan complete in {elapsed:.2f}s")
+        return result
+
     def extract_topics(self, transcript_text: str) -> list[str]:
         """Extract 1-3 specific topics from a conflict transcript"""
         try:
@@ -505,7 +747,7 @@ TITLE REQUIREMENTS:
                 topics: list[str]
 
             prompt = f"""Analyze this relationship conflict conversation and extract 1-3 specific topics/themes.
-            
+
 Examples of good topics:
 - "Household Chores Distribution"
 - "Quality Time Together"
@@ -524,14 +766,14 @@ REQUIREMENTS:
 """
 
             messages = [{"role": "user", "content": prompt}]
-            
+
             result = self.structured_output(
                 messages=messages,
                 response_model=TopicResponse,
                 temperature=0.5,
                 max_tokens=100
             )
-            
+
             return result.topics
         except Exception as e:
             logger.error(f"❌ Error extracting topics: {e}")

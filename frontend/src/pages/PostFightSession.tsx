@@ -4,7 +4,7 @@ import {
   MessageCircleIcon, SparklesIcon, HeartIcon, LoaderIcon, XIcon,
   BarChart4Icon, RefreshCwIcon, FileTextIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon, CheckIcon,
   AlertCircleIcon, LightbulbIcon, ClockIcon, ShieldIcon, SendIcon, MicIcon, MicOffIcon, PencilIcon,
-  LayersIcon, ActivityIcon, PlayIcon
+  LayersIcon, ActivityIcon, PlayIcon, UserIcon
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from "@/components/ui/button";
@@ -184,6 +184,7 @@ const PostFightSession = () => {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [title, setTitle] = useState<string>('Post-Fight Session');
+  const [activeRepairTab, setActiveRepairTab] = useState<'partner_a' | 'partner_b'>('partner_a');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState('');
 
@@ -1144,7 +1145,7 @@ const PostFightSession = () => {
                   <div className="bg-rose-100 p-2 rounded-lg mr-3">
                     <HeartIcon size={20} className="text-rose-600" />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-800">Repair Plan</h3>
+                  <h3 className="text-lg font-semibold text-gray-800">Repair Plans</h3>
                 </div>
                 <button
                   onClick={() => setActiveView(null)}
@@ -1154,18 +1155,47 @@ const PostFightSession = () => {
                 </button>
               </div>
 
+              {/* Partner Tabs */}
+              {(repairPlanBoyfriend || repairPlanGirlfriend) && !loadingRepairPlan && !repairPlanError && (
+                <div className="flex gap-2 p-1 bg-gray-100 rounded-xl mb-4">
+                  <button
+                    onClick={() => setActiveRepairTab('partner_a')}
+                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                      activeRepairTab === 'partner_a'
+                        ? 'bg-white text-blue-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    <UserIcon size={16} />
+                    <span>Partner A's Plan</span>
+                    {repairPlanBoyfriend && <span className="w-2 h-2 bg-green-400 rounded-full"></span>}
+                  </button>
+                  <button
+                    onClick={() => setActiveRepairTab('partner_b')}
+                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
+                      activeRepairTab === 'partner_b'
+                        ? 'bg-white text-purple-600 shadow-sm'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    <UserIcon size={16} />
+                    <span>Partner B's Plan</span>
+                    {repairPlanGirlfriend && <span className="w-2 h-2 bg-green-400 rounded-full"></span>}
+                  </button>
+                </div>
+              )}
 
               {loadingRepairPlan ? (
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-rose-500 mr-3" />
-                  <span className="text-gray-600">Generating personalized repair plans...</span>
+                  <span className="text-gray-600">Generating personalized repair plans for both partners...</span>
                 </div>
               ) : repairPlanError ? (
                 <div className="bg-red-50 rounded-xl p-6 border border-red-200">
                   <div className="flex items-start">
                     <AlertCircleIcon size={24} className="text-red-500 mr-3 flex-shrink-0 mt-0.5" />
                     <div>
-                      <h4 className="font-semibold text-red-800 mb-2">Error Generating Repair Plan</h4>
+                      <h4 className="font-semibold text-red-800 mb-2">Error Generating Repair Plans</h4>
                       <p className="text-red-700 text-sm mb-4">{repairPlanError}</p>
                       <button
                         onClick={() => {
@@ -1184,8 +1214,15 @@ const PostFightSession = () => {
                 </div>
               ) : (repairPlanBoyfriend || repairPlanGirlfriend) ? (
                 <>
-                  {repairPlanBoyfriend && (
-                    <div className="space-y-4">
+                  {/* Partner A's Repair Plan */}
+                  {activeRepairTab === 'partner_a' && repairPlanBoyfriend && (
+                    <div className="space-y-4 animate-fade-in">
+                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4">
+                        <p className="text-sm text-blue-800">
+                          <strong>For Partner A:</strong> Steps to approach and repair with Partner B
+                        </p>
+                      </div>
+
                       {/* Steps */}
                       <div className="bg-white rounded-xl p-4 border border-rose-100">
                         <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
@@ -1256,11 +1293,105 @@ const PostFightSession = () => {
                       )}
                     </div>
                   )}
+
+                  {/* Partner B's Repair Plan */}
+                  {activeRepairTab === 'partner_b' && repairPlanGirlfriend && (
+                    <div className="space-y-4 animate-fade-in">
+                      <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 mb-4">
+                        <p className="text-sm text-purple-800">
+                          <strong>For Partner B:</strong> Steps to approach and repair with Partner A
+                        </p>
+                      </div>
+
+                      {/* Steps */}
+                      <div className="bg-white rounded-xl p-4 border border-rose-100">
+                        <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
+                          <LightbulbIcon size={18} className="text-rose-500 mr-2" />
+                          Action Steps
+                        </h4>
+                        <ol className="space-y-3">
+                          {repairPlanGirlfriend.steps.map((step, idx) => (
+                            <li key={idx} className="flex items-start text-gray-700">
+                              <span className="bg-purple-100 text-purple-700 font-semibold rounded-full w-6 h-6 flex items-center justify-center text-xs mr-3 mt-0.5 flex-shrink-0">
+                                {idx + 1}
+                              </span>
+                              <span className="flex-1">{step}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+
+                      {/* Apology Script */}
+                      <div className="bg-gradient-to-r from-purple-50 to-rose-50 rounded-xl p-5 border-2 border-purple-200">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="font-semibold text-gray-800 flex items-center">
+                            <HeartIcon size={18} className="text-purple-500 mr-2" />
+                            Apology Script
+                          </h4>
+                          <button
+                            onClick={() => copyToClipboard(repairPlanGirlfriend.apology_script, 'apology-gf')}
+                            className="text-gray-400 hover:text-gray-600 transition-colors"
+                            title="Copy to clipboard"
+                          >
+                            {copiedText === 'apology-gf' ? (
+                              <CheckIcon size={18} className="text-green-500" />
+                            ) : (
+                              <CopyIcon size={18} />
+                            )}
+                          </button>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed italic whitespace-pre-wrap">
+                          {repairPlanGirlfriend.apology_script}
+                        </p>
+                      </div>
+
+                      {/* Timing */}
+                      <div className="bg-white rounded-xl p-4 border border-rose-100">
+                        <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                          <ClockIcon size={18} className="text-purple-500 mr-2" />
+                          Timing Suggestion
+                        </h4>
+                        <p className="text-gray-700 text-sm">{repairPlanGirlfriend.timing_suggestion}</p>
+                      </div>
+
+                      {/* Risk Factors */}
+                      {repairPlanGirlfriend.risk_factors && repairPlanGirlfriend.risk_factors.length > 0 && (
+                        <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-200">
+                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                            <ShieldIcon size={18} className="text-yellow-600 mr-2" />
+                            Things to Avoid
+                          </h4>
+                          <ul className="space-y-2">
+                            {repairPlanGirlfriend.risk_factors.map((risk, idx) => (
+                              <li key={idx} className="flex items-start text-sm text-gray-700">
+                                <span className="text-yellow-600 mr-2 mt-1">⚠</span>
+                                <span>{risk}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* No plan available for selected tab */}
+                  {activeRepairTab === 'partner_a' && !repairPlanBoyfriend && (
+                    <div className="text-center py-8 text-gray-500">
+                      <AlertCircleIcon size={32} className="mx-auto mb-3 text-gray-300" />
+                      <p>Partner A's repair plan is not available yet.</p>
+                    </div>
+                  )}
+                  {activeRepairTab === 'partner_b' && !repairPlanGirlfriend && (
+                    <div className="text-center py-8 text-gray-500">
+                      <AlertCircleIcon size={32} className="mx-auto mb-3 text-gray-300" />
+                      <p>Partner B's repair plan is not available yet.</p>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <HeartIcon size={48} className="mx-auto mb-3 text-gray-300" />
-                  <p>Click "View Repair Plan" to generate and see personalized steps</p>
+                  <p>Click "View Repair Plan" to generate personalized steps for both partners</p>
                 </div>
               )}
             </div>
