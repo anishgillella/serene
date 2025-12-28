@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRightIcon, ArrowLeftIcon, MicIcon, CheckCircleIcon, HeartIcon, UserIcon, BookOpenIcon, UtensilsIcon, TrophyIcon, StarIcon, AlertCircleIcon, SparklesIcon, EyeIcon, PlayIcon } from 'lucide-react';
+import { ArrowRightIcon, ArrowLeftIcon, MicIcon, CheckCircleIcon, HeartIcon, UserIcon, UsersIcon, BookOpenIcon, UtensilsIcon, TrophyIcon, StarIcon, AlertCircleIcon, SparklesIcon, EyeIcon, PlayIcon } from 'lucide-react';
 import VoiceGuidanceModal from '../components/ui/VoiceGuidanceModal';
 
 // Types - Using gender-neutral terminology
@@ -224,6 +224,11 @@ const Onboarding = () => {
     const [partnerId, setPartnerId] = useState<'partner_a' | 'partner_b'>('partner_a');
     const [relationshipId] = useState('00000000-0000-0000-0000-000000000000');
 
+    // Track which partner's onboarding we're in and completion status
+    const [currentOnboardingPartner, setCurrentOnboardingPartner] = useState<'partner_a' | 'partner_b'>('partner_a');
+    const [partnerACompleted, setPartnerACompleted] = useState(false);
+    const [partnerAName, setPartnerAName] = useState('');
+
     const [partnerProfile, setPartnerProfile] = useState<PartnerProfile>({
         name: '',
         role: 'partner_a',
@@ -275,7 +280,8 @@ const Onboarding = () => {
         { type: 'chapter_start', chapter: 1, title: "The Basics", description: "First, tell us a bit about yourself." },
         { type: 'partner', field: 'name', label: "What's your name?", placeholder: "e.g., Alex", icon: UserIcon, chapter: 1 },
         { type: 'partner', field: 'age', label: "How old are you?", placeholder: "e.g., 28", icon: UserIcon, chapter: 1 },
-        { type: 'partner', field: 'role', label: "What is your role in the relationship?", placeholder: "e.g., Partner A, Partner B", icon: UserIcon, chapter: 1 },
+        // Role selection - only shown for Partner A (Partner B's role is pre-set)
+        { type: 'role_select', chapter: 1 },
 
         { type: 'chapter_start', chapter: 2, title: "Your Story", description: "Your past shapes who you are today." },
         { type: 'partner', field: 'background_story', label: "Tell us your story.", sublabel: "Where did you grow up? What was your childhood like? How did you get to where you are now?", placeholder: "I grew up in...", multiline: true, icon: BookOpenIcon, chapter: 2 },
@@ -309,18 +315,38 @@ const Onboarding = () => {
         { type: 'relationship', field: 'recurring_arguments', label: "What do you fight about most?", sublabel: "The topics that keep coming up.", placeholder: "Chores, Money...", isList: true, icon: AlertCircleIcon, chapter: 5 },
         { type: 'relationship', field: 'shared_goals', label: "What are you building together?", sublabel: "Your shared vision for the future.", placeholder: "Buying a house...", isList: true, icon: TrophyIcon, chapter: 5 },
 
-        { type: 'success', chapter: 6 }
+        { type: 'partner_handoff', chapter: 6 },
+        { type: 'success', chapter: 7 }
     ];
 
     const handleNext = () => {
         if (currentStepIndex < steps.length - 1) {
-            setCurrentStepIndex(prev => prev + 1);
+            let nextIndex = currentStepIndex + 1;
+
+            // Skip role_select for Partner B (their role is already set)
+            if (currentOnboardingPartner === 'partner_b' && steps[nextIndex]?.type === 'role_select') {
+                nextIndex++;
+            }
+
+            // Skip partner_handoff for Partner B (go straight to success)
+            if (currentOnboardingPartner === 'partner_b' && steps[nextIndex]?.type === 'partner_handoff') {
+                nextIndex++;
+            }
+
+            setCurrentStepIndex(nextIndex);
         }
     };
 
     const handleBack = () => {
         if (currentStepIndex > 0) {
-            setCurrentStepIndex(prev => prev - 1);
+            let prevIndex = currentStepIndex - 1;
+
+            // Skip role_select for Partner B when going back
+            if (currentOnboardingPartner === 'partner_b' && steps[prevIndex]?.type === 'role_select') {
+                prevIndex--;
+            }
+
+            setCurrentStepIndex(prevIndex);
         }
     };
 
@@ -346,7 +372,15 @@ const Onboarding = () => {
             });
 
             if (response.ok) {
-                handleNext(); // Go to success step
+                if (currentOnboardingPartner === 'partner_a') {
+                    // Partner A completed - go to handoff screen
+                    setPartnerAName(partnerProfile.name);
+                    setPartnerACompleted(true);
+                    handleNext(); // Go to partner_handoff step
+                } else {
+                    // Partner B completed - go to final success
+                    handleNext(); // Go to success step
+                }
             } else {
                 console.error('Submission failed');
             }
@@ -357,6 +391,44 @@ const Onboarding = () => {
         }
     };
 
+    // Reset form and start Partner B's onboarding
+    const startPartnerBOnboarding = () => {
+        // Reset all form state for Partner B
+        setPartnerProfile({
+            name: '',
+            role: 'partner_b',
+            age: '',
+            communication_style: '',
+            stress_triggers: [],
+            soothing_mechanisms: [],
+            background_story: '',
+            hobbies: [],
+            favorite_food: '',
+            favorite_cuisine: '',
+            favorite_sports: [],
+            favorite_books: [],
+            favorite_celebrities: [],
+            traumatic_experiences: '',
+            key_life_experiences: '',
+            partner_description: '',
+            what_i_admire: '',
+            what_frustrates_me: '',
+            apology_preferences: '',
+            post_conflict_need: '',
+            repair_gestures: [],
+            escalation_triggers: []
+        });
+        setRelationshipProfile({
+            recurring_arguments: [],
+            shared_goals: [],
+            relationship_dynamic: ''
+        });
+        setPartnerId('partner_b');
+        setCurrentOnboardingPartner('partner_b');
+        // Go back to welcome screen for Partner B
+        setCurrentStepIndex(0);
+    };
+
     const currentStep = steps[currentStepIndex];
 
     // Renderers
@@ -365,11 +437,26 @@ const Onboarding = () => {
             <div className="w-24 h-24 bg-surface-hover rounded-full flex items-center justify-center mx-auto mb-8">
                 <HeartIcon size={48} className="text-accent" />
             </div>
-            <h2 className="text-h1 text-text-primary mb-6">Welcome to Serene</h2>
-            <p className="text-body-lg text-text-secondary mb-10 leading-relaxed">
-                Let's build a deep understanding of you and your relationship.
-                We've broken this down into 5 short chapters.
-            </p>
+            {currentOnboardingPartner === 'partner_b' ? (
+                <>
+                    <h2 className="text-h1 text-text-primary mb-6">Welcome, Partner B!</h2>
+                    <p className="text-body-lg text-text-secondary mb-4 leading-relaxed">
+                        {partnerAName} has completed their profile.
+                        Now it's your turn to share your perspective.
+                    </p>
+                    <p className="text-body text-text-tertiary mb-10">
+                        This helps us create personalized repair plans that work for both of you.
+                    </p>
+                </>
+            ) : (
+                <>
+                    <h2 className="text-h1 text-text-primary mb-6">Welcome to Serene</h2>
+                    <p className="text-body-lg text-text-secondary mb-10 leading-relaxed">
+                        Let's build a deep understanding of you and your relationship.
+                        We've broken this down into 5 short chapters.
+                    </p>
+                </>
+            )}
             <button
                 onClick={handleNext}
                 className="px-10 py-4 bg-accent text-white rounded-2xl font-medium hover:bg-accent-hover transition-all shadow-lg hover:shadow-xl hover:-translate-y-1 text-lg"
@@ -546,15 +633,80 @@ const Onboarding = () => {
         );
     };
 
+    // Partner handoff screen - shown after Partner A completes
+    const renderPartnerHandoff = () => (
+        <div className="text-center max-w-lg mx-auto animate-fade-in">
+            <div className="w-24 h-24 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-8">
+                <UsersIcon size={48} />
+            </div>
+            <h2 className="text-h2 text-text-primary mb-4">
+                Great job, {partnerAName || 'Partner A'}!
+            </h2>
+            <p className="text-body text-text-secondary mb-6">
+                Your profile has been saved. For personalized repair plans to work,
+                we need to understand both partners.
+            </p>
+            <div className="bg-surface-elevated rounded-2xl p-6 mb-8">
+                <div className="flex items-center justify-center gap-3 mb-4">
+                    <div className="w-10 h-10 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
+                        <CheckCircleIcon size={20} />
+                    </div>
+                    <span className="text-text-primary font-medium">{partnerAName || 'Partner A'}</span>
+                    <span className="text-text-tertiary">completed</span>
+                </div>
+                <div className="flex items-center justify-center gap-3">
+                    <div className="w-10 h-10 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center">
+                        <UserIcon size={20} />
+                    </div>
+                    <span className="text-text-primary font-medium">Partner B</span>
+                    <span className="text-text-tertiary">waiting...</span>
+                </div>
+            </div>
+            <p className="text-body-sm text-text-tertiary mb-8">
+                Please hand the device to your partner so they can complete their profile.
+            </p>
+            <button
+                onClick={startPartnerBOnboarding}
+                className="px-10 py-4 bg-accent text-white rounded-2xl font-medium hover:bg-accent-hover transition-all shadow-lg hover:shadow-xl hover:-translate-y-1 text-lg"
+            >
+                Start Partner B's Profile
+            </button>
+        </div>
+    );
+
     const renderSuccess = () => (
         <div className="text-center max-w-lg mx-auto animate-fade-in">
             <div className="w-24 h-24 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-8">
                 <CheckCircleIcon size={48} />
             </div>
-            <h2 className="text-h2 text-text-primary mb-4">All Set!</h2>
-            <p className="text-body text-text-secondary mb-10">
-                Your comprehensive profile has been created. Luna now has a deep understanding of you.
+            <h2 className="text-h2 text-text-primary mb-4">
+                {partnerACompleted ? 'Both Profiles Complete!' : 'All Set!'}
+            </h2>
+            <p className="text-body text-text-secondary mb-6">
+                {partnerACompleted
+                    ? 'Luna now has a deep understanding of both of you. Personalized repair plans are now enabled!'
+                    : 'Your comprehensive profile has been created. Luna now has a deep understanding of you.'
+                }
             </p>
+            {partnerACompleted && (
+                <div className="bg-surface-elevated rounded-2xl p-6 mb-8">
+                    <div className="flex items-center justify-center gap-6">
+                        <div className="text-center">
+                            <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                                <CheckCircleIcon size={24} />
+                            </div>
+                            <span className="text-text-secondary text-sm">{partnerAName}</span>
+                        </div>
+                        <HeartIcon size={24} className="text-accent" />
+                        <div className="text-center">
+                            <div className="w-12 h-12 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                                <CheckCircleIcon size={24} />
+                            </div>
+                            <span className="text-text-secondary text-sm">{partnerProfile.name}</span>
+                        </div>
+                    </div>
+                </div>
+            )}
             <div className="flex justify-center space-x-4">
                 <button
                     onClick={() => navigate('/')}
@@ -599,6 +751,7 @@ const Onboarding = () => {
                 {currentStep.type === 'chapter_start' && renderChapterStart()}
                 {currentStep.type === 'role_select' && renderRoleSelect()}
                 {(currentStep.type === 'partner' || currentStep.type === 'relationship') && renderQuestion()}
+                {currentStep.type === 'partner_handoff' && renderPartnerHandoff()}
                 {currentStep.type === 'success' && renderSuccess()}
             </div>
 
