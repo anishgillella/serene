@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 class PartnerProfile(BaseModel):
     name: str
-    role: str # 'boyfriend' | 'girlfriend'
+    role: str # 'partner_a' | 'partner_b' (gender-neutral)
     age: int
     communication_style: str
     stress_triggers: List[str]
@@ -35,6 +35,11 @@ class PartnerProfile(BaseModel):
     partner_description: str
     what_i_admire: str
     what_frustrates_me: str
+    # NEW: Repair-specific fields (Phase 1)
+    apology_preferences: Optional[str] = ""
+    post_conflict_need: Optional[str] = ""  # 'space' | 'connection' | 'depends'
+    repair_gestures: Optional[List[str]] = []
+    escalation_triggers: Optional[List[str]] = []
 
 class RelationshipProfile(BaseModel):
     recurring_arguments: List[str]
@@ -109,7 +114,32 @@ def generate_semantic_chunks(data: OnboardingSubmission) -> List[Dict[str, str]]
     dynamics_lines.append(f"Recurring Arguments: {', '.join(r.recurring_arguments)}")
     dynamics_lines.append(f"Shared Goals: {', '.join(r.shared_goals)}")
     chunks.append({"section": "relationship", "text": "\n".join(dynamics_lines)})
-    
+
+    # Chunk 7: Repair & Conflict Preferences (NEW - Phase 1)
+    repair_lines = []
+    repair_lines.append(f"## Repair & Conflict Preferences ({p.name})")
+    if p.apology_preferences:
+        repair_lines.append(f"What makes an apology genuine to {p.name}: {p.apology_preferences}")
+    if p.post_conflict_need:
+        need_description = {
+            'space': 'needs time alone to cool down and process',
+            'connection': 'needs to feel close again right away',
+            'depends': 'it depends on the situation'
+        }.get(p.post_conflict_need, p.post_conflict_need)
+        repair_lines.append(f"After a conflict, {p.name} {need_description}")
+    if p.repair_gestures:
+        repair_lines.append(f"Gestures that help {p.name} feel better: {', '.join(p.repair_gestures)}")
+    if p.escalation_triggers:
+        repair_lines.append(f"Things that make fights WORSE for {p.name}: {', '.join(p.escalation_triggers)}")
+    # Also include existing soothing mechanisms and stress triggers for context
+    if p.soothing_mechanisms:
+        repair_lines.append(f"What calms {p.name} down: {', '.join(p.soothing_mechanisms)}")
+    if p.stress_triggers:
+        repair_lines.append(f"Stress triggers for {p.name}: {', '.join(p.stress_triggers)}")
+
+    if len(repair_lines) > 1:  # More than just the header
+        chunks.append({"section": "repair_preferences", "text": "\n".join(repair_lines)})
+
     return chunks
 
 async def process_onboarding_task(data: OnboardingSubmission, pdf_id: str):

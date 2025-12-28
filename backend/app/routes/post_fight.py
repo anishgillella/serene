@@ -18,9 +18,11 @@ from app.services.llm_service import llm_service
 from app.services.transcript_chunker import TranscriptChunker
 from app.services.conflict_enrichment_service import conflict_enrichment_service
 from app.services.gottman_analysis_service import gottman_service
+from app.services.profile_service import profile_service
+from app.services.cross_fight_intelligence_service import cross_fight_intelligence_service
 from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
-from app.models.schemas import ConflictAnalysis, RepairPlan, ConflictTranscript, SpeakerSegment
+from app.models.schemas import ConflictAnalysis, RepairPlan, ConflictTranscript, SpeakerSegment, FightDebrief, PersonalizedRepairPlan
 from app.config import settings
 from supabase import create_client, Client
 from app.services.db_service import db_service
@@ -139,76 +141,203 @@ async def generate_analysis_and_repair_plan_background(
             import traceback
             logger.error(traceback.format_exc())
 
-        # Use RAG pipeline with reranker to get relevant profile information
+        # ========================================================================
+        # Phase 2: Fetch FULL profiles for personalized repair plans
+        # ========================================================================
+        # NEW: Use profile_service for complete profile retrieval (not just RAG chunks)
         boyfriend_profile = None
         girlfriend_profile = None
+        partner_a_profile_data = None
+        partner_b_profile_data = None
         try:
-            # Generate query embedding from transcript for semantic search
-            query_embedding = embeddings_service.embed_query(transcript_text)
-            
-            # Search for boyfriend profile chunks
-            boyfriend_results = pinecone_service.query(
-                query_embedding=query_embedding,
-                top_k=5,  # Get top 5 chunks
-                namespace="profiles",
-                filter={
-                    "relationship_id": {"$eq": relationship_id},
-                    "pdf_type": {"$eq": "boyfriend_profile"}
-                }
-            )
-            
-            # Extract text from results
-            boyfriend_chunks = []
-            if boyfriend_results.matches:
-                for match in boyfriend_results.matches:
-                    chunk_text = match.metadata.get("extracted_text", "")
-                    if chunk_text:
-                        boyfriend_chunks.append(chunk_text)
-            
-            # Rerank chunks based on transcript relevance
-            if boyfriend_chunks:
-                reranked_bf = reranker_service.rerank(
-                    query=transcript_text[:500],  # Use first 500 chars as query
-                    documents=boyfriend_chunks,
-                    top_k=3  # Get top 3 most relevant chunks
-                )
-                boyfriend_profile = "\n\n".join([chunk for chunk, score in reranked_bf])
-                logger.info(f"✅ Retrieved {len(reranked_bf)} relevant boyfriend profile chunks via reranker")
-            
-            # Search for girlfriend profile chunks
-            girlfriend_results = pinecone_service.query(
-                query_embedding=query_embedding,
-                top_k=5,  # Get top 5 chunks
-                namespace="profiles",
-                filter={
-                    "relationship_id": {"$eq": relationship_id},
-                    "pdf_type": {"$eq": "girlfriend_profile"}
-                }
-            )
-            
-            # Extract text from results
-            girlfriend_chunks = []
-            if girlfriend_results.matches:
-                for match in girlfriend_results.matches:
-                    chunk_text = match.metadata.get("extracted_text", "")
-                    if chunk_text:
-                        girlfriend_chunks.append(chunk_text)
-            
-            # Rerank chunks based on transcript relevance
-            if girlfriend_chunks:
-                reranked_gf = reranker_service.rerank(
-                    query=transcript_text[:500],  # Use first 500 chars as query
-                    documents=girlfriend_chunks,
-                    top_k=3  # Get top 3 most relevant chunks
-                )
-                girlfriend_profile = "\n\n".join([chunk for chunk, score in reranked_gf])
-                logger.info(f"✅ Retrieved {len(reranked_gf)} relevant girlfriend profile chunks via reranker")
-                
+            logger.info(f"📋 Fetching full partner profiles for relationship {relationship_id}")
+
+            # Fetch complete profiles for both partners
+            profiles = await profile_service.get_both_partner_profiles(relationship_id)
+            partner_a_profile_data = profiles.get("partner_a")
+            partner_b_profile_data = profiles.get("partner_b")
+
+            # Format profiles for LLM consumption
+            if partner_a_profile_data:
+                boyfriend_profile = profile_service.format_profile_for_llm(partner_a_profile_data)
+                logger.info(f"✅ Retrieved full Partner A profile: {len(boyfriend_profile)} chars")
+
+            if partner_b_profile_data:
+                girlfriend_profile = profile_service.format_profile_for_llm(partner_b_profile_data)
+                logger.info(f"✅ Retrieved full Partner B profile: {len(girlfriend_profile)} chars")
+
+            # Check if profiles have repair-specific fields
+            profile_check = profile_service.check_profiles_complete(partner_a_profile_data, partner_b_profile_data)
+            if not profile_check["complete"]:
+                logger.warning(f"⚠️ Incomplete profiles detected: {profile_check}")
+            else:
+                logger.info("✅ Both profiles complete with repair-specific fields")
+
         except Exception as e:
-            logger.info(f"⚠️ RAG retrieval failed, using transcript only: {e}")
+            logger.warning(f"⚠️ Full profile retrieval failed, falling back to RAG: {e}")
             import traceback
             logger.error(traceback.format_exc())
-        
+
+            # Fallback to RAG-based profile retrieval
+            try:
+                query_embedding = embeddings_service.embed_query(transcript_text)
+
+                # Search for partner profiles using onboarding_profile type
+                partner_a_results = pinecone_service.query(
+                    query_embedding=query_embedding,
+                    top_k=5,
+                    namespace="profiles",
+                    filter={
+                        "relationship_id": {"$eq": relationship_id},
+                        "role": {"$eq": "partner_a"}
+                    }
+                )
+
+                partner_a_chunks = []
+                if partner_a_results and partner_a_results.matches:
+                    for match in partner_a_results.matches:
+                        chunk_text = match.metadata.get("extracted_text", "")
+                        if chunk_text:
+                            partner_a_chunks.append(chunk_text)
+
+                if partner_a_chunks:
+                    reranked_a = reranker_service.rerank(
+                        query=transcript_text[:500],
+                        documents=partner_a_chunks,
+                        top_k=3
+                    )
+                    boyfriend_profile = "\n\n".join([chunk for chunk, score in reranked_a])
+                    logger.info(f"✅ RAG fallback: Retrieved {len(reranked_a)} Partner A chunks")
+
+                partner_b_results = pinecone_service.query(
+                    query_embedding=query_embedding,
+                    top_k=5,
+                    namespace="profiles",
+                    filter={
+                        "relationship_id": {"$eq": relationship_id},
+                        "role": {"$eq": "partner_b"}
+                    }
+                )
+
+                partner_b_chunks = []
+                if partner_b_results and partner_b_results.matches:
+                    for match in partner_b_results.matches:
+                        chunk_text = match.metadata.get("extracted_text", "")
+                        if chunk_text:
+                            partner_b_chunks.append(chunk_text)
+
+                if partner_b_chunks:
+                    reranked_b = reranker_service.rerank(
+                        query=transcript_text[:500],
+                        documents=partner_b_chunks,
+                        top_k=3
+                    )
+                    girlfriend_profile = "\n\n".join([chunk for chunk, score in reranked_b])
+                    logger.info(f"✅ RAG fallback: Retrieved {len(reranked_b)} Partner B chunks")
+
+            except Exception as rag_e:
+                logger.warning(f"⚠️ RAG fallback also failed: {rag_e}")
+
+        # ========================================================================
+        # Phase 3: Generate Fight Debrief (comprehensive post-fight analysis)
+        # ========================================================================
+        fight_debrief = None
+        fight_debrief_summary = None
+        try:
+            logger.info(f"📊 Generating Fight Debrief for conflict {conflict_id}")
+
+            # Get partner names for debrief
+            partner_names = db_service.get_partner_names(relationship_id)
+            partner_a_name = partner_names.get("partner_a", "Partner A")
+            partner_b_name = partner_names.get("partner_b", "Partner B")
+
+            # Get past fights summary for pattern detection
+            past_fights_summary = None
+            try:
+                previous_conflicts = db_service.get_previous_conflicts(relationship_id, limit=5)
+                if previous_conflicts:
+                    summaries = []
+                    for pc in previous_conflicts:
+                        if pc.get("title") or pc.get("topic"):
+                            summaries.append(f"- {pc.get('title') or pc.get('topic')} ({pc.get('created_at', 'unknown date')})")
+                    if summaries:
+                        past_fights_summary = "Previous conflicts:\n" + "\n".join(summaries)
+            except Exception as e:
+                logger.warning(f"⚠️ Could not fetch past fights for pattern detection: {e}")
+
+            # Generate FightDebrief using LLM
+            fight_debrief = await asyncio.to_thread(
+                llm_service.generate_fight_debrief,
+                transcript_text,
+                conflict_id,
+                relationship_id,
+                FightDebrief,
+                partner_a_name,
+                partner_b_name,
+                past_fights_summary
+            )
+
+            # Create summary for repair plan context
+            if fight_debrief:
+                fight_debrief_summary = f"""
+Topic: {fight_debrief.topic}
+Summary: {fight_debrief.summary}
+Intensity: {fight_debrief.intensity_peak}
+Resolution: {fight_debrief.resolution_status}
+Most effective moment: {fight_debrief.most_effective_moment or 'None identified'}
+Most damaging moment: {fight_debrief.most_damaging_moment or 'None identified'}
+Successful repairs: {fight_debrief.successful_repairs}/{fight_debrief.total_repair_attempts}
+Phrases that helped: {', '.join(fight_debrief.phrases_that_helped[:3]) if fight_debrief.phrases_that_helped else 'None'}
+Phrases to avoid: {', '.join(fight_debrief.phrases_to_avoid[:3]) if fight_debrief.phrases_to_avoid else 'None'}
+"""
+                logger.info(f"✅ Fight Debrief generated: {fight_debrief.topic}, {fight_debrief.resolution_status}")
+
+        except Exception as e:
+            logger.warning(f"⚠️ Fight Debrief generation failed (non-blocking): {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+        # ========================================================================
+        # Phase 4: Cross-Fight Intelligence (pattern aggregation)
+        # ========================================================================
+        cross_fight_intel = None
+        similar_fights = []
+        past_fights_intelligence = None
+        try:
+            logger.info(f"🧠 Gathering Cross-Fight Intelligence for relationship {relationship_id}")
+
+            # Find similar past fights for context
+            if fight_debrief:
+                similar_fights = await cross_fight_intelligence_service.find_similar_past_fights(
+                    relationship_id=relationship_id,
+                    current_topic=fight_debrief.topic,
+                    current_summary=fight_debrief.summary,
+                    top_k=3
+                )
+                if similar_fights:
+                    logger.info(f"✅ Found {len(similar_fights)} similar past fights")
+
+            # Generate full cross-fight intelligence (only if we have enough history)
+            cross_fight_intel = await cross_fight_intelligence_service.generate_cross_fight_intelligence(
+                relationship_id=relationship_id,
+                days_back=90
+            )
+
+            # Format intelligence for repair plan context
+            if cross_fight_intel and cross_fight_intel.total_fights_analyzed >= 3:
+                past_fights_intelligence = cross_fight_intelligence_service.format_intelligence_for_repair_plan(
+                    cross_fight_intel,
+                    similar_fights
+                )
+                logger.info(f"✅ Cross-Fight Intelligence ready: {cross_fight_intel.total_fights_analyzed} fights analyzed")
+            else:
+                logger.info(f"ℹ️ Not enough fight history for full pattern analysis ({cross_fight_intel.total_fights_analyzed if cross_fight_intel else 0} fights)")
+
+        except Exception as e:
+            logger.warning(f"⚠️ Cross-Fight Intelligence failed (non-blocking): {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
         # Generate ALL LLM calls in parallel: analysis + both repair plans
         # Repair plans can work without analysis (they use transcript + profiles)
         # This maximizes parallelism and reduces total generation time
@@ -286,7 +415,53 @@ async def generate_analysis_and_repair_plan_background(
             import traceback
             logger.error(traceback.format_exc())
             # Continue even if S3 fails
-        
+
+        # Store Fight Debrief in S3 (Phase 3)
+        if fight_debrief:
+            try:
+                debrief_path = f"debriefs/{relationship_id}/{conflict_id}_debrief.json"
+                debrief_json = json.dumps(fight_debrief.model_dump(), default=str, indent=2)
+
+                debrief_s3_url = s3_service.upload_file(
+                    file_path=debrief_path,
+                    file_content=debrief_json.encode('utf-8'),
+                    content_type="application/json"
+                )
+                if debrief_s3_url:
+                    logger.info(f"✅ Stored Fight Debrief in S3: {debrief_path}")
+
+                    # Also store in Pinecone for semantic search of past fight patterns
+                    try:
+                        debrief_text = f"{fight_debrief.topic} {fight_debrief.summary} {' '.join(fight_debrief.phrases_to_avoid)} {' '.join(fight_debrief.phrases_that_helped)}"
+                        debrief_embedding = embeddings_service.embed_text(debrief_text)
+
+                        pinecone_service.index.upsert(
+                            vectors=[{
+                                "id": f"debrief_{conflict_id}",
+                                "values": debrief_embedding,
+                                "metadata": {
+                                    "conflict_id": conflict_id,
+                                    "relationship_id": relationship_id,
+                                    "topic": fight_debrief.topic,
+                                    "summary": fight_debrief.summary[:500],
+                                    "resolution_status": fight_debrief.resolution_status,
+                                    "intensity_peak": fight_debrief.intensity_peak,
+                                    "successful_repairs": fight_debrief.successful_repairs,
+                                    "total_repairs": fight_debrief.total_repair_attempts,
+                                    "phrases_to_avoid": str(fight_debrief.phrases_to_avoid[:5]),
+                                    "phrases_that_helped": str(fight_debrief.phrases_that_helped[:5]),
+                                    "analyzed_at": str(fight_debrief.analyzed_at)
+                                }
+                            }],
+                            namespace="debriefs"
+                        )
+                        logger.info(f"✅ Stored Fight Debrief in Pinecone for pattern matching")
+                    except Exception as pinecone_e:
+                        logger.warning(f"⚠️ Failed to store debrief in Pinecone: {pinecone_e}")
+
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to store Fight Debrief in S3: {e}")
+
         # Store repair plans in Pinecone (with error handling for rate limits)
         try:
             repair_plan_text_bf = f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"
