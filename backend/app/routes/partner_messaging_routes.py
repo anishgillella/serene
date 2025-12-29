@@ -163,9 +163,16 @@ async def update_preferences(
 ):
     """Update messaging preferences for a partner."""
     try:
-        # For Phase 1, just return current preferences
-        # TODO Phase 2: Implement update logic
-        prefs = db_service.get_messaging_preferences(relationship_id, partner_id)
+        if updates is None:
+            # No updates provided, return current preferences
+            prefs = db_service.get_messaging_preferences(relationship_id, partner_id)
+        else:
+            # Apply updates
+            prefs = db_service.update_messaging_preferences(
+                relationship_id,
+                partner_id,
+                updates.model_dump(exclude_none=True)
+            )
         return MessagingPreferences(**prefs)
     except Exception as e:
         logger.error(f"Error updating preferences: {e}")

@@ -335,20 +335,43 @@ async def submit_onboarding(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/profile")
-async def get_profile(relationship_id: str = "00000000-0000-0000-0000-000000000000"):
+async def get_profile(
+    relationship_id: str = "00000000-0000-0000-0000-000000000000",
+    partner_id: Optional[str] = None
+):
     """
     Get the onboarding profile for a relationship.
+    If partner_id is specified, returns that partner's profile.
+    Otherwise returns the first available profile (partner_a if available).
     """
     try:
         if not db_service:
             raise HTTPException(status_code=503, detail="Database service unavailable")
-            
-        # Find the onboarding profile record
+
+        # Find the onboarding profile record(s)
         profiles = db_service.get_profiles(relationship_id, pdf_type="onboarding_profile")
         if not profiles:
             return {"exists": False}
-            
-        profile_record = profiles[0]
+
+        # Select the appropriate profile
+        profile_record = None
+        if partner_id:
+            # Find specific partner's profile
+            for p in profiles:
+                if p.get("partner_id") == partner_id:
+                    profile_record = p
+                    break
+            if not profile_record:
+                return {"exists": False, "error": f"No profile found for {partner_id}"}
+        else:
+            # Default: prefer partner_a, then take first available
+            for p in profiles:
+                if p.get("partner_id") == "partner_a":
+                    profile_record = p
+                    break
+            if not profile_record:
+                profile_record = profiles[0]
+
         s3_url = profile_record.get("file_path")
         
         if not s3_url:
@@ -385,15 +408,17 @@ async def get_profile(relationship_id: str = "00000000-0000-0000-0000-0000000000
 async def update_profile(
     update_data: Dict[str, Any],
     background_tasks: BackgroundTasks,
-    relationship_id: str = "00000000-0000-0000-0000-000000000000"
+    relationship_id: str = "00000000-0000-0000-0000-000000000000",
+    partner_id: Optional[str] = None
 ):
     """
     Update specific fields in the profile.
     Regenerates narrative and updates Vector DB.
+    If partner_id is specified, updates that specific partner's profile.
     """
     try:
-        # 1. Fetch existing data
-        current_result = await get_profile(relationship_id)
+        # 1. Fetch existing data for the specific partner
+        current_result = await get_profile(relationship_id, partner_id)
         if not current_result.get("exists"):
             raise HTTPException(status_code=404, detail="Profile not found")
             
