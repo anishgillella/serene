@@ -9,6 +9,7 @@ import History from './pages/History';
 import Calendar from './pages/Calendar';
 import Onboarding from './pages/Onboarding';
 import Profile from './pages/Profile';
+import PartnerChat from './pages/PartnerChat';
 import Layout from './components/Layout';
 import { RelationshipProvider } from './contexts/RelationshipContext';
 
@@ -37,6 +38,7 @@ export function App() {
                 <Route path="/calendar" element={<Calendar />} />
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/profile" element={<Profile />} />
+                <Route path="/chat" element={<PartnerChat />} />
               </Routes>
             </Layout>
           } />
