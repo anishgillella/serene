@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRelationship } from '@/contexts/RelationshipContext';
-import { Loader2, Settings, ArrowLeft } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Loader2, Settings, ArrowLeft, Users } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
 import ConversationView from '@/components/partner-chat/ConversationView';
 import MessageInput from '@/components/partner-chat/MessageInput';
+import SettingsDrawer from '@/components/partner-chat/SettingsDrawer';
 
 interface Message {
     id: string;
@@ -27,8 +28,22 @@ interface Conversation {
     message_count: number;
 }
 
+interface MessagingPreferences {
+    id: string;
+    relationship_id: string;
+    partner_id: string;
+    luna_assistance_enabled: boolean;
+    suggestion_mode: string;
+    intervention_enabled: boolean;
+    intervention_sensitivity: string;
+    show_read_receipts: boolean;
+    show_typing_indicators: boolean;
+    demo_mode_enabled: boolean;
+}
+
 const PartnerChat: React.FC = () => {
     const { relationshipId, partnerAName, partnerBName } = useRelationship();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [conversation, setConversation] = useState<Conversation | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
     const [loading, setLoading] = useState(true);
@@ -38,9 +53,25 @@ const PartnerChat: React.FC = () => {
     const [partnerTyping, setPartnerTyping] = useState(false);
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-    // For demo purposes, we'll use partner_a as the current user
-    // In production, this would come from auth context
-    const [currentPartnerId] = useState<string>('partner_a');
+    // Settings drawer state
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [preferences, setPreferences] = useState<MessagingPreferences | null>(null);
+    const [savingPreferences, setSavingPreferences] = useState(false);
+
+    // Get partner ID from URL param or default to partner_a
+    // Use ?as=partner_b to test as the other partner
+    const currentPartnerId = useMemo(() => {
+        const asParam = searchParams.get('as');
+        return asParam === 'partner_b' ? 'partner_b' : 'partner_a';
+    }, [searchParams]);
+
+    // Toggle between partners for testing
+    const switchPartner = useCallback(() => {
+        const newPartner = currentPartnerId === 'partner_a' ? 'partner_b' : 'partner_a';
+        setSearchParams({ as: newPartner });
+        // Force reload to reconnect WebSocket as new partner
+        window.location.href = `/chat?as=${newPartner}`;
+    }, [currentPartnerId, setSearchParams]);
 
     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -99,6 +130,62 @@ const PartnerChat: React.FC = () => {
 
         loadMessages();
     }, [conversation?.id, apiUrl]);
+
+    // Load preferences
+    useEffect(() => {
+        const loadPreferences = async () => {
+            if (!relationshipId || !currentPartnerId) return;
+
+            try {
+                const response = await fetch(
+                    `${apiUrl}/api/partner-messages/preferences?relationship_id=${relationshipId}&partner_id=${currentPartnerId}`,
+                    {
+                        headers: {
+                            'ngrok-skip-browser-warning': 'true'
+                        }
+                    }
+                );
+                if (!response.ok) throw new Error('Failed to load preferences');
+
+                const data = await response.json();
+                setPreferences(data);
+            } catch (err) {
+                console.error('Failed to load preferences:', err);
+            }
+        };
+
+        loadPreferences();
+    }, [relationshipId, currentPartnerId, apiUrl]);
+
+    // Update a single preference
+    const handleUpdatePreference = useCallback(async (key: string, value: boolean | string) => {
+        if (!relationshipId || !currentPartnerId) return;
+
+        setSavingPreferences(true);
+        try {
+            const response = await fetch(
+                `${apiUrl}/api/partner-messages/preferences?relationship_id=${relationshipId}&partner_id=${currentPartnerId}`,
+                {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'ngrok-skip-browser-warning': 'true'
+                    },
+                    body: JSON.stringify({ [key]: value })
+                }
+            );
+
+            if (!response.ok) throw new Error('Failed to update preference');
+
+            const updatedPrefs = await response.json();
+            setPreferences(updatedPrefs);
+        } catch (err) {
+            console.error('Failed to update preference:', err);
+            setError('Failed to save settings');
+        } finally {
+            setSavingPreferences(false);
+        }
+    }, [relationshipId, currentPartnerId, apiUrl]);
 
     // WebSocket connection
     useEffect(() => {
@@ -206,27 +293,28 @@ const PartnerChat: React.FC = () => {
     }
 
     const otherPartnerName = currentPartnerId === 'partner_a' ? partnerBName : partnerAName;
+    const currentPartnerName = currentPartnerId === 'partner_a' ? partnerAName : partnerBName;
 
     return (
-        <div className="flex flex-col h-full bg-surface-base">
+        <div className="flex flex-col h-full w-full bg-white">
             {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-border-subtle bg-surface-card shadow-sm">
-                <div className="flex items-center gap-3">
-                    <Link to="/" className="p-2 -ml-2 hover:bg-surface-hover rounded-full transition-colors">
-                        <ArrowLeft size={20} className="text-text-secondary" />
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white shadow-sm">
+                <div className="flex items-center gap-4">
+                    <Link to="/" className="p-2 -ml-2 hover:bg-gray-100 rounded-full transition-colors">
+                        <ArrowLeft size={20} className="text-gray-600" />
                     </Link>
                     <div>
-                        <h2 className="font-semibold text-text-primary">
+                        <h2 className="font-semibold text-gray-900 text-lg">
                             {otherPartnerName || 'Your Partner'}
                         </h2>
-                        <p className="text-xs text-text-tertiary">
+                        <p className="text-sm text-gray-500">
                             {isConnected ? (
-                                <span className="flex items-center gap-1">
+                                <span className="flex items-center gap-1.5">
                                     <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                                    Connected
+                                    Online
                                 </span>
                             ) : (
-                                <span className="flex items-center gap-1">
+                                <span className="flex items-center gap-1.5">
                                     <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
                                     Connecting...
                                 </span>
@@ -234,22 +322,37 @@ const PartnerChat: React.FC = () => {
                         </p>
                     </div>
                 </div>
-                <Link
-                    to="/chat/settings"
-                    className="p-2 hover:bg-surface-hover rounded-full transition-colors"
-                >
-                    <Settings size={20} className="text-text-secondary" />
-                </Link>
+
+                <div className="flex items-center gap-2">
+                    {/* Partner Switch Button (for testing) */}
+                    <button
+                        onClick={switchPartner}
+                        className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                        title="Switch partner (for testing)"
+                    >
+                        <Users size={16} className="text-gray-600" />
+                        <span className="text-gray-700">
+                            You: <strong>{currentPartnerName || currentPartnerId}</strong>
+                        </span>
+                    </button>
+
+                    <button
+                        onClick={() => setSettingsOpen(true)}
+                        className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                    >
+                        <Settings size={20} className="text-gray-600" />
+                    </button>
+                </div>
             </div>
 
             {/* Error Banner */}
             {error && (
-                <div className="px-4 py-2 bg-red-50 text-red-600 text-sm">
+                <div className="px-6 py-3 bg-red-50 text-red-600 text-sm border-b border-red-100">
                     {error}
                 </div>
             )}
 
-            {/* Messages */}
+            {/* Messages - Full width */}
             <ConversationView
                 messages={messages}
                 currentPartnerId={currentPartnerId}
@@ -262,6 +365,15 @@ const PartnerChat: React.FC = () => {
                 onSend={handleSendMessage}
                 onTyping={handleTyping}
                 disabled={!isConnected}
+            />
+
+            {/* Settings Drawer */}
+            <SettingsDrawer
+                isOpen={settingsOpen}
+                onClose={() => setSettingsOpen(false)}
+                preferences={preferences}
+                onUpdatePreference={handleUpdatePreference}
+                saving={savingPreferences}
             />
         </div>
     );

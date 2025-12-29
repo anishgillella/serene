@@ -12,7 +12,8 @@ import {
     PencilIcon,
     CheckIcon,
     XIcon,
-    Loader2
+    Loader2,
+    UsersIcon
 } from 'lucide-react';
 
 // Types (Mirroring Onboarding.tsx)
@@ -55,19 +56,28 @@ const Profile = () => {
     const [editingField, setEditingField] = useState<string | null>(null);
     const [editValue, setEditValue] = useState<string | string[]>('');
     const [saving, setSaving] = useState(false);
+    const [selectedPartner, setSelectedPartner] = useState<'partner_a' | 'partner_b'>('partner_a');
+    const [partnerNames, setPartnerNames] = useState<{ partner_a?: string; partner_b?: string }>({});
 
     useEffect(() => {
-        fetchProfile();
-    }, []);
+        fetchProfile(selectedPartner);
+    }, [selectedPartner]);
 
-    const fetchProfile = async () => {
+    const fetchProfile = async (partnerId: string) => {
+        setLoading(true);
+        setError(null);
         try {
             const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
-            const response = await fetch(`${apiUrl}/api/onboarding/profile`);
+            const response = await fetch(`${apiUrl}/api/onboarding/profile?partner_id=${partnerId}`);
             const data = await response.json();
 
             if (data.exists) {
                 setProfile(data.data);
+                // Store partner name for the tab
+                setPartnerNames(prev => ({
+                    ...prev,
+                    [partnerId]: data.data.partner_profile?.name || partnerId
+                }));
             } else {
                 setError("No profile found. Please complete onboarding first.");
             }
@@ -78,6 +88,28 @@ const Profile = () => {
             setLoading(false);
         }
     };
+
+    // Fetch both partner names on mount for the tabs
+    useEffect(() => {
+        const fetchPartnerNames = async () => {
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+            for (const partnerId of ['partner_a', 'partner_b']) {
+                try {
+                    const response = await fetch(`${apiUrl}/api/onboarding/profile?partner_id=${partnerId}`);
+                    const data = await response.json();
+                    if (data.exists && data.data.partner_profile?.name) {
+                        setPartnerNames(prev => ({
+                            ...prev,
+                            [partnerId]: data.data.partner_profile.name
+                        }));
+                    }
+                } catch (err) {
+                    console.error(`Error fetching ${partnerId} name:`, err);
+                }
+            }
+        };
+        fetchPartnerNames();
+    }, []);
 
     const startEditing = (field: string, value: string | string[], section: 'partner' | 'relationship') => {
         setEditingField(`${section}.${field}`);
@@ -104,7 +136,7 @@ const Profile = () => {
                 updatePayload.relationship_profile = { [field]: editValue };
             }
 
-            const response = await fetch(`${apiUrl}/api/onboarding/profile`, {
+            const response = await fetch(`${apiUrl}/api/onboarding/profile?partner_id=${selectedPartner}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatePayload)
@@ -235,10 +267,36 @@ const Profile = () => {
     return (
         <div className="max-w-4xl mx-auto py-8 px-4 animate-fade-in">
             <header className="mb-10">
-                <h1 className="text-h1 text-text-primary mb-2">Your Profile</h1>
-                <p className="text-body text-text-secondary">
-                    This is what Luna knows about you. Keep it updated for better advice.
+                <h1 className="text-h1 text-text-primary mb-2">Partner Profiles</h1>
+                <p className="text-body text-text-secondary mb-6">
+                    This is what Luna knows about each partner. Keep it updated for better advice.
                 </p>
+
+                {/* Partner Selection Tabs */}
+                <div className="flex gap-2 p-1 bg-surface-elevated rounded-xl">
+                    <button
+                        onClick={() => setSelectedPartner('partner_a')}
+                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${
+                            selectedPartner === 'partner_a'
+                                ? 'bg-accent text-white shadow-md'
+                                : 'text-text-secondary hover:bg-surface-hover'
+                        }`}
+                    >
+                        <UserIcon size={18} />
+                        {partnerNames.partner_a || 'Partner A'}
+                    </button>
+                    <button
+                        onClick={() => setSelectedPartner('partner_b')}
+                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-all ${
+                            selectedPartner === 'partner_b'
+                                ? 'bg-accent text-white shadow-md'
+                                : 'text-text-secondary hover:bg-surface-hover'
+                        }`}
+                    >
+                        <UsersIcon size={18} />
+                        {partnerNames.partner_b || 'Partner B'}
+                    </button>
+                </div>
             </header>
 
             <div className="space-y-12">

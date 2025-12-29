@@ -617,6 +617,7 @@ class MessagingPreferences(BaseModel):
     show_sentiment_indicators: bool = False
     show_read_receipts: bool = True
     show_typing_indicators: bool = True
+    demo_mode_enabled: bool = False  # When true, partner_b is simulated by LLM
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -638,6 +639,7 @@ class UpdatePreferencesRequest(BaseModel):
     show_sentiment_indicators: Optional[bool] = None
     show_read_receipts: Optional[bool] = None
     show_typing_indicators: Optional[bool] = None
+    demo_mode_enabled: Optional[bool] = None
 
 
 

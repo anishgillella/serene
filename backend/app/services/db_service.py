@@ -2021,6 +2021,111 @@ class DatabaseService:
             print(f"Error getting partner messages: {e}")
             return []
 
+    def get_partner_chat_context_for_luna(
+        self,
+        relationship_id: str,
+        limit: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Get partner chat history formatted for Luna's context.
+        Returns messages with partner names for better AI understanding.
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Get conversation for this relationship
+                    cursor.execute("""
+                        SELECT id FROM partner_conversations
+                        WHERE relationship_id = %s
+                    """, (relationship_id,))
+                    conv_row = cursor.fetchone()
+
+                    if not conv_row:
+                        return {
+                            "relationship_id": relationship_id,
+                            "message_count": 0,
+                            "messages": [],
+                            "summary": "No partner chat history available."
+                        }
+
+                    conversation_id = conv_row["id"]
+
+                    # Get messages with all analysis fields
+                    cursor.execute("""
+                        SELECT sender_id, content, sent_at,
+                               sentiment_label, emotions, escalation_risk,
+                               luna_intervened, original_content
+                        FROM partner_messages
+                        WHERE conversation_id = %s
+                          AND deleted_at IS NULL
+                        ORDER BY sent_at ASC
+                        LIMIT %s
+                    """, (conversation_id, limit))
+
+                    rows = cursor.fetchall()
+
+                    messages = []
+                    sentiment_counts = {"positive": 0, "neutral": 0, "negative": 0, "mixed": 0}
+                    escalation_events = []
+
+                    for row in rows:
+                        msg = {
+                            "sender": row["sender_id"],
+                            "content": row["content"],
+                            "timestamp": row["sent_at"].isoformat() if row["sent_at"] else None,
+                            "sentiment": row["sentiment_label"],
+                            "emotions": row["emotions"] or [],
+                            "escalation_risk": row["escalation_risk"],
+                            "luna_helped": row["luna_intervened"]
+                        }
+                        messages.append(msg)
+
+                        # Track sentiment distribution
+                        if row["sentiment_label"] and row["sentiment_label"] in sentiment_counts:
+                            sentiment_counts[row["sentiment_label"]] += 1
+
+                        # Track escalation events
+                        if row["escalation_risk"] in ["high", "critical"]:
+                            escalation_events.append({
+                                "sender": row["sender_id"],
+                                "timestamp": row["sent_at"].isoformat() if row["sent_at"] else None,
+                                "risk_level": row["escalation_risk"]
+                            })
+
+                    # Generate summary for Luna
+                    total = len(messages)
+                    summary_parts = [f"Chat history contains {total} messages."]
+
+                    if total > 0:
+                        partner_a_count = len([m for m in messages if m["sender"] == "partner_a"])
+                        partner_b_count = total - partner_a_count
+                        summary_parts.append(f"Partner A sent {partner_a_count}, Partner B sent {partner_b_count}.")
+
+                        if sentiment_counts["negative"] > 0:
+                            summary_parts.append(f"{sentiment_counts['negative']} messages had negative sentiment.")
+
+                        if escalation_events:
+                            summary_parts.append(f"{len(escalation_events)} high-risk escalation moments detected.")
+
+                    return {
+                        "relationship_id": relationship_id,
+                        "conversation_id": str(conversation_id),
+                        "message_count": total,
+                        "messages": messages,
+                        "sentiment_distribution": sentiment_counts,
+                        "escalation_events": escalation_events,
+                        "summary": " ".join(summary_parts)
+                    }
+
+        except Exception as e:
+            print(f"Error getting partner chat context for Luna: {e}")
+            return {
+                "relationship_id": relationship_id,
+                "message_count": 0,
+                "messages": [],
+                "summary": "Error retrieving chat history."
+            }
+
     def update_message_status(
         self,
         message_id: str,
@@ -2066,7 +2171,8 @@ class DatabaseService:
                                intervention_enabled, intervention_sensitivity,
                                push_notifications_enabled, notification_sound,
                                show_sentiment_indicators, show_read_receipts,
-                               show_typing_indicators, created_at, updated_at
+                               show_typing_indicators, demo_mode_enabled,
+                               created_at, updated_at
                         FROM partner_messaging_preferences
                         WHERE relationship_id = %s AND partner_id = %s
                     """, (relationship_id, partner_id))
@@ -2086,6 +2192,7 @@ class DatabaseService:
                             "show_sentiment_indicators": row["show_sentiment_indicators"],
                             "show_read_receipts": row["show_read_receipts"],
                             "show_typing_indicators": row["show_typing_indicators"],
+                            "demo_mode_enabled": row["demo_mode_enabled"],
                             "created_at": row["created_at"].isoformat() if row["created_at"] else None,
                             "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None
                         }
@@ -2100,7 +2207,7 @@ class DatabaseService:
                                   intervention_enabled, intervention_sensitivity,
                                   push_notifications_enabled, notification_sound,
                                   show_sentiment_indicators, show_read_receipts,
-                                  show_typing_indicators
+                                  show_typing_indicators, demo_mode_enabled
                     """, (relationship_id, partner_id))
 
                     row = cursor.fetchone()
@@ -2119,11 +2226,101 @@ class DatabaseService:
                         "show_sentiment_indicators": row["show_sentiment_indicators"],
                         "show_read_receipts": row["show_read_receipts"],
                         "show_typing_indicators": row["show_typing_indicators"],
+                        "demo_mode_enabled": row["demo_mode_enabled"],
                         "created_at": None,
                         "updated_at": None
                     }
         except Exception as e:
             print(f"Error getting messaging preferences: {e}")
+            raise e
+
+    def update_messaging_preferences(
+        self,
+        relationship_id: str,
+        partner_id: str,
+        updates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Update messaging preferences for a partner."""
+        try:
+            # Filter out None values and build dynamic SET clause
+            valid_fields = [
+                'luna_assistance_enabled', 'suggestion_mode',
+                'intervention_enabled', 'intervention_sensitivity',
+                'push_notifications_enabled', 'notification_sound',
+                'show_sentiment_indicators', 'show_read_receipts',
+                'show_typing_indicators', 'demo_mode_enabled'
+            ]
+
+            filtered_updates = {
+                k: v for k, v in updates.items()
+                if k in valid_fields and v is not None
+            }
+
+            if not filtered_updates:
+                # No updates, just return current preferences
+                return self.get_messaging_preferences(relationship_id, partner_id)
+
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Build the SET clause dynamically
+                    set_parts = [f"{key} = %s" for key in filtered_updates.keys()]
+                    set_clause = ", ".join(set_parts)
+                    values = list(filtered_updates.values())
+
+                    cursor.execute(f"""
+                        UPDATE partner_messaging_preferences
+                        SET {set_clause}, updated_at = NOW()
+                        WHERE relationship_id = %s AND partner_id = %s
+                        RETURNING id, relationship_id, partner_id,
+                                  luna_assistance_enabled, suggestion_mode,
+                                  intervention_enabled, intervention_sensitivity,
+                                  push_notifications_enabled, notification_sound,
+                                  show_sentiment_indicators, show_read_receipts,
+                                  show_typing_indicators, demo_mode_enabled,
+                                  created_at, updated_at
+                    """, (*values, relationship_id, partner_id))
+
+                    row = cursor.fetchone()
+
+                    if not row:
+                        # Preferences don't exist yet, create them first
+                        self.get_messaging_preferences(relationship_id, partner_id)
+                        # Then update
+                        cursor.execute(f"""
+                            UPDATE partner_messaging_preferences
+                            SET {set_clause}, updated_at = NOW()
+                            WHERE relationship_id = %s AND partner_id = %s
+                            RETURNING id, relationship_id, partner_id,
+                                      luna_assistance_enabled, suggestion_mode,
+                                      intervention_enabled, intervention_sensitivity,
+                                      push_notifications_enabled, notification_sound,
+                                      show_sentiment_indicators, show_read_receipts,
+                                      show_typing_indicators, demo_mode_enabled,
+                                      created_at, updated_at
+                        """, (*values, relationship_id, partner_id))
+                        row = cursor.fetchone()
+
+                    conn.commit()
+
+                    return {
+                        "id": str(row["id"]),
+                        "relationship_id": str(row["relationship_id"]),
+                        "partner_id": row["partner_id"],
+                        "luna_assistance_enabled": row["luna_assistance_enabled"],
+                        "suggestion_mode": row["suggestion_mode"],
+                        "intervention_enabled": row["intervention_enabled"],
+                        "intervention_sensitivity": row["intervention_sensitivity"],
+                        "push_notifications_enabled": row["push_notifications_enabled"],
+                        "notification_sound": row["notification_sound"],
+                        "show_sentiment_indicators": row["show_sentiment_indicators"],
+                        "show_read_receipts": row["show_read_receipts"],
+                        "demo_mode_enabled": row["demo_mode_enabled"],
+                        "show_typing_indicators": row["show_typing_indicators"],
+                        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None
+                    }
+        except Exception as e:
+            print(f"Error updating messaging preferences: {e}")
             raise e
 
 

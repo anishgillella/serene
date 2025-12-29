@@ -3,8 +3,9 @@ Mediator Context Routes - Phase 3
 Provides context for Luna's mediation
 """
 import logging
-from fastapi import APIRouter, HTTPException, Path, Body
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Path, Body, Query
+from typing import Optional, List
+from pydantic import BaseModel
 
 from app.services.pattern_analysis_service import pattern_analysis_service
 from app.services.db_service import db_service
@@ -12,6 +13,17 @@ from app.services.db_service import db_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/mediator", tags=["mediator"])
+
+
+class PartnerChatContextResponse(BaseModel):
+    """Response model for partner chat context"""
+    relationship_id: str
+    conversation_id: Optional[str] = None
+    message_count: int
+    messages: List[dict]
+    sentiment_distribution: Optional[dict] = None
+    escalation_events: Optional[List[dict]] = None
+    summary: str
 
 
 @router.get("/context/{conflict_id}")
@@ -162,4 +174,107 @@ async def enhance_luna_response(
 
     except Exception as e:
         logger.error(f"❌ Error enhancing response: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/partner-chat-context/{relationship_id}", response_model=PartnerChatContextResponse)
+async def get_partner_chat_context(
+    relationship_id: str = Path(..., description="The relationship UUID"),
+    limit: int = Query(default=100, ge=1, le=500, description="Maximum messages to return")
+):
+    """
+    Get partner chat history formatted for Luna's context.
+
+    This endpoint provides Luna with:
+    - All partner-to-partner messages in chronological order
+    - Sentiment analysis distribution
+    - Escalation events that occurred
+    - A summary of the conversation patterns
+
+    Luna uses this context to:
+    - Understand communication patterns between partners
+    - Identify recurring issues and triggers
+    - Provide more personalized recommendations
+    - Track improvement over time
+    """
+    try:
+        logger.info(f"📨 Getting partner chat context for relationship {relationship_id}")
+
+        context = db_service.get_partner_chat_context_for_luna(relationship_id, limit=limit)
+
+        logger.info(f"✅ Retrieved {context['message_count']} messages for Luna context")
+
+        return PartnerChatContextResponse(**context)
+
+    except Exception as e:
+        logger.error(f"❌ Error getting partner chat context: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/full-context/{relationship_id}")
+async def get_full_luna_context(
+    relationship_id: str = Path(..., description="The relationship UUID"),
+    conflict_id: Optional[str] = Query(default=None, description="Optional current conflict ID")
+):
+    """
+    Get comprehensive context for Luna including:
+    - Partner chat history
+    - Current conflict context (if provided)
+    - Pattern analysis
+    - Chronic needs and triggers
+
+    This is the primary endpoint for Luna to get all context needed
+    for providing personalized relationship coaching.
+    """
+    try:
+        logger.info(f"🧠 Getting full Luna context for relationship {relationship_id}")
+
+        # Get partner chat context
+        chat_context = db_service.get_partner_chat_context_for_luna(relationship_id, limit=100)
+
+        # Build response
+        full_context = {
+            "relationship_id": relationship_id,
+            "partner_chat": {
+                "message_count": chat_context["message_count"],
+                "messages": chat_context["messages"],
+                "sentiment_distribution": chat_context.get("sentiment_distribution"),
+                "escalation_events": chat_context.get("escalation_events", []),
+                "summary": chat_context["summary"]
+            },
+            "conflict_context": None,
+            "patterns": None
+        }
+
+        # If conflict_id provided, get that context too
+        if conflict_id:
+            try:
+                conflict_context = await get_mediation_context(conflict_id)
+                full_context["conflict_context"] = conflict_context
+            except HTTPException:
+                logger.warning(f"Could not get conflict context for {conflict_id}")
+
+        # Get pattern analysis
+        try:
+            chronic_needs = await pattern_analysis_service.track_chronic_needs(relationship_id)
+            trigger_patterns = await pattern_analysis_service.find_trigger_phrase_patterns(relationship_id)
+            escalation_risk = await pattern_analysis_service.calculate_escalation_risk(relationship_id)
+
+            full_context["patterns"] = {
+                "chronic_needs": [n.need for n in chronic_needs[:5]],
+                "trigger_phrases": trigger_patterns.get("most_impactful", [])[:5],
+                "escalation_risk": {
+                    "score": escalation_risk.risk_score,
+                    "interpretation": escalation_risk.interpretation
+                }
+            }
+        except Exception as e:
+            logger.warning(f"Could not get pattern analysis: {e}")
+
+        logger.info(f"✅ Full Luna context compiled successfully")
+
+        return full_context
+
+    except Exception as e:
+        logger.error(f"❌ Error getting full Luna context: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
