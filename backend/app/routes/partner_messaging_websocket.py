@@ -140,6 +140,9 @@ async def websocket_partner_chat(
             if msg_type == "message":
                 # Save message to database
                 content = data.get("content", "").strip()
+                original_content = data.get("original_content")
+                luna_intervened = data.get("luna_intervened", False)
+
                 if not content:
                     await websocket.send_json({
                         "type": "error",
@@ -153,7 +156,9 @@ async def websocket_partner_chat(
                         db_service.save_partner_message,
                         conversation_id=conversation_id,
                         sender_id=partner_id,
-                        content=content
+                        content=content,
+                        original_content=original_content,
+                        luna_intervened=luna_intervened
                     )
 
                     # Send confirmation to sender
