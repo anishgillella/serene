@@ -128,34 +128,85 @@ const SettingsDrawer: React.FC<SettingsDrawerProps> = ({
                         </div>
                     </section>
 
-                    {/* Luna AI Section - Coming Soon */}
+                    {/* Luna AI Section */}
                     <section>
                         <div className="flex items-center gap-2 mb-4">
                             <div className="p-1.5 bg-purple-100 rounded-lg">
                                 <Sparkles size={18} className="text-purple-600" />
                             </div>
                             <h3 className="font-semibold text-gray-900">Luna AI Assistance</h3>
-                            <span className="text-xs bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full font-medium">
-                                Coming Soon
-                            </span>
                         </div>
-                        <div className="space-y-4 bg-gray-50 rounded-xl p-4 opacity-50">
+                        <div className="space-y-4 bg-purple-50 rounded-xl p-4 border border-purple-200">
                             <ToggleSetting
                                 label="Luna Suggestions"
                                 description="Get AI-powered suggestions before sending sensitive messages"
                                 checked={preferences?.luna_assistance_enabled ?? true}
-                                onChange={() => {}}
-                                disabled={true}
+                                onChange={(checked) => onUpdatePreference('luna_assistance_enabled', checked)}
+                                disabled={saving || !preferences}
                             />
-                            <div className="border-t border-gray-200" />
-                            <ToggleSetting
-                                label="Conflict Detection"
-                                description="Luna will alert you when conversations may be escalating"
-                                checked={preferences?.intervention_enabled ?? true}
-                                onChange={() => {}}
-                                disabled={true}
-                            />
+                            {preferences?.luna_assistance_enabled && (
+                                <>
+                                    <div className="border-t border-purple-200" />
+                                    <div className="space-y-2">
+                                        <p className="text-sm font-medium text-gray-900">Suggestion Mode</p>
+                                        <p className="text-xs text-gray-500 mb-2">When should Luna review your messages?</p>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {[
+                                                { value: 'always', label: 'Always', desc: 'Review every message' },
+                                                { value: 'high_risk_only', label: 'High Risk', desc: 'Only risky messages' },
+                                            ].map((mode) => (
+                                                <button
+                                                    key={mode.value}
+                                                    onClick={() => onUpdatePreference('suggestion_mode', mode.value)}
+                                                    disabled={saving}
+                                                    className={`
+                                                        p-3 rounded-xl text-left transition-all border-2
+                                                        ${preferences?.suggestion_mode === mode.value
+                                                            ? 'bg-purple-100 border-purple-500'
+                                                            : 'bg-white border-gray-200 hover:border-purple-300'
+                                                        }
+                                                        ${saving ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                                                    `}
+                                                >
+                                                    <p className="text-sm font-medium text-gray-900">{mode.label}</p>
+                                                    <p className="text-xs text-gray-500">{mode.desc}</p>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="border-t border-purple-200" />
+                                    <div className="space-y-2">
+                                        <p className="text-sm font-medium text-gray-900">Sensitivity</p>
+                                        <p className="text-xs text-gray-500 mb-2">How sensitive should Luna be to potential issues?</p>
+                                        <div className="flex gap-2">
+                                            {['low', 'medium', 'high'].map((level) => (
+                                                <button
+                                                    key={level}
+                                                    onClick={() => onUpdatePreference('intervention_sensitivity', level)}
+                                                    disabled={saving}
+                                                    className={`
+                                                        flex-1 py-2 px-3 rounded-lg text-sm font-medium capitalize
+                                                        transition-all border-2
+                                                        ${preferences?.intervention_sensitivity === level
+                                                            ? 'bg-purple-100 border-purple-500 text-purple-700'
+                                                            : 'bg-white border-gray-200 text-gray-600 hover:border-purple-300'
+                                                        }
+                                                        ${saving ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                                                    `}
+                                                >
+                                                    {level}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
+                        {preferences?.luna_assistance_enabled && (
+                            <p className="text-xs text-purple-600 mt-2 text-center">
+                                Luna will help you communicate more effectively
+                            </p>
+                        )}
                     </section>
 
                     {/* Info Footer */}

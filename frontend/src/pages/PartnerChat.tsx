@@ -263,7 +263,11 @@ const PartnerChat: React.FC = () => {
         };
     }, [conversation?.id, currentPartnerId, apiUrl]);
 
-    const handleSendMessage = useCallback((content: string) => {
+    const handleSendMessage = useCallback((
+        content: string,
+        originalContent?: string,
+        lunaIntervened?: boolean
+    ) => {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
             setError('Not connected. Please refresh.');
             return;
@@ -271,7 +275,9 @@ const PartnerChat: React.FC = () => {
 
         wsRef.current.send(JSON.stringify({
             type: 'message',
-            content
+            content,
+            original_content: originalContent,
+            luna_intervened: lunaIntervened || false
         }));
     }, []);
 
@@ -362,9 +368,13 @@ const PartnerChat: React.FC = () => {
 
             {/* Input */}
             <MessageInput
+                conversationId={conversation?.id || ''}
+                senderId={currentPartnerId}
                 onSend={handleSendMessage}
                 onTyping={handleTyping}
-                disabled={!isConnected}
+                disabled={!isConnected || !conversation?.id}
+                lunaEnabled={preferences?.luna_assistance_enabled ?? true}
+                suggestionMode={preferences?.suggestion_mode as 'always' | 'on_request' | 'high_risk_only' | 'off' || 'always'}
             />
 
             {/* Settings Drawer */}

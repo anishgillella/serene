@@ -2323,6 +2323,157 @@ class DatabaseService:
             print(f"Error updating messaging preferences: {e}")
             raise e
 
+    # ============================================
+    # MESSAGE SUGGESTION METHODS (Phase 3)
+    # ============================================
+
+    def save_message_suggestion(
+        self,
+        conversation_id: str,
+        sender_id: str,
+        original_message: str,
+        risk_assessment: str,
+        detected_issues: List[str],
+        primary_suggestion: str,
+        suggestion_rationale: str,
+        alternatives: List[Dict],
+        underlying_need: str = None,
+        context_message_count: int = 0
+    ) -> Optional[str]:
+        """Save a Luna suggestion for a draft message."""
+        try:
+            import json
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        INSERT INTO message_suggestions
+                            (conversation_id, sender_id, original_message,
+                             risk_assessment, detected_issues,
+                             primary_suggestion, suggestion_rationale, alternatives,
+                             underlying_need, context_message_count)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                    """, (
+                        conversation_id, sender_id, original_message,
+                        risk_assessment, json.dumps(detected_issues),
+                        primary_suggestion, suggestion_rationale, json.dumps(alternatives),
+                        underlying_need, context_message_count
+                    ))
+
+                    row = cursor.fetchone()
+                    conn.commit()
+                    return str(row["id"])
+        except Exception as e:
+            print(f"Error saving message suggestion: {e}")
+            return None
+
+    def update_message_suggestion_response(
+        self,
+        suggestion_id: str,
+        user_action: str,
+        final_message_id: str = None,
+        selected_alternative_index: int = None
+    ) -> bool:
+        """Update a suggestion with the user's response."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE message_suggestions
+                        SET user_action = %s,
+                            final_message_id = %s,
+                            selected_alternative_index = %s,
+                            responded_at = NOW()
+                        WHERE id = %s
+                    """, (user_action, final_message_id, selected_alternative_index, suggestion_id))
+
+                    conn.commit()
+                    return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating message suggestion response: {e}")
+            return False
+
+    def get_suggestion_acceptance_rate(
+        self,
+        relationship_id: str,
+        days: int = 30
+    ) -> Dict[str, Any]:
+        """Get suggestion acceptance statistics for analytics."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) as total,
+                            COUNT(*) FILTER (WHERE user_action = 'accepted') as accepted,
+                            COUNT(*) FILTER (WHERE user_action = 'rejected') as rejected,
+                            COUNT(*) FILTER (WHERE user_action = 'modified') as modified,
+                            COUNT(*) FILTER (WHERE user_action = 'ignored') as ignored
+                        FROM message_suggestions ms
+                        JOIN partner_conversations pc ON ms.conversation_id = pc.id
+                        WHERE pc.relationship_id = %s
+                          AND ms.created_at > NOW() - INTERVAL '%s days'
+                          AND ms.risk_assessment != 'safe'
+                    """, (relationship_id, days))
+
+                    row = cursor.fetchone()
+                    total = row["total"] or 0
+
+                    return {
+                        "total_suggestions": total,
+                        "accepted": row["accepted"] or 0,
+                        "rejected": row["rejected"] or 0,
+                        "modified": row["modified"] or 0,
+                        "ignored": row["ignored"] or 0,
+                        "acceptance_rate": (row["accepted"] or 0) / total if total > 0 else 0
+                    }
+        except Exception as e:
+            print(f"Error getting suggestion acceptance rate: {e}")
+            return {
+                "total_suggestions": 0,
+                "accepted": 0,
+                "rejected": 0,
+                "modified": 0,
+                "ignored": 0,
+                "acceptance_rate": 0
+            }
+
+    def get_partner_messages_for_baseline(
+        self,
+        conversation_id: str,
+        sender_id: str,
+        days: int = 30,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Get messages for calculating baseline message characteristics."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, content, sent_at, sentiment_label
+                        FROM partner_messages
+                        WHERE conversation_id = %s
+                          AND sender_id = %s
+                          AND sent_at > NOW() - INTERVAL '%s days'
+                          AND deleted_at IS NULL
+                        ORDER BY sent_at DESC
+                        LIMIT %s
+                    """, (conversation_id, sender_id, days, limit))
+
+                    rows = cursor.fetchall()
+                    return [
+                        {
+                            "id": str(row["id"]),
+                            "content": row["content"],
+                            "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+                            "sentiment_label": row["sentiment_label"]
+                        }
+                        for row in rows
+                    ]
+        except Exception as e:
+            print(f"Error getting messages for baseline: {e}")
+            return []
+
 
 # Global singleton instance
 try:
