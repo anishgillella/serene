@@ -1842,6 +1842,290 @@ class DatabaseService:
         except Exception:
             return 0
 
+    # ============================================
+    # PARTNER MESSAGING METHODS
+    # ============================================
+
+    def get_or_create_partner_conversation(self, relationship_id: str) -> Dict[str, Any]:
+        """Get existing conversation or create new one for relationship."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Try to get existing
+                    cursor.execute("""
+                        SELECT id, relationship_id, created_at, last_message_at,
+                               last_message_preview, message_count
+                        FROM partner_conversations
+                        WHERE relationship_id = %s
+                    """, (relationship_id,))
+
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            "id": str(row["id"]),
+                            "relationship_id": str(row["relationship_id"]),
+                            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                            "last_message_at": row["last_message_at"].isoformat() if row["last_message_at"] else None,
+                            "last_message_preview": row["last_message_preview"],
+                            "message_count": row["message_count"] or 0
+                        }
+
+                    # Create new
+                    cursor.execute("""
+                        INSERT INTO partner_conversations (relationship_id)
+                        VALUES (%s)
+                        RETURNING id, relationship_id, created_at
+                    """, (relationship_id,))
+
+                    row = cursor.fetchone()
+                    conn.commit()
+
+                    return {
+                        "id": str(row["id"]),
+                        "relationship_id": str(row["relationship_id"]),
+                        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                        "last_message_at": None,
+                        "last_message_preview": None,
+                        "message_count": 0
+                    }
+        except Exception as e:
+            print(f"Error getting/creating partner conversation: {e}")
+            raise e
+
+    def get_conversation_by_id(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        """Get a conversation by its ID."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, relationship_id, created_at, last_message_at,
+                               last_message_preview, message_count
+                        FROM partner_conversations
+                        WHERE id = %s
+                    """, (conversation_id,))
+
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+
+                    return {
+                        "id": str(row["id"]),
+                        "relationship_id": str(row["relationship_id"]),
+                        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                        "last_message_at": row["last_message_at"].isoformat() if row["last_message_at"] else None,
+                        "last_message_preview": row["last_message_preview"],
+                        "message_count": row["message_count"] or 0
+                    }
+        except Exception as e:
+            print(f"Error getting conversation by ID: {e}")
+            return None
+
+    def save_partner_message(
+        self,
+        conversation_id: str,
+        sender_id: str,
+        content: str,
+        original_content: str = None,
+        luna_intervened: bool = False,
+        intervention_type: str = None
+    ) -> Dict[str, Any]:
+        """Save a new partner message."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        INSERT INTO partner_messages
+                            (conversation_id, sender_id, content, original_content,
+                             luna_intervened, intervention_type)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id, conversation_id, sender_id, content, status,
+                                  sent_at, luna_intervened, original_content
+                    """, (
+                        conversation_id, sender_id, content, original_content,
+                        luna_intervened, intervention_type
+                    ))
+
+                    row = cursor.fetchone()
+                    conn.commit()
+
+                    return {
+                        "id": str(row["id"]),
+                        "conversation_id": str(row["conversation_id"]),
+                        "sender_id": row["sender_id"],
+                        "content": row["content"],
+                        "status": row["status"],
+                        "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+                        "luna_intervened": row["luna_intervened"],
+                        "original_content": row["original_content"]
+                    }
+        except Exception as e:
+            print(f"Error saving partner message: {e}")
+            raise e
+
+    def get_partner_messages(
+        self,
+        conversation_id: str,
+        limit: int = 50,
+        before_timestamp: str = None
+    ) -> List[Dict[str, Any]]:
+        """Get paginated messages for a conversation."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    if before_timestamp:
+                        cursor.execute("""
+                            SELECT id, conversation_id, sender_id, content, status,
+                                   sent_at, delivered_at, read_at, sentiment_label,
+                                   emotions, escalation_risk, luna_intervened
+                            FROM partner_messages
+                            WHERE conversation_id = %s
+                              AND sent_at < %s
+                              AND deleted_at IS NULL
+                            ORDER BY sent_at DESC
+                            LIMIT %s
+                        """, (conversation_id, before_timestamp, limit))
+                    else:
+                        cursor.execute("""
+                            SELECT id, conversation_id, sender_id, content, status,
+                                   sent_at, delivered_at, read_at, sentiment_label,
+                                   emotions, escalation_risk, luna_intervened
+                            FROM partner_messages
+                            WHERE conversation_id = %s
+                              AND deleted_at IS NULL
+                            ORDER BY sent_at DESC
+                            LIMIT %s
+                        """, (conversation_id, limit))
+
+                    rows = cursor.fetchall()
+
+                    messages = []
+                    for row in rows:
+                        messages.append({
+                            "id": str(row["id"]),
+                            "conversation_id": str(row["conversation_id"]),
+                            "sender_id": row["sender_id"],
+                            "content": row["content"],
+                            "status": row["status"],
+                            "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+                            "delivered_at": row["delivered_at"].isoformat() if row["delivered_at"] else None,
+                            "read_at": row["read_at"].isoformat() if row["read_at"] else None,
+                            "sentiment_label": row["sentiment_label"],
+                            "emotions": row["emotions"] or [],
+                            "escalation_risk": row["escalation_risk"],
+                            "luna_intervened": row["luna_intervened"]
+                        })
+
+                    # Return in chronological order
+                    return list(reversed(messages))
+        except Exception as e:
+            print(f"Error getting partner messages: {e}")
+            return []
+
+    def update_message_status(
+        self,
+        message_id: str,
+        status: str,
+        timestamp_field: str = None
+    ) -> bool:
+        """Update message status (delivered, read)."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    if timestamp_field:
+                        cursor.execute(f"""
+                            UPDATE partner_messages
+                            SET status = %s, {timestamp_field} = NOW()
+                            WHERE id = %s
+                        """, (status, message_id))
+                    else:
+                        cursor.execute("""
+                            UPDATE partner_messages
+                            SET status = %s
+                            WHERE id = %s
+                        """, (status, message_id))
+
+                    conn.commit()
+                    return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating message status: {e}")
+            return False
+
+    def get_messaging_preferences(
+        self,
+        relationship_id: str,
+        partner_id: str
+    ) -> Dict[str, Any]:
+        """Get messaging preferences for a partner, creating defaults if none exist."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Try to get existing
+                    cursor.execute("""
+                        SELECT id, relationship_id, partner_id,
+                               luna_assistance_enabled, suggestion_mode,
+                               intervention_enabled, intervention_sensitivity,
+                               push_notifications_enabled, notification_sound,
+                               show_sentiment_indicators, show_read_receipts,
+                               show_typing_indicators, created_at, updated_at
+                        FROM partner_messaging_preferences
+                        WHERE relationship_id = %s AND partner_id = %s
+                    """, (relationship_id, partner_id))
+
+                    row = cursor.fetchone()
+                    if row:
+                        return {
+                            "id": str(row["id"]),
+                            "relationship_id": str(row["relationship_id"]),
+                            "partner_id": row["partner_id"],
+                            "luna_assistance_enabled": row["luna_assistance_enabled"],
+                            "suggestion_mode": row["suggestion_mode"],
+                            "intervention_enabled": row["intervention_enabled"],
+                            "intervention_sensitivity": row["intervention_sensitivity"],
+                            "push_notifications_enabled": row["push_notifications_enabled"],
+                            "notification_sound": row["notification_sound"],
+                            "show_sentiment_indicators": row["show_sentiment_indicators"],
+                            "show_read_receipts": row["show_read_receipts"],
+                            "show_typing_indicators": row["show_typing_indicators"],
+                            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None
+                        }
+
+                    # Create defaults
+                    cursor.execute("""
+                        INSERT INTO partner_messaging_preferences
+                            (relationship_id, partner_id)
+                        VALUES (%s, %s)
+                        RETURNING id, relationship_id, partner_id,
+                                  luna_assistance_enabled, suggestion_mode,
+                                  intervention_enabled, intervention_sensitivity,
+                                  push_notifications_enabled, notification_sound,
+                                  show_sentiment_indicators, show_read_receipts,
+                                  show_typing_indicators
+                    """, (relationship_id, partner_id))
+
+                    row = cursor.fetchone()
+                    conn.commit()
+
+                    return {
+                        "id": str(row["id"]),
+                        "relationship_id": str(row["relationship_id"]),
+                        "partner_id": row["partner_id"],
+                        "luna_assistance_enabled": row["luna_assistance_enabled"],
+                        "suggestion_mode": row["suggestion_mode"],
+                        "intervention_enabled": row["intervention_enabled"],
+                        "intervention_sensitivity": row["intervention_sensitivity"],
+                        "push_notifications_enabled": row["push_notifications_enabled"],
+                        "notification_sound": row["notification_sound"],
+                        "show_sentiment_indicators": row["show_sentiment_indicators"],
+                        "show_read_receipts": row["show_read_receipts"],
+                        "show_typing_indicators": row["show_typing_indicators"],
+                        "created_at": None,
+                        "updated_at": None
+                    }
+        except Exception as e:
+            print(f"Error getting messaging preferences: {e}")
+            raise e
+
 
 # Global singleton instance
 try:

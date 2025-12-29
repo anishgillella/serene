@@ -543,4 +543,101 @@ class SimilarFightResult(BaseModel):
     )
 
 
+# ============================================
+# PARTNER MESSAGING MODELS
+# ============================================
+
+class PartnerConversation(BaseModel):
+    """A conversation between partners"""
+    id: str
+    relationship_id: str
+    created_at: Optional[str] = None
+    last_message_at: Optional[str] = None
+    last_message_preview: Optional[str] = None
+    message_count: int = 0
+
+
+class PartnerMessage(BaseModel):
+    """A single message between partners"""
+    id: str
+    conversation_id: str
+    sender_id: str  # 'partner_a' or 'partner_b'
+    content: str
+    status: str = 'sent'  # 'sent', 'delivered', 'read'
+    sent_at: Optional[str] = None
+    delivered_at: Optional[str] = None
+    read_at: Optional[str] = None
+    sentiment_label: Optional[str] = None
+    emotions: List[str] = Field(default_factory=list)
+    escalation_risk: Optional[str] = None
+    luna_intervened: bool = False
+
+
+class SendMessageRequest(BaseModel):
+    """Request to send a partner message"""
+    conversation_id: str
+    sender_id: str = Field(..., pattern='^(partner_a|partner_b)$')
+    content: str = Field(..., min_length=1, max_length=5000)
+    request_luna_review: bool = False
+    original_content: Optional[str] = None
+    luna_intervened: bool = False
+
+
+class SendMessageResponse(BaseModel):
+    """Response after sending a message"""
+    message: PartnerMessage
+    luna_suggestion: Optional[dict] = None  # For Phase 3
+
+
+class GetMessagesRequest(BaseModel):
+    """Request to get messages"""
+    conversation_id: str
+    limit: int = Field(default=50, ge=1, le=100)
+    before: Optional[str] = None  # ISO timestamp for pagination
+
+
+class GetMessagesResponse(BaseModel):
+    """Response with messages list"""
+    messages: List[PartnerMessage]
+    has_more: bool
+    oldest_timestamp: Optional[str] = None
+
+
+class MessagingPreferences(BaseModel):
+    """User preferences for messaging and Luna assistance"""
+    id: str
+    relationship_id: str
+    partner_id: str
+    luna_assistance_enabled: bool = True
+    suggestion_mode: str = 'on_request'  # 'always', 'on_request', 'high_risk_only', 'off'
+    intervention_enabled: bool = True
+    intervention_sensitivity: str = 'medium'  # 'low', 'medium', 'high'
+    push_notifications_enabled: bool = True
+    notification_sound: bool = True
+    show_sentiment_indicators: bool = False
+    show_read_receipts: bool = True
+    show_typing_indicators: bool = True
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class UpdatePreferencesRequest(BaseModel):
+    """Request to update messaging preferences"""
+    luna_assistance_enabled: Optional[bool] = None
+    suggestion_mode: Optional[str] = Field(
+        default=None,
+        pattern='^(always|on_request|high_risk_only|off)$'
+    )
+    intervention_enabled: Optional[bool] = None
+    intervention_sensitivity: Optional[str] = Field(
+        default=None,
+        pattern='^(low|medium|high)$'
+    )
+    push_notifications_enabled: Optional[bool] = None
+    notification_sound: Optional[bool] = None
+    show_sentiment_indicators: Optional[bool] = None
+    show_read_receipts: Optional[bool] = None
+    show_typing_indicators: Optional[bool] = None
+
+
 

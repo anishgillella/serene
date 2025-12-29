@@ -65,6 +65,10 @@ from .routes import mediator_routes
 app.include_router(mediator_routes.router, prefix="/api/mediator")
 from .routes import relationship_routes
 app.include_router(relationship_routes.router)
+from .routes import partner_messaging_routes
+app.include_router(partner_messaging_routes.router)
+from .routes import partner_messaging_websocket
+app.include_router(partner_messaging_websocket.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)

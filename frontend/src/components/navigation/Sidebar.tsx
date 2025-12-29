@@ -10,7 +10,8 @@ import {
     Settings,
     Moon,
     Heart,
-    User
+    User,
+    MessageCircle
 } from 'lucide-react';
 import { useRelationship } from '../../contexts/RelationshipContext';
 
@@ -34,6 +35,7 @@ const Sidebar = () => {
 
     const navItems = [
         { icon: LayoutDashboard, label: 'Home', path: '/' },
+        { icon: MessageCircle, label: 'Partner Chat', path: '/chat' },
         { icon: Mic, label: 'Fight Capture', path: '/fight-capture' },
         { icon: Calendar, label: 'Calendar', path: '/calendar' },
         { icon: History, label: 'History', path: '/history' },

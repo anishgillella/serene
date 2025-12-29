@@ -5,7 +5,8 @@ import {
     Calendar,
     Mic,
     History,
-    BarChart2
+    BarChart2,
+    MessageCircle
 } from 'lucide-react';
 
 const BottomNav = () => {
@@ -13,9 +14,9 @@ const BottomNav = () => {
 
     const navItems = [
         { icon: LayoutDashboard, label: 'Home', path: '/' },
+        { icon: MessageCircle, label: 'Chat', path: '/chat' },
         { icon: Mic, label: 'Capture', path: '/fight-capture' },
         { icon: Calendar, label: 'Calendar', path: '/calendar' },
-        { icon: History, label: 'History', path: '/history' },
         { icon: BarChart2, label: 'Stats', path: '/analytics' },
     ];
 
