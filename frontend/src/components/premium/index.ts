@@ -20,3 +20,6 @@ export { SurfaceUnderlyingCard } from './SurfaceUnderlyingCard';
 export { EmotionalTimelineChart } from './EmotionalTimelineChart';
 export { TriggerSensitivityCard } from './TriggerSensitivityCard';
 export { ConflictReplayViewer } from './ConflictReplayViewer';
+
+// Phase 4: Messaging Analytics
+export { MessagingInsights } from './MessagingInsights';

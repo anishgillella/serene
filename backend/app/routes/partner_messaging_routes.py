@@ -2,7 +2,7 @@
 Partner Messaging API Routes
 
 Handles partner-to-partner messaging within Luna.
-Includes Phase 3 Luna suggestion endpoints.
+Includes Phase 3 Luna suggestion endpoints and Phase 4 passive analysis.
 """
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
@@ -12,6 +12,7 @@ import logging
 
 from app.services.db_service import db_service
 from app.services.message_suggestion_service import message_suggestion_service
+from app.services.message_analysis_service import message_analysis_service
 from app.models.schemas import (
     PartnerConversation,
     PartnerMessage,
@@ -168,7 +169,7 @@ async def send_message(
             luna_intervened=request.luna_intervened
         )
 
-        # Get conversation to find relationship_id for embedding
+        # Get conversation to find relationship_id for embedding and analysis
         conversation = db_service.get_conversation_by_id(request.conversation_id)
         if conversation:
             # Queue async embedding for RAG (fire-and-forget)
@@ -180,6 +181,16 @@ async def send_message(
                 sender_id=request.sender_id,
                 content=request.content,
                 sent_at=message["sent_at"]
+            )
+
+            # Queue Phase 4 async analysis (sentiment, emotions, gottman markers)
+            background_tasks.add_task(
+                message_analysis_service.analyze_message,
+                message_id=message["id"],
+                content=request.content,
+                conversation_id=request.conversation_id,
+                relationship_id=conversation["relationship_id"],
+                sender_id=request.sender_id
             )
 
         return SendMessageResponse(
@@ -396,4 +407,38 @@ async def update_preferences(
         return MessagingPreferences(**prefs)
     except Exception as e:
         logger.error(f"Error updating preferences: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# PHASE 4: MESSAGING ANALYTICS
+# ============================================
+
+@router.get("/analytics")
+async def get_messaging_analytics(
+    relationship_id: str = Query(..., description="Relationship UUID"),
+    days: int = Query(default=30, ge=1, le=365, description="Number of days to analyze")
+):
+    """
+    Get messaging analytics for dashboard (Phase 4).
+
+    Returns:
+    - Message counts and distribution by partner
+    - Sentiment distribution (positive, negative, neutral)
+    - Average sentiment score
+    - High-risk message count
+    - Luna intervention count
+    - Daily message trend with sentiment
+    - Top emotions expressed
+    - Detected trigger phrases
+    - Gottman Four Horsemen marker counts
+    """
+    try:
+        analytics = db_service.get_messaging_analytics(
+            relationship_id=relationship_id,
+            days=days
+        )
+        return analytics
+    except Exception as e:
+        logger.error(f"Error getting messaging analytics: {e}")
         raise HTTPException(status_code=500, detail=str(e))

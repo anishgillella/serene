@@ -30,13 +30,15 @@ import {
   GottmanRadar,
   RepairSuccessCard,
   CommunicationQuality,
+  MessagingInsights,
 } from '../components/premium';
 
-type TabId = 'overview' | 'communication' | 'patterns';
+type TabId = 'overview' | 'messaging' | 'communication' | 'patterns';
 
 const tabs = [
   { id: 'overview', label: 'Overview', icon: <Activity size={18} /> },
-  { id: 'communication', label: 'Communication', icon: <MessageCircle size={18} /> },
+  { id: 'messaging', label: 'Messaging', icon: <MessageCircle size={18} /> },
+  { id: 'communication', label: 'Conflicts', icon: <Shield size={18} /> },
   { id: 'patterns', label: 'Patterns', icon: <Target size={18} /> },
 ];
 
@@ -364,6 +366,23 @@ const Analytics: React.FC = () => {
                 <RecommendationsList
                   recommendations={dashboardData.escalation_risk?.recommendations || []}
                   delay={0.6}
+                />
+              </motion.div>
+            )}
+
+            {/* Messaging Tab - Partner-to-Partner Chat Analytics (Phase 4) */}
+            {activeTab === 'messaging' && (
+              <motion.div
+                key="messaging"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <MessagingInsights
+                  relationshipId={relationshipId}
+                  partnerNames={{ partner_a: 'Adrian', partner_b: 'Elara' }}
+                  delay={0}
                 />
               </motion.div>
             )}
