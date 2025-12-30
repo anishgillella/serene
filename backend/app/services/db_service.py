@@ -1754,7 +1754,8 @@ class DatabaseService:
             with self.get_db_context() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                     cursor.execute("""
-                        SELECT id, started_at, metadata, resentment_level, unmet_needs
+                        SELECT id, started_at, metadata, resentment_level, unmet_needs,
+                               is_resolved, resolved_at
                         FROM conflicts
                         WHERE relationship_id = %s
                         ORDER BY started_at DESC

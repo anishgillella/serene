@@ -1,5 +1,5 @@
 """
-LLM service for GPT-4o-mini via OpenRouter with structured output
+LLM service for Gemini 2.5 Flash via OpenRouter with structured output
 """
 import logging
 import json
@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 T = TypeVar('T', bound=BaseModel)
 
 class LLMService:
-    """Service for interacting with GPT-4o-mini via OpenRouter with structured output using Pydantic models"""
-    
+    """Service for interacting with Gemini 2.5 Flash via OpenRouter with structured output using Pydantic models"""
+
     def __init__(self):
         # OpenRouter uses OpenAI-compatible API
         self.client = OpenAI(
@@ -22,9 +22,9 @@ class LLMService:
             api_key=settings.OPENROUTER_API_KEY,
             timeout=60.0,  # Increased timeout for structured output generation
         )
-        # Use GPT-4o-mini with structured output via Pydantic models
-        self.model = "openai/gpt-4o-mini"
-        logger.info("✅ Initialized LLM service (GPT-4o-mini via OpenRouter with Pydantic structured output)")
+        # Use Gemini 2.5 Flash for fast, cost-effective responses
+        self.model = "google/gemini-2.5-flash"
+        logger.info("✅ Initialized LLM service (Gemini 2.5 Flash via OpenRouter with Pydantic structured output)")
     
     def chat_completion(
         self,
@@ -83,7 +83,7 @@ class LLMService:
         max_tokens: Optional[int] = None
     ) -> T:
         """
-        Generate structured output using GPT-4o-mini with Pydantic models via OpenRouter.
+        Generate structured output using Gemini 2.5 Flash with Pydantic models via OpenRouter.
         Uses JSON mode with strict schema enforcement.
         """
         content = None
@@ -136,7 +136,7 @@ IMPORTANT:
             if messages[0].get("role") != "system":
                 messages = [system_message] + messages
             
-            # Use GPT-4o-mini via OpenRouter with JSON mode
+            # Use Gemini 2.5 Flash via OpenRouter with JSON mode
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -295,7 +295,7 @@ Be SPECIFIC to this couple and this conflict. Reference actual quotes and moment
             }
         ]
         
-        llm_start_msg = f"🚀 Calling GPT-4o-mini for analysis (transcript: {len(transcript_text)} chars, POV: {partner_id or 'neutral'})"
+        llm_start_msg = f"🚀 Calling Gemini 2.5 Flash for analysis (transcript: {len(transcript_text)} chars, POV: {partner_id or 'neutral'})"
         logger.info(llm_start_msg)
         print(llm_start_msg)  # Also print to stdout for visibility
         start_time = __import__('time').time()
@@ -322,9 +322,10 @@ Be SPECIFIC to this couple and this conflict. Reference actual quotes and moment
         response_model: Type[T],
         boyfriend_profile: Optional[str] = None,
         girlfriend_profile: Optional[str] = None,
-        calendar_context: Optional[str] = None  # NEW: Calendar insights
+        calendar_context: Optional[str] = None,
+        messaging_context: Optional[str] = None  # NEW: Partner messaging insights
     ) -> T:
-        """Generate personalized repair plan with gender-aware insights and calendar awareness"""
+        """Generate personalized repair plan with gender-aware insights, calendar awareness, and messaging context"""
         
         # Determine which partner is requesting
         is_boyfriend_requesting = partner_requesting.lower() in ["boyfriend", "partner_a", "partner a"]
@@ -358,12 +359,28 @@ TIMING GUIDANCE BASED ON CALENDAR:
 - If low-risk phase (follicular/ovulation): Good time for deeper conversation and planning
 - Consider predicted cycle dates when suggesting specific timing
 """
-        
+
+        # NEW: Add messaging context for communication-aware repair
+        messaging_section = ""
+        if messaging_context:
+            messaging_section = f"""
+PARTNER MESSAGING INSIGHTS (from recent text conversations):
+{messaging_context}
+
+Use messaging patterns to:
+- Understand their current communication mood
+- Reference positive interactions when building your approach
+- Avoid communication patterns that have led to escalation
+- Leverage repair attempts and bids for connection that have worked
+"""
+
         # Use FULL transcript - no truncation
         logger.info(f"📝 Using full transcript for repair plan: {len(transcript_text)} characters")
         if calendar_context:
             logger.info(f"📅 Including calendar context: {len(calendar_context)} characters")
-        
+        if messaging_context:
+            logger.info(f"💬 Including messaging context: {len(messaging_context)} characters")
+
         prompt = f"""Generate a HIGHLY PERSONALIZED repair plan for this SPECIFIC conflict and couple.
 
 Conflict ID: {conflict_id}
@@ -372,6 +389,7 @@ Partner requesting help: {partner_requesting}
 {gender_context}
 {profile_context}
 {calendar_section}
+{messaging_section}
 
 CONFLICT SUMMARY:
 {analysis_summary}
@@ -603,10 +621,13 @@ Be SPECIFIC. Quote the transcript. Identify exact moments and phrases."""
         target_profile: Optional[str] = None,
         fight_debrief: Optional[str] = None,
         past_fights_intelligence: Optional[str] = None,
-        calendar_context: Optional[str] = None
+        calendar_context: Optional[str] = None,
+        messaging_context: Optional[str] = None  # NEW: Partner messaging insights
     ) -> T:
         """
         Generate HIGHLY personalized repair plan with mandatory citations (Phase 2).
+
+        ENHANCED: Now integrates messaging context from partner-to-partner messaging.
 
         Args:
             transcript_text: Full conflict transcript
@@ -619,6 +640,7 @@ Be SPECIFIC. Quote the transcript. Identify exact moments and phrases."""
             fight_debrief: Summary of this fight's dynamics
             past_fights_intelligence: Patterns from past fights
             calendar_context: Cycle/calendar awareness
+            messaging_context: Insights from partner messaging (sentiment trends, communication patterns)
         """
         # Build comprehensive context
         profile_context = ""
@@ -665,6 +687,19 @@ CALENDAR & CYCLE AWARENESS:
 {calendar_context}
 """
 
+        # NEW: Add messaging context
+        messaging_section = ""
+        if messaging_context:
+            messaging_section = f"""
+PARTNER MESSAGING INSIGHTS (from recent text conversations):
+{messaging_context}
+
+Use messaging patterns to:
+- Understand their current communication mood
+- Reference positive interactions when building your approach
+- Avoid patterns that led to escalation in messages
+"""
+
         prompt = f"""Generate a DEEPLY PERSONALIZED repair plan for {requesting_partner} approaching {target_partner}.
 
 Conflict ID: {conflict_id}
@@ -676,6 +711,7 @@ TRANSCRIPT:
 {debrief_context}
 {history_context}
 {calendar_section}
+{messaging_section}
 
 CRITICAL REQUIREMENTS - EVERY recommendation must cite its source:
 
@@ -690,7 +726,7 @@ CRITICAL REQUIREMENTS - EVERY recommendation must cite its source:
    Each step MUST include:
    - action: What to do
    - rationale: Why this helps
-   - citation_type: 'profile', 'transcript', 'pattern', or 'calendar'
+   - citation_type: 'profile', 'transcript', 'pattern', 'calendar', or 'messaging'
    - citation_detail: Specific quote/reference
 
 3. **APOLOGY SCRIPT**:
@@ -721,6 +757,7 @@ REMEMBER: Every single recommendation must trace back to:
 - A specific transcript quote
 - A pattern from past fights
 - Calendar data
+- Messaging patterns (sentiment trends, successful communication moments)
 
 Generic advice = FAIL. Everything must be personalized and cited."""
 
