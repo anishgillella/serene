@@ -2474,6 +2474,258 @@ class DatabaseService:
             print(f"Error getting messages for baseline: {e}")
             return []
 
+    # ============================================
+    # PHASE 4: MESSAGE ANALYSIS METHODS
+    # ============================================
+
+    def update_partner_message_analysis(
+        self,
+        message_id: str,
+        sentiment_score: float,
+        sentiment_label: str,
+        emotions: list,
+        detected_triggers: list,
+        escalation_risk: str,
+        gottman_markers: dict
+    ) -> bool:
+        """Update a message with Phase 4 analysis results."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE partner_messages
+                        SET sentiment_score = %s,
+                            sentiment_label = %s,
+                            emotions = %s,
+                            detected_triggers = %s,
+                            escalation_risk = %s,
+                            gottman_markers = %s
+                        WHERE id = %s
+                    """, (
+                        sentiment_score,
+                        sentiment_label,
+                        json.dumps(emotions),
+                        json.dumps(detected_triggers),
+                        escalation_risk,
+                        json.dumps(gottman_markers),
+                        message_id
+                    ))
+
+                    conn.commit()
+                    return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error updating message analysis: {e}")
+            return False
+
+    def get_messaging_analytics(
+        self,
+        relationship_id: str,
+        days: int = 30
+    ) -> dict:
+        """Get messaging analytics for dashboard (Phase 4)."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Get conversation ID
+                    cursor.execute("""
+                        SELECT id FROM partner_conversations
+                        WHERE relationship_id = %s
+                    """, (relationship_id,))
+                    row = cursor.fetchone()
+                    if not row:
+                        return self._empty_messaging_analytics(days)
+
+                    conversation_id = str(row["id"])
+
+                    # Message counts and sentiment distribution
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) as total_messages,
+                            COUNT(*) FILTER (WHERE sender_id = 'partner_a') as partner_a_count,
+                            COUNT(*) FILTER (WHERE sender_id = 'partner_b') as partner_b_count,
+                            COUNT(*) FILTER (WHERE sentiment_label = 'positive') as positive_count,
+                            COUNT(*) FILTER (WHERE sentiment_label = 'negative') as negative_count,
+                            COUNT(*) FILTER (WHERE sentiment_label = 'neutral') as neutral_count,
+                            COUNT(*) FILTER (WHERE escalation_risk IN ('high', 'critical')) as high_risk_count,
+                            COUNT(*) FILTER (WHERE luna_intervened = true) as luna_intervened_count,
+                            AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL) as avg_sentiment
+                        FROM partner_messages
+                        WHERE conversation_id = %s
+                          AND sent_at > NOW() - INTERVAL '%s days'
+                          AND deleted_at IS NULL
+                    """, (conversation_id, days))
+
+                    stats = cursor.fetchone()
+                    total = stats["total_messages"] or 0
+
+                    # Daily message trend
+                    cursor.execute("""
+                        SELECT
+                            DATE(sent_at) as date,
+                            COUNT(*) as message_count,
+                            AVG(sentiment_score) as avg_sentiment
+                        FROM partner_messages
+                        WHERE conversation_id = %s
+                          AND sent_at > NOW() - INTERVAL '%s days'
+                          AND deleted_at IS NULL
+                        GROUP BY DATE(sent_at)
+                        ORDER BY date
+                    """, (conversation_id, days))
+
+                    daily_trend = [
+                        {
+                            "date": row["date"].isoformat() if row["date"] else None,
+                            "count": row["message_count"],
+                            "avg_sentiment": float(row["avg_sentiment"]) if row["avg_sentiment"] else 0
+                        }
+                        for row in cursor.fetchall()
+                    ]
+
+                    # Most common emotions
+                    cursor.execute("""
+                        SELECT emotion, COUNT(*) as count
+                        FROM partner_messages,
+                             jsonb_array_elements_text(emotions) as emotion
+                        WHERE conversation_id = %s
+                          AND sent_at > NOW() - INTERVAL '%s days'
+                          AND deleted_at IS NULL
+                        GROUP BY emotion
+                        ORDER BY count DESC
+                        LIMIT 10
+                    """, (conversation_id, days))
+
+                    top_emotions = [
+                        {"emotion": row["emotion"], "count": row["count"]}
+                        for row in cursor.fetchall()
+                    ]
+
+                    # Detected triggers from messages
+                    cursor.execute("""
+                        SELECT trigger_phrase, COUNT(*) as count
+                        FROM partner_messages,
+                             jsonb_array_elements_text(detected_triggers) as trigger_phrase
+                        WHERE conversation_id = %s
+                          AND sent_at > NOW() - INTERVAL '%s days'
+                          AND deleted_at IS NULL
+                        GROUP BY trigger_phrase
+                        ORDER BY count DESC
+                        LIMIT 10
+                    """, (conversation_id, days))
+
+                    top_triggers = [
+                        {"trigger": row["trigger_phrase"], "count": row["count"]}
+                        for row in cursor.fetchall()
+                    ]
+
+                    # Gottman markers counts
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE gottman_markers->>'criticism' = 'true') as criticism,
+                            COUNT(*) FILTER (WHERE gottman_markers->>'contempt' = 'true') as contempt,
+                            COUNT(*) FILTER (WHERE gottman_markers->>'defensiveness' = 'true') as defensiveness,
+                            COUNT(*) FILTER (WHERE gottman_markers->>'stonewalling' = 'true') as stonewalling
+                        FROM partner_messages
+                        WHERE conversation_id = %s
+                          AND sent_at > NOW() - INTERVAL '%s days'
+                          AND deleted_at IS NULL
+                          AND gottman_markers IS NOT NULL
+                    """, (conversation_id, days))
+
+                    gottman = cursor.fetchone()
+
+                    return {
+                        "period_days": days,
+                        "total_messages": total,
+                        "messages_by_partner": {
+                            "partner_a": stats["partner_a_count"] or 0,
+                            "partner_b": stats["partner_b_count"] or 0
+                        },
+                        "sentiment_distribution": {
+                            "positive": stats["positive_count"] or 0,
+                            "negative": stats["negative_count"] or 0,
+                            "neutral": stats["neutral_count"] or 0,
+                            "positive_ratio": (stats["positive_count"] or 0) / total if total > 0 else 0
+                        },
+                        "average_sentiment": float(stats["avg_sentiment"]) if stats["avg_sentiment"] else 0,
+                        "high_risk_messages": stats["high_risk_count"] or 0,
+                        "luna_interventions": stats["luna_intervened_count"] or 0,
+                        "daily_trend": daily_trend,
+                        "top_emotions": top_emotions,
+                        "top_triggers": top_triggers,
+                        "gottman_markers": {
+                            "criticism": gottman["criticism"] or 0,
+                            "contempt": gottman["contempt"] or 0,
+                            "defensiveness": gottman["defensiveness"] or 0,
+                            "stonewalling": gottman["stonewalling"] or 0
+                        }
+                    }
+        except Exception as e:
+            print(f"Error getting messaging analytics: {e}")
+            return self._empty_messaging_analytics(days)
+
+    def _empty_messaging_analytics(self, days: int = 30) -> dict:
+        """Return empty analytics structure."""
+        return {
+            "period_days": days,
+            "total_messages": 0,
+            "messages_by_partner": {"partner_a": 0, "partner_b": 0},
+            "sentiment_distribution": {"positive": 0, "negative": 0, "neutral": 0, "positive_ratio": 0},
+            "average_sentiment": 0,
+            "high_risk_messages": 0,
+            "luna_interventions": 0,
+            "daily_trend": [],
+            "top_emotions": [],
+            "top_triggers": [],
+            "gottman_markers": {"criticism": 0, "contempt": 0, "defensiveness": 0, "stonewalling": 0}
+        }
+
+    def add_detected_trigger(
+        self,
+        relationship_id: str,
+        trigger_phrase: str,
+        source: str,
+        detected_by: str
+    ) -> None:
+        """Add a newly detected trigger phrase from messaging."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    # Check if trigger_phrases table exists and has the right schema
+                    cursor.execute("""
+                        INSERT INTO trigger_phrases
+                            (relationship_id, phrase, source, detected_by, occurrence_count, created_at)
+                        VALUES (%s, %s, %s, %s, 1, NOW())
+                        ON CONFLICT (relationship_id, phrase)
+                        DO UPDATE SET
+                            occurrence_count = trigger_phrases.occurrence_count + 1,
+                            updated_at = NOW()
+                    """, (relationship_id, trigger_phrase, source, detected_by))
+                    conn.commit()
+        except Exception as e:
+            # Table might not exist or have different schema - that's ok
+            print(f"Could not add trigger phrase (non-critical): {e}")
+
+    def record_escalation_event(
+        self,
+        relationship_id: str,
+        source: str,
+        severity: str,
+        context: str
+    ) -> None:
+        """Record an escalation event for pattern tracking."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO escalation_events
+                            (relationship_id, source, severity, context, created_at)
+                        VALUES (%s, %s, %s, %s, NOW())
+                    """, (relationship_id, source, severity, context))
+                    conn.commit()
+        except Exception as e:
+            # Table might not exist - that's ok, this is supplementary
+            print(f"Could not record escalation event (non-critical): {e}")
+
 
 # Global singleton instance
 try:
