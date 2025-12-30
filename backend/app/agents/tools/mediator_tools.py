@@ -235,7 +235,7 @@ class MediatorTools:
             """
 
             completion = await self.openai.chat.completions.create(
-                model="openai/gpt-4o-mini",
+                model="google/gemini-2.5-flash",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}

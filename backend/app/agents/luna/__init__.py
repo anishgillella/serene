@@ -107,7 +107,7 @@ async def mediator_entrypoint(ctx: JobContext):
     
     llm_instance = openai.LLM(
         api_key=openrouter_key,
-        model="openai/gpt-4o-mini",
+        model="google/gemini-2.5-flash",
     )
     
     tts_instance = elevenlabs.TTS(

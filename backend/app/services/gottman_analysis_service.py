@@ -104,8 +104,8 @@ class GottmanAnalysisService:
     """
 
     def __init__(self):
-        self.model_version = "gpt-4o-mini"
-        logger.info("✅ Initialized Gottman Analysis Service")
+        self.model_version = "gemini-2.5-flash"
+        logger.info("✅ Initialized Gottman Analysis Service (Gemini 2.5 Flash)")
 
     async def analyze_conflict(
         self,
