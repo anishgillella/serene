@@ -262,6 +262,141 @@ async def websocket_partner_chat(
                 # Keep-alive ping
                 await websocket.send_json({"type": "pong"})
 
+            elif msg_type == "gesture":
+                # Handle gesture sent via WebSocket
+                gesture_type = data.get("gesture_type")
+                gesture_message = data.get("message")
+                ai_generated = data.get("ai_generated", False)
+
+                if gesture_type not in ["hug", "kiss", "thinking_of_you"]:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Invalid gesture type"
+                    })
+                    continue
+
+                try:
+                    # Save gesture
+                    gesture = await asyncio.to_thread(
+                        db_service.save_gesture,
+                        relationship_id=relationship_id,
+                        gesture_type=gesture_type,
+                        sent_by=partner_id,
+                        message=gesture_message,
+                        ai_generated=ai_generated
+                    )
+
+                    # Confirm to sender
+                    await websocket.send_json({
+                        "type": "gesture_sent",
+                        "gesture": gesture
+                    })
+
+                    # Send to recipient
+                    other_partner = manager.get_other_partner(partner_id)
+                    await manager.send_to_partner(
+                        conversation_id,
+                        other_partner,
+                        {
+                            "type": "gesture_received",
+                            "gesture": gesture
+                        }
+                    )
+
+                    # Mark as delivered if recipient is online
+                    if manager.is_partner_connected(conversation_id, other_partner):
+                        asyncio.create_task(asyncio.to_thread(
+                            db_service.mark_gesture_delivered,
+                            gesture["id"]
+                        ))
+
+                except Exception as e:
+                    logger.error(f"Error saving gesture: {e}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Failed to send gesture"
+                    })
+
+            elif msg_type == "gesture_acknowledge":
+                # Handle gesture acknowledgment via WebSocket
+                gesture_id = data.get("gesture_id")
+                send_back = data.get("send_back", False)
+                send_back_type = data.get("send_back_type")
+                send_back_message = data.get("send_back_message")
+
+                try:
+                    original_gesture = await asyncio.to_thread(
+                        db_service.get_gesture_by_id,
+                        gesture_id
+                    )
+
+                    if not original_gesture:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Gesture not found"
+                        })
+                        continue
+
+                    response_gesture_id = None
+                    response_gesture = None
+
+                    # Create response gesture if sending back
+                    if send_back and send_back_type:
+                        response_gesture = await asyncio.to_thread(
+                            db_service.save_gesture,
+                            relationship_id=relationship_id,
+                            gesture_type=send_back_type,
+                            sent_by=partner_id,
+                            message=send_back_message
+                        )
+                        response_gesture_id = response_gesture["id"]
+
+                        # Send response to original sender
+                        other_partner = manager.get_other_partner(partner_id)
+                        await manager.send_to_partner(
+                            conversation_id,
+                            other_partner,
+                            {
+                                "type": "gesture_received",
+                                "gesture": response_gesture
+                            }
+                        )
+
+                    # Acknowledge original gesture
+                    await asyncio.to_thread(
+                        db_service.acknowledge_gesture,
+                        gesture_id=gesture_id,
+                        acknowledged_by=partner_id,
+                        response_gesture_id=response_gesture_id
+                    )
+
+                    # Notify original sender
+                    other_partner = manager.get_other_partner(partner_id)
+                    await manager.send_to_partner(
+                        conversation_id,
+                        other_partner,
+                        {
+                            "type": "gesture_acknowledged",
+                            "gesture_id": gesture_id,
+                            "acknowledged_by": partner_id,
+                            "response_gesture": response_gesture
+                        }
+                    )
+
+                    # Confirm to acknowledger
+                    await websocket.send_json({
+                        "type": "gesture_acknowledged_confirm",
+                        "gesture_id": gesture_id,
+                        "response_gesture": response_gesture
+                    })
+
+                except Exception as e:
+                    logger.error(f"Error acknowledging gesture: {e}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Failed to acknowledge gesture"
+                    })
+
     except WebSocketDisconnect:
         manager.disconnect(conversation_id, partner_id)
     except Exception as e:

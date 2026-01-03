@@ -642,4 +642,83 @@ class UpdatePreferencesRequest(BaseModel):
     demo_mode_enabled: Optional[bool] = None
 
 
+# ============================================
+# CONNECTION GESTURES MODELS
+# ============================================
+
+from enum import Enum
+
+
+class GestureType(str, Enum):
+    """Types of connection gestures"""
+    HUG = "hug"
+    KISS = "kiss"
+    THINKING_OF_YOU = "thinking_of_you"
+
+
+class ConnectionGesture(BaseModel):
+    """A connection gesture between partners"""
+    id: str
+    relationship_id: str
+    gesture_type: str  # 'hug', 'kiss', 'thinking_of_you'
+    sent_by: str  # 'partner_a' or 'partner_b'
+    message: Optional[str] = None
+    ai_generated: bool = False
+    sent_at: Optional[str] = None
+    delivered_at: Optional[str] = None
+    acknowledged_at: Optional[str] = None
+    acknowledged_by: Optional[str] = None
+    response_gesture_id: Optional[str] = None
+
+
+class SendGestureRequest(BaseModel):
+    """Request to send a connection gesture"""
+    relationship_id: str
+    gesture_type: GestureType
+    sender_id: str = Field(..., pattern='^(partner_a|partner_b)$')
+    message: Optional[str] = Field(default=None, max_length=280)
+    ai_generated: bool = False
+    ai_context: Optional[dict] = None  # What context AI used
+
+
+class SendGestureResponse(BaseModel):
+    """Response after sending a gesture"""
+    gesture: ConnectionGesture
+    recipient_online: bool
+
+
+class AcknowledgeGestureRequest(BaseModel):
+    """Request to acknowledge a received gesture"""
+    gesture_id: str
+    acknowledged_by: str = Field(..., pattern='^(partner_a|partner_b)$')
+    send_back: bool = False
+    send_back_type: Optional[GestureType] = None
+    send_back_message: Optional[str] = Field(default=None, max_length=280)
+
+
+class AcknowledgeGestureResponse(BaseModel):
+    """Response after acknowledging a gesture"""
+    acknowledged: bool
+    response_gesture: Optional[ConnectionGesture] = None
+
+
+class PendingGesturesResponse(BaseModel):
+    """Response with pending gestures for a partner"""
+    gestures: List[ConnectionGesture]
+    count: int
+
+
+class GenerateGestureMessageRequest(BaseModel):
+    """Request to generate AI message for a gesture"""
+    relationship_id: str
+    sender_id: str = Field(..., pattern='^(partner_a|partner_b)$')
+    gesture_type: GestureType
+
+
+class GenerateGestureMessageResponse(BaseModel):
+    """Response with AI-generated message"""
+    message: str
+    context_used: List[str]  # What context sources were used
+
+
 
