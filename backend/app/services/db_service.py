@@ -2727,6 +2727,200 @@ class DatabaseService:
             # Table might not exist - that's ok, this is supplementary
             print(f"Could not record escalation event (non-critical): {e}")
 
+    # ============================================
+    # CONNECTION GESTURES METHODS
+    # ============================================
+
+    def save_gesture(
+        self,
+        relationship_id: str,
+        gesture_type: str,
+        sent_by: str,
+        message: str = None,
+        ai_generated: bool = False,
+        ai_context_used: dict = None
+    ) -> Dict[str, Any]:
+        """Save a new connection gesture."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        INSERT INTO connection_gestures
+                            (relationship_id, gesture_type, sent_by, message,
+                             ai_generated, ai_context_used)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id, relationship_id, gesture_type, sent_by,
+                                  message, ai_generated, sent_at, delivered_at,
+                                  acknowledged_at, acknowledged_by, response_gesture_id
+                    """, (
+                        relationship_id, gesture_type, sent_by, message,
+                        ai_generated, json.dumps(ai_context_used or {})
+                    ))
+
+                    row = cursor.fetchone()
+                    conn.commit()
+
+                    return {
+                        "id": str(row["id"]),
+                        "relationship_id": str(row["relationship_id"]),
+                        "gesture_type": row["gesture_type"],
+                        "sent_by": row["sent_by"],
+                        "message": row["message"],
+                        "ai_generated": row["ai_generated"],
+                        "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+                        "delivered_at": row["delivered_at"].isoformat() if row["delivered_at"] else None,
+                        "acknowledged_at": row["acknowledged_at"].isoformat() if row["acknowledged_at"] else None,
+                        "acknowledged_by": row["acknowledged_by"],
+                        "response_gesture_id": str(row["response_gesture_id"]) if row["response_gesture_id"] else None
+                    }
+        except Exception as e:
+            print(f"Error saving gesture: {e}")
+            raise e
+
+    def mark_gesture_delivered(self, gesture_id: str) -> bool:
+        """Mark a gesture as delivered."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE connection_gestures
+                        SET delivered_at = NOW()
+                        WHERE id = %s AND delivered_at IS NULL
+                    """, (gesture_id,))
+                    conn.commit()
+                    return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error marking gesture delivered: {e}")
+            return False
+
+    def acknowledge_gesture(
+        self,
+        gesture_id: str,
+        acknowledged_by: str,
+        response_gesture_id: str = None
+    ) -> bool:
+        """Mark a gesture as acknowledged, optionally linking a response gesture."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE connection_gestures
+                        SET acknowledged_at = NOW(),
+                            acknowledged_by = %s,
+                            response_gesture_id = %s
+                        WHERE id = %s AND acknowledged_at IS NULL
+                    """, (acknowledged_by, response_gesture_id, gesture_id))
+                    conn.commit()
+                    return cursor.rowcount > 0
+        except Exception as e:
+            print(f"Error acknowledging gesture: {e}")
+            return False
+
+    def get_pending_gestures(
+        self,
+        relationship_id: str,
+        partner_id: str
+    ) -> List[Dict[str, Any]]:
+        """Get all unacknowledged gestures sent TO a specific partner."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, relationship_id, gesture_type, sent_by,
+                               message, ai_generated, sent_at, delivered_at
+                        FROM connection_gestures
+                        WHERE relationship_id = %s
+                          AND sent_by != %s
+                          AND acknowledged_at IS NULL
+                        ORDER BY sent_at ASC
+                    """, (relationship_id, partner_id))
+
+                    gestures = []
+                    for row in cursor.fetchall():
+                        gestures.append({
+                            "id": str(row["id"]),
+                            "relationship_id": str(row["relationship_id"]),
+                            "gesture_type": row["gesture_type"],
+                            "sent_by": row["sent_by"],
+                            "message": row["message"],
+                            "ai_generated": row["ai_generated"],
+                            "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+                            "delivered_at": row["delivered_at"].isoformat() if row["delivered_at"] else None
+                        })
+                    return gestures
+        except Exception as e:
+            print(f"Error getting pending gestures: {e}")
+            return []
+
+    def get_gesture_by_id(self, gesture_id: str) -> Optional[Dict[str, Any]]:
+        """Get a gesture by its ID."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, relationship_id, gesture_type, sent_by,
+                               message, ai_generated, sent_at, delivered_at,
+                               acknowledged_at, acknowledged_by, response_gesture_id
+                        FROM connection_gestures
+                        WHERE id = %s
+                    """, (gesture_id,))
+
+                    row = cursor.fetchone()
+                    if not row:
+                        return None
+
+                    return {
+                        "id": str(row["id"]),
+                        "relationship_id": str(row["relationship_id"]),
+                        "gesture_type": row["gesture_type"],
+                        "sent_by": row["sent_by"],
+                        "message": row["message"],
+                        "ai_generated": row["ai_generated"],
+                        "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+                        "delivered_at": row["delivered_at"].isoformat() if row["delivered_at"] else None,
+                        "acknowledged_at": row["acknowledged_at"].isoformat() if row["acknowledged_at"] else None,
+                        "acknowledged_by": row["acknowledged_by"],
+                        "response_gesture_id": str(row["response_gesture_id"]) if row["response_gesture_id"] else None
+                    }
+        except Exception as e:
+            print(f"Error getting gesture: {e}")
+            return None
+
+    def get_recent_gestures(
+        self,
+        relationship_id: str,
+        limit: int = 20
+    ) -> List[Dict[str, Any]]:
+        """Get recent gestures for a relationship."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT id, relationship_id, gesture_type, sent_by,
+                               message, ai_generated, sent_at, acknowledged_at
+                        FROM connection_gestures
+                        WHERE relationship_id = %s
+                        ORDER BY sent_at DESC
+                        LIMIT %s
+                    """, (relationship_id, limit))
+
+                    gestures = []
+                    for row in cursor.fetchall():
+                        gestures.append({
+                            "id": str(row["id"]),
+                            "relationship_id": str(row["relationship_id"]),
+                            "gesture_type": row["gesture_type"],
+                            "sent_by": row["sent_by"],
+                            "message": row["message"],
+                            "ai_generated": row["ai_generated"],
+                            "sent_at": row["sent_at"].isoformat() if row["sent_at"] else None,
+                            "acknowledged_at": row["acknowledged_at"].isoformat() if row["acknowledged_at"] else None
+                        })
+                    return gestures
+        except Exception as e:
+            print(f"Error getting recent gestures: {e}")
+            return []
+
 
 # Global singleton instance
 try:

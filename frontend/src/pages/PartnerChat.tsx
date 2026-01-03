@@ -5,6 +5,21 @@ import { Link, useSearchParams } from 'react-router-dom';
 import ConversationView from '@/components/partner-chat/ConversationView';
 import MessageInput from '@/components/partner-chat/MessageInput';
 import SettingsDrawer from '@/components/partner-chat/SettingsDrawer';
+import { GestureFAB, SendGestureModal, ReceiveGestureModal, GestureType } from '@/components/gestures';
+import { useGestures } from '@/hooks/useGestures';
+
+interface Gesture {
+    id: string;
+    relationship_id: string;
+    gesture_type: 'hug' | 'kiss' | 'thinking_of_you';
+    sent_by: string;
+    message?: string;
+    ai_generated: boolean;
+    sent_at: string;
+    delivered_at?: string;
+    acknowledged_at?: string;
+    acknowledged_by?: string;
+}
 
 interface Message {
     id: string;
@@ -58,6 +73,10 @@ const PartnerChat: React.FC = () => {
     const [preferences, setPreferences] = useState<MessagingPreferences | null>(null);
     const [savingPreferences, setSavingPreferences] = useState(false);
 
+    // Gesture state
+    const [selectedGestureType, setSelectedGestureType] = useState<GestureType | null>(null);
+    const [receivedGesture, setReceivedGesture] = useState<Gesture | null>(null);
+
     // Get partner ID from URL param or default to partner_a
     // Use ?as=partner_b to test as the other partner
     const currentPartnerId = useMemo(() => {
@@ -74,6 +93,30 @@ const PartnerChat: React.FC = () => {
     }, [currentPartnerId, setSearchParams]);
 
     const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+    // Initialize gesture hook
+    const {
+        pendingGestures,
+        generateMessage,
+        regenerateMessage,
+        sendGesture,
+        acknowledgeGesture,
+        handleWebSocketGesture,
+        loading: gestureLoading
+    } = useGestures({
+        relationshipId: relationshipId || '',
+        partnerId: currentPartnerId,
+        onGestureReceived: (gesture) => {
+            setReceivedGesture(gesture);
+        }
+    });
+
+    // Show first pending gesture on initial load
+    useEffect(() => {
+        if (pendingGestures.length > 0 && !receivedGesture) {
+            setReceivedGesture(pendingGestures[0]);
+        }
+    }, [pendingGestures, receivedGesture]);
 
     // Get or create conversation
     useEffect(() => {
@@ -244,6 +287,17 @@ const PartnerChat: React.FC = () => {
                 case 'error':
                     console.error('WebSocket error:', data.message);
                     break;
+                // Gesture handling
+                case 'gesture_received':
+                    handleWebSocketGesture(data.gesture);
+                    setReceivedGesture(data.gesture);
+                    break;
+                case 'gesture_acknowledged':
+                    console.log('Your gesture was acknowledged:', data.gesture_id);
+                    break;
+                case 'gesture_sent':
+                    console.log('Gesture sent:', data.gesture);
+                    break;
             }
         };
 
@@ -289,6 +343,28 @@ const PartnerChat: React.FC = () => {
             is_typing: isTyping
         }));
     }, []);
+
+    // Gesture handlers
+    const handleSelectGesture = (type: GestureType) => {
+        setSelectedGestureType(type);
+    };
+
+    const handleSendGesture = async (message: string, aiGenerated: boolean) => {
+        if (!selectedGestureType) return;
+        await sendGesture(selectedGestureType, message, aiGenerated);
+        setSelectedGestureType(null);
+    };
+
+    const handleAcknowledgeGesture = async (sendBack?: { type: string; message?: string }) => {
+        if (!receivedGesture) return;
+        await acknowledgeGesture(receivedGesture.id, sendBack);
+        setReceivedGesture(null);
+    };
+
+    // Determine sender name for received gesture
+    const gestureSenderName = receivedGesture?.sent_by === 'partner_a'
+        ? partnerAName || 'Your partner'
+        : partnerBName || 'Your partner';
 
     if (loading) {
         return (
@@ -385,6 +461,37 @@ const PartnerChat: React.FC = () => {
                 onUpdatePreference={handleUpdatePreference}
                 saving={savingPreferences}
             />
+
+            {/* Gesture FAB - only show when not viewing a received gesture */}
+            {!receivedGesture && (
+                <GestureFAB
+                    onSelectGesture={handleSelectGesture}
+                    disabled={!isConnected}
+                />
+            )}
+
+            {/* Send Gesture Modal */}
+            {selectedGestureType && (
+                <SendGestureModal
+                    gestureType={selectedGestureType}
+                    partnerName={otherPartnerName || 'your partner'}
+                    onGenerateMessage={() => generateMessage(selectedGestureType)}
+                    onRegenerateMessage={(prev) => regenerateMessage(selectedGestureType, prev)}
+                    onSend={handleSendGesture}
+                    onClose={() => setSelectedGestureType(null)}
+                    loading={gestureLoading}
+                />
+            )}
+
+            {/* Receive Gesture Celebration Modal */}
+            {receivedGesture && (
+                <ReceiveGestureModal
+                    gesture={receivedGesture}
+                    senderName={gestureSenderName}
+                    onAcknowledge={handleAcknowledgeGesture}
+                    onGenerateMessage={generateMessage}
+                />
+            )}
         </div>
     );
 };
