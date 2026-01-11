@@ -254,7 +254,14 @@ const PartnerChat: React.FC = () => {
                     setPartnerTyping(false);
                     break;
                 case 'message_sent':
-                    setMessages(prev => [...prev, data.message]);
+                    // Replace the optimistic message (temp-*) with the confirmed message from backend
+                    setMessages(prev => {
+                        // Find and remove any optimistic message with matching content
+                        const withoutOptimistic = prev.filter(m =>
+                            !m.id.startsWith('temp-') || m.content !== data.message.content
+                        );
+                        return [...withoutOptimistic, data.message];
+                    });
                     break;
                 case 'typing':
                     if (data.partner_id !== currentPartnerId) {
@@ -327,13 +334,25 @@ const PartnerChat: React.FC = () => {
             return;
         }
 
+        // Optimistic update: immediately show the message in the UI
+        const optimisticMessage: Message = {
+            id: `temp-${Date.now()}`, // Temporary ID until backend confirms
+            conversation_id: conversation?.id || '',
+            sender_id: currentPartnerId,
+            content,
+            status: 'sending',
+            sent_at: new Date().toISOString(),
+            luna_intervened: lunaIntervened
+        };
+        setMessages(prev => [...prev, optimisticMessage]);
+
         wsRef.current.send(JSON.stringify({
             type: 'message',
             content,
             original_content: originalContent,
             luna_intervened: lunaIntervened || false
         }));
-    }, []);
+    }, [conversation?.id, currentPartnerId]);
 
     const handleTyping = useCallback((isTyping: boolean) => {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
