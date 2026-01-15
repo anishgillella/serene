@@ -46,6 +46,7 @@ const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
   // Initialize VAPI
   useEffect(() => {
     const publicKey = import.meta.env.VITE_VAPI_PUBLIC_KEY;
+    console.log('🔑 VAPI Public Key:', publicKey ? `${publicKey.substring(0, 8)}...` : 'NOT SET');
     if (publicKey) {
       vapiRef.current = new Vapi(publicKey);
       setupEventListeners();
@@ -104,23 +105,16 @@ const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
       if (message.type === 'transcript') {
         const role = message.role as 'user' | 'assistant';
         const content = message.transcript;
+        const isFinal = message.transcriptType === 'final';
 
-        if (content && content.trim()) {
-          setTranscript(prev => {
-            // Update last message if same role, otherwise add new
-            const last = prev[prev.length - 1];
-            if (last && last.role === role && message.transcriptType === 'partial') {
-              return [...prev.slice(0, -1), { ...last, content }];
-            }
-            if (message.transcriptType === 'final') {
-              // Remove partial and add final
-              const withoutPartial = prev.filter(
-                (m, i) => !(i === prev.length - 1 && m.role === role)
-              );
-              return [...withoutPartial, { role, content, timestamp: new Date() }];
-            }
-            return [...prev, { role, content, timestamp: new Date() }];
-          });
+        console.log(`📝 Transcript [${role}] (${isFinal ? 'final' : 'partial'}):`, content?.substring(0, 50));
+
+        // Only add to transcript when the message is complete (final)
+        if (isFinal && content && content.trim()) {
+          setTranscript(prev => [
+            ...prev,
+            { role, content, timestamp: new Date() }
+          ]);
         }
       }
     });
@@ -151,17 +145,82 @@ const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
     setError(null);
 
     try {
-      await vapiRef.current.start(assistantId, {
-        metadata: {
-          conflict_id: conflictId,
-          relationship_id: relationshipId,
-          partner_a_name: partnerAName,
-          partner_b_name: partnerBName,
-        },
-        assistantOverrides: {
-          firstMessage: `Hey ${partnerAName}! I'm Luna. What's on your mind?`,
-        },
+      // Fetch context from backend before starting call
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      console.log('📋 Fetching voice context for conflict:', conflictId);
+
+      let systemPrompt = '';
+      let firstMessage = `Hey ${partnerAName}! I'm Luna. What's on your mind?`;
+      try {
+        const contextResponse = await fetch(`${apiUrl}/api/vapi/context/${conflictId}`);
+        const contextData = await contextResponse.json();
+        if (contextData.success && contextData.system_prompt) {
+          systemPrompt = contextData.system_prompt;
+          if (contextData.first_message) {
+            firstMessage = contextData.first_message;
+          }
+          console.log('✅ Got context:', contextData.has_context ? 'with conflict data' : 'base prompt only');
+          console.log('📣 First message:', firstMessage.substring(0, 50) + '...');
+        }
+      } catch (contextErr) {
+        console.warn('⚠️ Could not fetch context, using default prompt');
+      }
+
+      // Start call with assistant overrides including dynamic system prompt
+      console.log('🚀 Starting VAPI call with:', {
+        assistantId,
+        partnerAName,
+        conflictId,
+        hasContext: !!systemPrompt,
       });
+
+      // If we have context, create an ephemeral assistant with full config
+      // Otherwise use the pre-configured assistant
+      if (systemPrompt) {
+        // Create ephemeral assistant with dynamic system prompt
+        const ephemeralAssistant = {
+          name: 'Luna',
+          firstMessage: firstMessage,
+          model: {
+            provider: 'openai' as const,
+            model: 'gpt-4o-mini',
+            temperature: 0.7,
+            maxTokens: 250,
+            messages: [
+              {
+                role: 'system' as const,
+                content: systemPrompt,
+              },
+            ],
+          },
+          voice: {
+            provider: '11labs' as const,
+            voiceId: '21m00Tcm4TlvDq8ikWAM', // Rachel
+            model: 'eleven_flash_v2_5',
+          },
+          metadata: {
+            conflict_id: conflictId,
+            relationship_id: relationshipId,
+            partner_a_name: partnerAName,
+            partner_b_name: partnerBName,
+          },
+        };
+
+        console.log('🎯 Starting with ephemeral assistant (has context)');
+        await vapiRef.current.start(ephemeralAssistant);
+      } else {
+        // Fallback to pre-configured assistant
+        console.log('🎯 Starting with pre-configured assistant (no context)');
+        await vapiRef.current.start(assistantId, {
+          firstMessage: firstMessage,
+          metadata: {
+            conflict_id: conflictId,
+            relationship_id: relationshipId,
+            partner_a_name: partnerAName,
+            partner_b_name: partnerBName,
+          },
+        });
+      }
     } catch (err: any) {
       console.error('Failed to start call:', err);
       setError(err.message || 'Failed to start call');
@@ -306,7 +365,7 @@ const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
           {/* Transcript */}
           {transcript.length > 0 && (
-            <div className="bg-white/60 backdrop-blur rounded-2xl p-4 mb-6 max-h-48 overflow-y-auto">
+            <div className="bg-white/60 backdrop-blur rounded-2xl p-4 mb-6 max-h-64 overflow-y-auto">
               <div className="space-y-3">
                 {transcript.map((msg, idx) => (
                   <div

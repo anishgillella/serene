@@ -1013,26 +1013,25 @@ class DatabaseService:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                     # Get conflict metadata
                     cursor.execute("""
-                        SELECT id, relationship_id, started_at, ended_at, 
-                               status, duration_seconds, metadata
+                        SELECT id, relationship_id, started_at, ended_at,
+                               status, metadata
                         FROM conflicts
                         WHERE id = %s
                     """, (conflict_id,))
-                    
+
                     conflict = cursor.fetchone()
                     if not conflict:
                         return None
-                    
+
                     # Get transcript
                     transcript = self.get_conflict_transcript(conflict_id)
-                    
+
                     return {
                         "id": str(conflict["id"]),
                         "relationship_id": str(conflict["relationship_id"]),
                         "started_at": conflict["started_at"].isoformat() if conflict["started_at"] else None,
                         "ended_at": conflict["ended_at"].isoformat() if conflict["ended_at"] else None,
                         "status": conflict["status"],
-                        "duration_seconds": conflict["duration_seconds"],
                         "metadata": conflict["metadata"],
                         "transcript_text": transcript["transcript_text"] if transcript else "",
                         "messages": transcript["messages"] if transcript else [],

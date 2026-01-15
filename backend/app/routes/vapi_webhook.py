@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from app.services.db_service import db_service
 from app.services.pinecone_service import pinecone_service
 from app.services.embeddings_service import embeddings_service
+from app.services.s3_service import s3_service
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,23 @@ class VAPIWebhookRequest(BaseModel):
 # HELPER FUNCTIONS
 # ============================================
 
-def get_luna_system_prompt(partner_a_name: str, partner_b_name: str) -> str:
-    """Generate Luna's system prompt with partner names."""
+def get_luna_system_prompt(
+    partner_a_name: str,
+    partner_b_name: str,
+    conflict_context: Optional[str] = None
+) -> str:
+    """Generate Luna's system prompt with partner names and conflict context."""
+
+    context_section = ""
+    if conflict_context:
+        context_section = f"""
+
+## Current Conflict Context:
+{conflict_context}
+
+Use this context to have a more informed conversation. Reference specific things they said or issues that came up naturally.
+"""
+
     return f"""You are Luna, {partner_a_name}'s buddy who helps them think through relationship stuff with {partner_b_name}.
 
 ## Your Personality:
@@ -67,12 +83,66 @@ def get_luna_system_prompt(partner_a_name: str, partner_b_name: str) -> str:
 - Don't overuse filler words like "man", "bro", "dude"
 - When they share something hard, acknowledge it simply: "That's really tough" or "I get why that hurt"
 - Be willing to push back gently: "I hear you, but have you thought about how {partner_b_name} might see this?"
-
+{context_section}
 ## Context Awareness:
 When you have context about their relationship patterns, reference it naturally:
 - "You mentioned this came up before..."
 - "Based on what you've shared about {partner_b_name}..."
 """
+
+
+async def get_conflict_context(conflict_id: str) -> Optional[str]:
+    """Fetch conflict context including transcript and analysis."""
+    try:
+        context_parts = []
+
+        # Get conflict with transcript
+        conflict_data = db_service.get_conflict_with_transcript(conflict_id)
+        if conflict_data and conflict_data.get("transcript_text"):
+            transcript = conflict_data["transcript_text"]
+            # Truncate if too long (keep it manageable for the LLM)
+            if len(transcript) > 2000:
+                transcript = transcript[:2000] + "..."
+            context_parts.append(f"### Recent Conversation:\n{transcript}")
+
+        # Get conflict analysis from S3 if available
+        analysis_meta = db_service.get_conflict_analysis(conflict_id)
+        if analysis_meta and analysis_meta.get("analysis_path"):
+            # Strip s3://bucket-name/ prefix if present
+            analysis_path = analysis_meta["analysis_path"]
+            if analysis_path.startswith("s3://"):
+                # Extract just the key part (after bucket name)
+                parts = analysis_path.replace("s3://", "").split("/", 1)
+                if len(parts) > 1:
+                    analysis_path = parts[1]
+            analysis_bytes = s3_service.download_file(analysis_path)
+            if analysis_bytes:
+                analysis = json.loads(analysis_bytes.decode('utf-8'))
+
+                # Extract key insights
+                if analysis.get("fight_summary"):
+                    context_parts.append(f"### Summary:\n{analysis['fight_summary']}")
+
+                if analysis.get("root_causes"):
+                    causes = ", ".join(analysis["root_causes"][:3])
+                    context_parts.append(f"### Root Causes:\n{causes}")
+
+                if analysis.get("unmet_needs_partner_a"):
+                    needs_a = ", ".join(analysis["unmet_needs_partner_a"][:3])
+                    context_parts.append(f"### Partner A's Unmet Needs:\n{needs_a}")
+
+                if analysis.get("unmet_needs_partner_b"):
+                    needs_b = ", ".join(analysis["unmet_needs_partner_b"][:3])
+                    context_parts.append(f"### Partner B's Unmet Needs:\n{needs_b}")
+
+        if context_parts:
+            return "\n\n".join(context_parts)
+
+        return None
+
+    except Exception as e:
+        logger.error(f"Error fetching conflict context: {e}")
+        return None
 
 
 async def find_similar_conflicts_impl(
@@ -253,10 +323,11 @@ async def handle_assistant_request(message: Dict[str, Any]) -> Dict[str, Any]:
 
         conflict_id = metadata.get("conflict_id", "")
         relationship_id = metadata.get("relationship_id", "")
-        partner_a_name = metadata.get("partner_a_name", "Partner A")
-        partner_b_name = metadata.get("partner_b_name", "Partner B")
+        partner_a_name = metadata.get("partner_a_name", "Adrian")
+        partner_b_name = metadata.get("partner_b_name", "Elara")
 
         logger.info(f"🎯 Assistant request for conflict: {conflict_id}")
+        logger.info(f"👥 Partners: {partner_a_name} & {partner_b_name}")
 
         # Create DB session for logging
         session_id = None
@@ -264,8 +335,21 @@ async def handle_assistant_request(message: Dict[str, Any]) -> Dict[str, Any]:
             session_id = db_service.create_mediator_session(conflict_id)
             logger.info(f"✅ Created session: {session_id}")
 
-        # Generate dynamic system prompt
-        system_prompt = get_luna_system_prompt(partner_a_name, partner_b_name)
+        # Fetch conflict context (transcript, analysis, etc.)
+        conflict_context = None
+        if conflict_id:
+            conflict_context = await get_conflict_context(conflict_id)
+            if conflict_context:
+                logger.info(f"📋 Loaded conflict context ({len(conflict_context)} chars)")
+            else:
+                logger.info("⚠️ No conflict context available")
+
+        # Generate dynamic system prompt with context
+        system_prompt = get_luna_system_prompt(
+            partner_a_name,
+            partner_b_name,
+            conflict_context
+        )
 
         # Return assistant configuration
         return {
@@ -374,6 +458,69 @@ async def handle_transcript(message: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error logging transcript: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@router.get("/context/{conflict_id}")
+async def get_voice_context(conflict_id: str):
+    """
+    Get context for a voice call.
+    Frontend calls this before starting VAPI call to get dynamic system prompt.
+    """
+    try:
+        logger.info(f"📋 Fetching voice context for conflict: {conflict_id}")
+
+        # Fetch conflict context
+        conflict_context = await get_conflict_context(conflict_id)
+
+        # Generate system prompt with context
+        system_prompt = get_luna_system_prompt(
+            partner_a_name="Adrian",
+            partner_b_name="Elara",
+            conflict_context=conflict_context
+        )
+
+        # Generate a context-aware first message
+        first_message = "Hey Adrian! I'm Luna. What's on your mind?"
+        if conflict_context:
+            # Try to get a summary from the analysis
+            analysis_meta = db_service.get_conflict_analysis(conflict_id)
+            if analysis_meta and analysis_meta.get("analysis_path"):
+                # Strip s3://bucket-name/ prefix if present
+                analysis_path = analysis_meta["analysis_path"]
+                if analysis_path.startswith("s3://"):
+                    parts = analysis_path.replace("s3://", "").split("/", 1)
+                    if len(parts) > 1:
+                        analysis_path = parts[1]
+                analysis_bytes = s3_service.download_file(analysis_path)
+                if analysis_bytes:
+                    analysis = json.loads(analysis_bytes.decode('utf-8'))
+                    summary = analysis.get("fight_summary", "")
+                    if summary:
+                        # Truncate and create a personalized opener
+                        short_summary = summary[:150] + "..." if len(summary) > 150 else summary
+                        first_message = f"Hey Adrian! I'm Luna. I read through what happened - {short_summary} How are you feeling about it now?"
+                    else:
+                        first_message = "Hey Adrian! I'm Luna. I saw the conversation between you and Elara. It sounds like things got a bit tense. Want to talk through what happened?"
+            else:
+                first_message = "Hey Adrian! I'm Luna. I saw the conversation between you and Elara. It sounds like things got a bit tense. Want to talk through what happened?"
+
+        return {
+            "success": True,
+            "system_prompt": system_prompt,
+            "first_message": first_message,
+            "has_context": conflict_context is not None,
+            "context_preview": conflict_context[:200] + "..." if conflict_context and len(conflict_context) > 200 else conflict_context
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching voice context: {e}")
+        return {
+            "success": False,
+            "system_prompt": get_luna_system_prompt("Adrian", "Elara"),
+            "first_message": "Hey Adrian! I'm Luna. What's on your mind?",
+            "has_context": False,
+            "error": str(e)
+        }
 
 
 async def handle_end_of_call(message: Dict[str, Any]) -> Dict[str, Any]:
