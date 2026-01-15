@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, CheckCheck } from 'lucide-react';
+import { Check, CheckCheck, Clock } from 'lucide-react';
 
 interface Message {
     id: string;
@@ -32,6 +32,8 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({
 
     const getStatusIcon = () => {
         switch (message.status) {
+            case 'sending':
+                return <Clock size={14} className="text-white/50" />;
             case 'sent':
                 return <Check size={14} className="text-white/50" />;
             case 'delivered':

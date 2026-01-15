@@ -94,24 +94,6 @@ class QuickSuggestion(BaseModel):
     issue: Optional[str] = Field(None, description="Main issue detected, if any")
 
 
-# ============================================
-# PATTERNS FOR QUICK DETECTION
-# ============================================
-
-ACCUSATORY_PATTERNS = [
-    'you always', 'you never', "you don't", "you can't",
-    'your fault', 'you should', 'you make me', 'because of you',
-    "you're always", "you're never", 'why do you always',
-    'why can\'t you', 'what\'s wrong with you'
-]
-
-ESCALATION_WORDS = [
-    'hate', 'sick of', 'done with', 'leave', 'divorce',
-    'break up', "can't stand", 'over it', 'give up',
-    'worst', 'stupid', 'idiot', 'pathetic'
-]
-
-
 class MessageSuggestionService:
     """
     Generates pre-send suggestions using Gemini 2.5 Flash for speed.
@@ -224,7 +206,8 @@ class MessageSuggestionService:
                 patterns=patterns,
                 gottman_scores=gottman_scores,
                 messaging_analytics=messaging_analytics,
-                conflicts_summary=conflicts_summary
+                conflicts_summary=conflicts_summary,
+                sensitivity=sensitivity
             )
             llm_time = time.time() - llm_start
             logger.info(f"Enhanced LLM analysis took {llm_time:.2f}s, risk={result.risk}")
@@ -409,44 +392,9 @@ class MessageSuggestionService:
             return ""
 
     def _quick_risk_check(self, message: str, sensitivity: str) -> str:
-        """Quick heuristic check before LLM call."""
-        # High sensitivity = always use LLM
-        if sensitivity == 'high':
-            return 'needs_analysis'
-
-        message_lower = message.lower()
-
-        # Check for accusatory patterns
-        for pattern in ACCUSATORY_PATTERNS:
-            if pattern in message_lower:
-                return 'needs_analysis'
-
-        # Check for escalation words
-        for word in ESCALATION_WORDS:
-            if word in message_lower:
-                return 'needs_analysis'
-
-        # Check for excessive punctuation
-        if message.count('!') >= 3 or message.count('?') >= 3:
-            return 'needs_analysis'
-
-        # Check for ALL CAPS
-        alpha_chars = [c for c in message if c.isalpha()]
-        if alpha_chars and len(alpha_chars) > 10:
-            if sum(1 for c in alpha_chars if c.isupper()) / len(alpha_chars) > 0.5:
-                return 'needs_analysis'
-
-        # Medium sensitivity: check negative indicators
-        if sensitivity == 'medium':
-            negative_indicators = [
-                'disappointed', 'frustrated', 'upset', 'annoyed',
-                'hurt', 'angry', 'tired of', 'whatever', 'fine'
-            ]
-            for indicator in negative_indicators:
-                if indicator in message_lower:
-                    return 'needs_analysis'
-
-        return 'safe'
+        """Quick check - always use LLM, sensitivity is passed to the LLM prompt."""
+        # Always use LLM analysis - it will apply the sensitivity level
+        return 'needs_analysis'
 
     async def _enhanced_llm_analysis(
         self,
@@ -458,7 +406,8 @@ class MessageSuggestionService:
         patterns: Dict[str, Any],
         gottman_scores: Dict[str, Any],
         messaging_analytics: Dict[str, Any],
-        conflicts_summary: str
+        conflicts_summary: str,
+        sensitivity: str = 'medium'
     ) -> QuickSuggestion:
         """
         Enhanced LLM analysis with FULL context from all sources.
@@ -471,6 +420,7 @@ class MessageSuggestionService:
         - Gottman patterns (criticism, contempt, defensiveness, stonewalling)
         - Recent messaging sentiment trends
         - Recent conflict summaries
+        - Sensitivity level (low/medium/high) for how strict the analysis should be
         """
 
         # Build rich context
@@ -559,13 +509,19 @@ PARTNER PREFERENCES:
 
 === END CONTEXT ===
 
+SENSITIVITY LEVEL: {sensitivity.upper()}
+- HIGH: Be very strict. Flag subtle issues like passive-aggressive tone, dismissive language, or anything that could be misinterpreted. Err on the side of caution.
+- MEDIUM: Balance between being helpful and not over-flagging. Flag clear issues but allow neutral messages through.
+- LOW: Only flag obvious problems like insults, accusations, or clearly hostile language.
+
 Respond with JSON:
 {{"risk": "safe|risky|high_risk", "suggestion": "improved message or original if safe", "reason": "brief reason referencing context", "issue": "main issue or null"}}
 
 Rules:
-- "high_risk" = accusatory (you always/never), insults, threats, touches chronic needs harshly
-- "risky" = passive-aggressive, dismissive, ignores partner's needs, might escalate given current risk level
-- "safe" = constructive, uses "I" statements, addresses needs compassionately
+- "high_risk" = insults, profanity, accusations (you always/never), threats, contempt
+- "risky" = passive-aggressive, dismissive, ignores partner's needs, might escalate
+- "safe" = constructive, neutral, or positive communication
+- Apply the sensitivity level above when deciding risk
 - If risky/high_risk, rewrite to:
   * Use "I feel..." statements
   * Avoid known triggers
