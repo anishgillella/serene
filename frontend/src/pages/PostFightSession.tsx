@@ -1112,8 +1112,8 @@ const PostFightSession = () => {
                           <ConflictReplayViewer
                             messages={deepInsightsData.replayData?.messages || []}
                             surfaceUnderlying={deepInsightsData.replayData?.surface_underlying}
-                            partnerAName="Partner A"
-                            partnerBName="Partner B"
+                            partnerAName="Adrian"
+                            partnerBName="Elara"
                           />
                         )}
                         {deepInsightsSubTab === 'meanings' && (
@@ -1298,9 +1298,9 @@ const PostFightSession = () => {
           isOpen={isVoiceCallOpen}
           onClose={() => setIsVoiceCallOpen(false)}
           conflictId={conflictId || ''}
-          relationshipId="00000000-0000-0000-0000-000000000000"
-          partnerAName="Partner A"
-          partnerBName="Partner B"
+          relationshipId={conflictId || ''} // Use conflict_id as relationship context
+          partnerAName="Adrian"
+          partnerBName="Elara"
         />
       )}
     </div>
