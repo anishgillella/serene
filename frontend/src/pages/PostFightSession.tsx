@@ -9,7 +9,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { Button } from "@/components/ui/button";
 import VoiceButton from '../components/VoiceButton';
-import MediatorModal from '../components/MediatorModal';
+import VoiceCallModal from '../components/voice/VoiceCallModal';
 import TranscriptBubble from '../components/TranscriptBubble';
 import { RelatedConflicts } from '@/components/RelatedConflicts';
 import LunaChatPanel from '../components/LunaChatPanel';
@@ -36,8 +36,11 @@ interface ConflictAnalysis {
   fight_summary: string;
   root_causes: string[];
   escalation_points: Array<{ timestamp?: number; reason: string; description?: string }>;
-  unmet_needs_boyfriend: string[];
-  unmet_needs_girlfriend: string[];
+  unmet_needs_partner_a?: string[];
+  unmet_needs_partner_b?: string[];
+  // Backward compatibility
+  unmet_needs_boyfriend?: string[];
+  unmet_needs_girlfriend?: string[];
   communication_breakdowns: string[];
 }
 
@@ -180,7 +183,7 @@ const PostFightSession = () => {
   } | null>(null);
   const [loadingDeepInsights, setLoadingDeepInsights] = useState(false);
   const [deepInsightsSubTab, setDeepInsightsSubTab] = useState<'replay' | 'meanings' | 'timeline'>('replay');
-  const [isMediatorModalOpen, setIsMediatorModalOpen] = useState(false);
+  const [isVoiceCallOpen, setIsVoiceCallOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const [title, setTitle] = useState<string>('Post-Fight Session');
@@ -822,14 +825,14 @@ const PostFightSession = () => {
 
               <button
                 onClick={() => {
-                  console.log('🔘 Talk to Mediator button clicked', { conflictId, activeView });
-                  setIsMediatorModalOpen(true);
+                  console.log('🔘 Talk to Luna (Voice) button clicked', { conflictId, activeView });
+                  setIsVoiceCallOpen(true);
                 }}
                 disabled={!conflictId}
-                className="flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle"
+                className="flex items-center py-2.5 px-4 rounded-xl text-small font-medium transition-all shadow-soft hover:shadow-subtle disabled:opacity-50 disabled:cursor-not-allowed bg-gradient-to-r from-rose-500 to-purple-500 text-white hover:from-rose-600 hover:to-purple-600"
               >
                 <MicIcon size={16} className="mr-2" strokeWidth={1.5} />
-                Voice Call
+                Talk to Luna
               </button>
             </div>
           </div>
@@ -951,7 +954,7 @@ const PostFightSession = () => {
                       </div>
 
                       {/* Root Causes */}
-                      {analysisBoyfriend.root_causes.length > 0 && (
+                      {(analysisBoyfriend.root_causes || []).length > 0 && (
                         <div className="bg-white rounded-xl p-4 border border-purple-100">
                           <button
                             onClick={() => toggleSection('root_causes')}
@@ -961,7 +964,7 @@ const PostFightSession = () => {
                               <AlertCircleIcon size={18} className="text-orange-500 mr-2" />
                               <h4 className="font-semibold text-gray-800">Root Causes</h4>
                               <span className="ml-2 text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">
-                                {analysisBoyfriend.root_causes.length}
+                                {(analysisBoyfriend.root_causes || []).length}
                               </span>
                             </div>
                             {expandedSections.has('root_causes') ?
@@ -971,7 +974,7 @@ const PostFightSession = () => {
                           </button>
                           {expandedSections.has('root_causes') && (
                             <ul className="space-y-2">
-                              {analysisBoyfriend.root_causes.map((cause, idx) => (
+                              {(analysisBoyfriend.root_causes || []).map((cause, idx) => (
                                 <li key={idx} className="flex items-start text-gray-700">
                                   <span className="text-orange-500 mr-2 mt-1">•</span>
                                   <span>{cause}</span>
@@ -983,16 +986,17 @@ const PostFightSession = () => {
                       )}
 
                       {/* Unmet Needs */}
-                      {(analysisBoyfriend.unmet_needs_boyfriend.length > 0 || analysisBoyfriend.unmet_needs_girlfriend.length > 0) && (
+                      {((analysisBoyfriend.unmet_needs_partner_a || analysisBoyfriend.unmet_needs_boyfriend || []).length > 0 ||
+                        (analysisBoyfriend.unmet_needs_partner_b || analysisBoyfriend.unmet_needs_girlfriend || []).length > 0) && (
                         <div className="grid grid-cols-1 gap-4">
-                          {analysisBoyfriend.unmet_needs_boyfriend.length > 0 && (
+                          {(analysisBoyfriend.unmet_needs_partner_a || analysisBoyfriend.unmet_needs_boyfriend || []).length > 0 && (
                             <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
                               <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
                                 <span className="bg-blue-200 px-2 py-0.5 rounded text-xs mr-2">Your Needs</span>
                                 Unmet Needs
                               </h4>
                               <ul className="space-y-1.5">
-                                {analysisBoyfriend.unmet_needs_boyfriend.map((need, idx) => (
+                                {(analysisBoyfriend.unmet_needs_partner_a || analysisBoyfriend.unmet_needs_boyfriend || []).map((need, idx) => (
                                   <li key={idx} className="text-sm text-gray-700 flex items-start">
                                     <span className="text-blue-500 mr-2 mt-1">•</span>
                                     <span>{need}</span>
@@ -1002,14 +1006,14 @@ const PostFightSession = () => {
                             </div>
                           )}
 
-                          {analysisBoyfriend.unmet_needs_girlfriend.length > 0 && (
+                          {(analysisBoyfriend.unmet_needs_partner_b || analysisBoyfriend.unmet_needs_girlfriend || []).length > 0 && (
                             <div className="bg-pink-50 rounded-xl p-4 border border-pink-100">
                               <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
                                 <span className="bg-pink-200 px-2 py-0.5 rounded text-xs mr-2">Partner's Needs</span>
                                 Unmet Needs
                               </h4>
                               <ul className="space-y-1.5">
-                                {analysisBoyfriend.unmet_needs_girlfriend.map((need, idx) => (
+                                {(analysisBoyfriend.unmet_needs_partner_b || analysisBoyfriend.unmet_needs_girlfriend || []).map((need, idx) => (
                                   <li key={idx} className="text-sm text-gray-700 flex items-start">
                                     <span className="text-pink-500 mr-2 mt-1">•</span>
                                     <span>{need}</span>
@@ -1155,40 +1159,11 @@ const PostFightSession = () => {
                 </button>
               </div>
 
-              {/* Partner Tabs */}
-              {(repairPlanBoyfriend || repairPlanGirlfriend) && !loadingRepairPlan && !repairPlanError && (
-                <div className="flex gap-2 p-1 bg-gray-100 rounded-xl mb-4">
-                  <button
-                    onClick={() => setActiveRepairTab('partner_a')}
-                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                      activeRepairTab === 'partner_a'
-                        ? 'bg-white text-blue-600 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <UserIcon size={16} />
-                    <span>Partner A's Plan</span>
-                    {repairPlanBoyfriend && <span className="w-2 h-2 bg-green-400 rounded-full"></span>}
-                  </button>
-                  <button
-                    onClick={() => setActiveRepairTab('partner_b')}
-                    className={`flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2 ${
-                      activeRepairTab === 'partner_b'
-                        ? 'bg-white text-purple-600 shadow-sm'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    <UserIcon size={16} />
-                    <span>Partner B's Plan</span>
-                    {repairPlanGirlfriend && <span className="w-2 h-2 bg-green-400 rounded-full"></span>}
-                  </button>
-                </div>
-              )}
 
               {loadingRepairPlan ? (
                 <div className="flex items-center justify-center py-12">
                   <LoaderIcon size={24} className="animate-spin text-rose-500 mr-3" />
-                  <span className="text-gray-600">Generating personalized repair plans for both partners...</span>
+                  <span className="text-gray-600">Generating personalized repair plan...</span>
                 </div>
               ) : repairPlanError ? (
                 <div className="bg-red-50 rounded-xl p-6 border border-red-200">
@@ -1212,16 +1187,11 @@ const PostFightSession = () => {
                     </div>
                   </div>
                 </div>
-              ) : (repairPlanBoyfriend || repairPlanGirlfriend) ? (
+              ) : repairPlanBoyfriend ? (
                 <>
-                  {/* Partner A's Repair Plan */}
-                  {activeRepairTab === 'partner_a' && repairPlanBoyfriend && (
+                  {/* Repair Plan */}
+                  {repairPlanBoyfriend && (
                     <div className="space-y-4 animate-fade-in">
-                      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-4">
-                        <p className="text-sm text-blue-800">
-                          <strong>For Partner A:</strong> Steps to approach and repair with Partner B
-                        </p>
-                      </div>
 
                       {/* Steps */}
                       <div className="bg-white rounded-xl p-4 border border-rose-100">
@@ -1294,104 +1264,18 @@ const PostFightSession = () => {
                     </div>
                   )}
 
-                  {/* Partner B's Repair Plan */}
-                  {activeRepairTab === 'partner_b' && repairPlanGirlfriend && (
-                    <div className="space-y-4 animate-fade-in">
-                      <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 mb-4">
-                        <p className="text-sm text-purple-800">
-                          <strong>For Partner B:</strong> Steps to approach and repair with Partner A
-                        </p>
-                      </div>
-
-                      {/* Steps */}
-                      <div className="bg-white rounded-xl p-4 border border-rose-100">
-                        <h4 className="font-semibold text-gray-800 mb-3 flex items-center">
-                          <LightbulbIcon size={18} className="text-rose-500 mr-2" />
-                          Action Steps
-                        </h4>
-                        <ol className="space-y-3">
-                          {repairPlanGirlfriend.steps.map((step, idx) => (
-                            <li key={idx} className="flex items-start text-gray-700">
-                              <span className="bg-purple-100 text-purple-700 font-semibold rounded-full w-6 h-6 flex items-center justify-center text-xs mr-3 mt-0.5 flex-shrink-0">
-                                {idx + 1}
-                              </span>
-                              <span className="flex-1">{step}</span>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-
-                      {/* Apology Script */}
-                      <div className="bg-gradient-to-r from-purple-50 to-rose-50 rounded-xl p-5 border-2 border-purple-200">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="font-semibold text-gray-800 flex items-center">
-                            <HeartIcon size={18} className="text-purple-500 mr-2" />
-                            Apology Script
-                          </h4>
-                          <button
-                            onClick={() => copyToClipboard(repairPlanGirlfriend.apology_script, 'apology-gf')}
-                            className="text-gray-400 hover:text-gray-600 transition-colors"
-                            title="Copy to clipboard"
-                          >
-                            {copiedText === 'apology-gf' ? (
-                              <CheckIcon size={18} className="text-green-500" />
-                            ) : (
-                              <CopyIcon size={18} />
-                            )}
-                          </button>
-                        </div>
-                        <p className="text-gray-700 leading-relaxed italic whitespace-pre-wrap">
-                          {repairPlanGirlfriend.apology_script}
-                        </p>
-                      </div>
-
-                      {/* Timing */}
-                      <div className="bg-white rounded-xl p-4 border border-rose-100">
-                        <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                          <ClockIcon size={18} className="text-purple-500 mr-2" />
-                          Timing Suggestion
-                        </h4>
-                        <p className="text-gray-700 text-sm">{repairPlanGirlfriend.timing_suggestion}</p>
-                      </div>
-
-                      {/* Risk Factors */}
-                      {repairPlanGirlfriend.risk_factors && repairPlanGirlfriend.risk_factors.length > 0 && (
-                        <div className="bg-yellow-50 rounded-xl p-4 border border-yellow-200">
-                          <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                            <ShieldIcon size={18} className="text-yellow-600 mr-2" />
-                            Things to Avoid
-                          </h4>
-                          <ul className="space-y-2">
-                            {repairPlanGirlfriend.risk_factors.map((risk, idx) => (
-                              <li key={idx} className="flex items-start text-sm text-gray-700">
-                                <span className="text-yellow-600 mr-2 mt-1">⚠</span>
-                                <span>{risk}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* No plan available for selected tab */}
-                  {activeRepairTab === 'partner_a' && !repairPlanBoyfriend && (
+                  {/* No plan available */}
+                  {!repairPlanBoyfriend && (
                     <div className="text-center py-8 text-gray-500">
                       <AlertCircleIcon size={32} className="mx-auto mb-3 text-gray-300" />
-                      <p>Partner A's repair plan is not available yet.</p>
-                    </div>
-                  )}
-                  {activeRepairTab === 'partner_b' && !repairPlanGirlfriend && (
-                    <div className="text-center py-8 text-gray-500">
-                      <AlertCircleIcon size={32} className="mx-auto mb-3 text-gray-300" />
-                      <p>Partner B's repair plan is not available yet.</p>
+                      <p>Repair plan is not available yet.</p>
                     </div>
                   )}
                 </>
               ) : (
                 <div className="text-center py-12 text-gray-500">
                   <HeartIcon size={48} className="mx-auto mb-3 text-gray-300" />
-                  <p>Click "View Repair Plan" to generate personalized steps for both partners</p>
+                  <p>Click "View Repair Plan" to generate personalized repair steps</p>
                 </div>
               )}
             </div>
@@ -1408,18 +1292,15 @@ const PostFightSession = () => {
         </div>
       </div>
 
-      {/* Mediator Modal */}
+      {/* Voice Call Modal */}
       {conflictId && (
-        <MediatorModal
-          isOpen={isMediatorModalOpen}
-          onClose={() => setIsMediatorModalOpen(false)}
+        <VoiceCallModal
+          isOpen={isVoiceCallOpen}
+          onClose={() => setIsVoiceCallOpen(false)}
           conflictId={conflictId || ''}
-          context={{
-            activeView,
-            povView: 'boyfriend',
-            hasAnalysis: !!analysisBoyfriend,
-            hasRepairPlans: !!(repairPlanBoyfriend || repairPlanGirlfriend)
-          }}
+          relationshipId="00000000-0000-0000-0000-000000000000"
+          partnerAName="Partner A"
+          partnerBName="Partner B"
         />
       )}
     </div>

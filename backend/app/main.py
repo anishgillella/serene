@@ -71,6 +71,8 @@ from .routes import partner_messaging_websocket
 app.include_router(partner_messaging_websocket.router)
 from .routes import gestures_routes
 app.include_router(gestures_routes.router)
+from .routes import vapi_webhook
+app.include_router(vapi_webhook.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
