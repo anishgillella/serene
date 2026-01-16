@@ -2,6 +2,7 @@
 Pattern Analysis Service - Phase 2
 Analyzes conflict patterns, escalation risks, and relationships
 """
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
@@ -44,9 +45,10 @@ class PatternAnalysisService:
         try:
             logger.info(f"📊 Calculating escalation risk for {relationship_id}")
 
-            # Get recent conflicts
-            recent_conflicts = db_service.get_previous_conflicts(
-                relationship_id, limit=20
+            # Get recent conflicts (use to_thread to avoid blocking)
+            recent_conflicts = await asyncio.to_thread(
+                db_service.get_previous_conflicts,
+                relationship_id, 20
             )
 
             if not recent_conflicts:
@@ -400,7 +402,10 @@ class PatternAnalysisService:
         try:
             logger.info(f"💔 Tracking chronic needs for {relationship_id}")
 
-            needs = db_service.get_unmet_needs_for_relationship(relationship_id)
+            # Use to_thread to avoid blocking the event loop
+            needs = await asyncio.to_thread(
+                db_service.get_unmet_needs_for_relationship, relationship_id
+            )
 
             if not needs:
                 return []

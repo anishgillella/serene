@@ -284,7 +284,11 @@ ANALYSIS REQUIREMENTS (Personalized from {partner_id or "both partners"} perspec
    - Girlfriend's unmet needs: Consider that women often need to feel heard, emotional connection, care shown through actions. What SPECIFIC needs did she express? Analyze from HER perspective.
 5. **Communication Breakdowns**: SPECIFIC moments where communication failed - what was said, what was misunderstood? Return as an array of STRINGS, not objects. Focus on breakdowns from THIS partner's perspective.
 
-IMPORTANT: Return communication_breakdowns as an array of strings (not objects). Example: ["Adrian assumed Elara was criticizing him when she was just expressing concern", "Elara felt dismissed when Adrian changed the subject"]
+CRITICAL RULES - DO NOT VIOLATE:
+- ONLY quote text that ACTUALLY appears in the transcript above. Do NOT invent or hallucinate quotes.
+- If a quote is not in the transcript, DO NOT include it. Double-check every quote against the transcript.
+- Return communication_breakdowns as an array of strings (not objects). Example: ["Adrian assumed Elara was criticizing him when she was just expressing concern", "Elara felt dismissed when Adrian changed the subject"]
+- For escalation_points, ONLY include moments that are actually in the transcript with exact quotes from the transcript.
 
 Be SPECIFIC to this couple and this conflict. Reference actual quotes and moments from the transcript. Write the analysis from the perspective of the partner whose POV you're analyzing."""
 

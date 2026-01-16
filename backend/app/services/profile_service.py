@@ -108,12 +108,27 @@ class ProfileService:
     ) -> Dict[str, Optional[Dict[str, str]]]:
         """
         Fetch profiles for both partners in a relationship.
+        Optimized to fetch both profiles in parallel.
 
         Returns:
             Dictionary with 'partner_a' and 'partner_b' profiles
         """
-        partner_a = await self.get_full_partner_profile(relationship_id, "partner_a")
-        partner_b = await self.get_full_partner_profile(relationship_id, "partner_b")
+        import asyncio
+
+        # Fetch both profiles in parallel for speed
+        partner_a, partner_b = await asyncio.gather(
+            self.get_full_partner_profile(relationship_id, "partner_a"),
+            self.get_full_partner_profile(relationship_id, "partner_b"),
+            return_exceptions=True
+        )
+
+        # Handle any exceptions
+        if isinstance(partner_a, Exception):
+            logger.warning(f"Error fetching partner_a profile: {partner_a}")
+            partner_a = None
+        if isinstance(partner_b, Exception):
+            logger.warning(f"Error fetching partner_b profile: {partner_b}")
+            partner_b = None
 
         return {
             "partner_a": partner_a,

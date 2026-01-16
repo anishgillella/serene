@@ -131,10 +131,33 @@ async def websocket_partner_chat(
 
     await manager.connect(websocket, conversation_id, partner_id)
 
+    # Start keepalive ping task
+    async def send_keepalive():
+        """Send periodic pings to keep connection alive."""
+        try:
+            while True:
+                await asyncio.sleep(30)  # Ping every 30 seconds
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break  # Connection closed, stop pinging
+        except asyncio.CancelledError:
+            pass  # Task cancelled, normal shutdown
+
+    keepalive_task = asyncio.create_task(send_keepalive())
+
     try:
         while True:
-            # Receive message from client
-            data = await websocket.receive_json()
+            # Receive message from client with timeout
+            try:
+                data = await asyncio.wait_for(websocket.receive_json(), timeout=60)
+            except asyncio.TimeoutError:
+                # No message received in 60s, send ping to check connection
+                try:
+                    await websocket.send_json({"type": "ping"})
+                    continue
+                except Exception:
+                    break  # Connection dead
             msg_type = data.get("type")
 
             if msg_type == "message":
@@ -259,8 +282,12 @@ async def websocket_partner_chat(
                         )
 
             elif msg_type == "ping":
-                # Keep-alive ping
+                # Keep-alive ping from client
                 await websocket.send_json({"type": "pong"})
+
+            elif msg_type == "pong":
+                # Client responded to our ping - connection is alive
+                pass
 
             elif msg_type == "gesture":
                 # Handle gesture sent via WebSocket
@@ -398,9 +425,11 @@ async def websocket_partner_chat(
                     })
 
     except WebSocketDisconnect:
+        keepalive_task.cancel()
         manager.disconnect(conversation_id, partner_id)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+        keepalive_task.cancel()
         manager.disconnect(conversation_id, partner_id)
 
 
