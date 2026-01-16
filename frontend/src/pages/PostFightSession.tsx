@@ -170,7 +170,6 @@ const PostFightSession = () => {
 
   const [analysisBoyfriend, setAnalysisBoyfriend] = useState<ConflictAnalysis | null>(null);
   const [repairPlanBoyfriend, setRepairPlanBoyfriend] = useState<RepairPlan | null>(null);
-  const [repairPlanGirlfriend, setRepairPlanGirlfriend] = useState<RepairPlan | null>(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -486,7 +485,7 @@ const PostFightSession = () => {
     }
 
     // If already generated, just show it
-    if (repairPlanBoyfriend && repairPlanGirlfriend) {
+    if (repairPlanBoyfriend) {
       setActiveView('repair');
       return;
     }
@@ -526,10 +525,6 @@ const PostFightSession = () => {
           console.log('✅ Setting repairPlanBoyfriend');
           setRepairPlanBoyfriend(data.repair_plan_boyfriend);
         }
-        if (data.repair_plan_girlfriend) {
-          console.log('✅ Setting repairPlanGirlfriend');
-          setRepairPlanGirlfriend(data.repair_plan_girlfriend);
-        }
         setActiveView('repair');
       } else {
         throw new Error(data.detail || 'Generation failed');
@@ -542,7 +537,7 @@ const PostFightSession = () => {
     } finally {
       setLoadingRepairPlan(false);
     }
-  }, [conflictId, apiUrl, repairPlanBoyfriend, repairPlanGirlfriend, loadingRepairPlan]);
+  }, [conflictId, apiUrl, repairPlanBoyfriend, loadingRepairPlan]);
 
   const handleGenerateAll = useCallback(async () => {
     if (!conflictId) {
@@ -578,7 +573,6 @@ const PostFightSession = () => {
       console.log('📦 API Response:', data);
       console.log('📦 Response keys:', Object.keys(data));
       console.log('📦 Has analysis_boyfriend:', !!data.analysis_boyfriend);
-      console.log('📦 Has analysis_girlfriend:', !!data.analysis_girlfriend);
 
       if (data.success) {
         if (data.analysis_boyfriend) {
@@ -590,10 +584,6 @@ const PostFightSession = () => {
         if (data.repair_plan_boyfriend) {
           console.log('✅ Setting repairPlanBoyfriend');
           setRepairPlanBoyfriend(data.repair_plan_boyfriend);
-        }
-        if (data.repair_plan_girlfriend) {
-          console.log('✅ Setting repairPlanGirlfriend');
-          setRepairPlanGirlfriend(data.repair_plan_girlfriend);
         }
         // Auto-show analysis tab
         setActiveView('analysis');
@@ -619,13 +609,12 @@ const PostFightSession = () => {
       messagesCount: messages.length,
       analysisBoyfriend: !!analysisBoyfriend,
       repairPlanBoyfriend: !!repairPlanBoyfriend,
-      repairPlanGirlfriend: !!repairPlanGirlfriend,
       activeView,
       locationPath: location.pathname,
       locationState: location.state,
       locationKey: location.key
     });
-  }, [conflictId, state, messages.length, analysisBoyfriend, repairPlanBoyfriend, repairPlanGirlfriend, activeView, location.pathname, location.state, location.key]);
+  }, [conflictId, state, messages.length, analysisBoyfriend, repairPlanBoyfriend, activeView, location.pathname, location.state, location.key]);
 
   // Always render something - add error boundary
   if (!conflictId && !state?.conflict_id) {
@@ -792,8 +781,8 @@ const PostFightSession = () => {
 
               <button
                 onClick={async () => {
-                  if (!repairPlanBoyfriend && !repairPlanGirlfriend) {
-                    // Generate both repair plans
+                  if (!repairPlanBoyfriend) {
+                    // Generate repair plan
                     await handleGenerateRepairPlans();
                   }
                   setActiveView('repair');
@@ -803,11 +792,11 @@ const PostFightSession = () => {
                   ? 'bg-surface-elevated text-text-primary border border-accent'
                   : 'bg-surface-hover text-text-secondary border border-transparent hover:bg-white hover:text-text-primary hover:border-border-subtle'
                   }`}
-                title="View repair plans (generates both perspectives)"
+                title="View repair plan"
               >
                 {loadingRepairPlan && <LoaderIcon size={16} className="mr-2 animate-spin" strokeWidth={1.5} />}
                 {!loadingRepairPlan && <HeartIcon size={16} className="mr-2" strokeWidth={1.5} />}
-                {loadingRepairPlan ? 'Generating Repair Plans...' : 'View Repair Plan'}
+                {loadingRepairPlan ? 'Generating Repair Plan...' : 'View Repair Plan'}
               </button>
 
               <button

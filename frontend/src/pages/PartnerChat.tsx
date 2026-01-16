@@ -65,6 +65,7 @@ const PartnerChat: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const [isConnected, setIsConnected] = useState(false);
+    const [isReconnecting, setIsReconnecting] = useState(false);
     const [partnerTyping, setPartnerTyping] = useState(false);
     const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -230,97 +231,158 @@ const PartnerChat: React.FC = () => {
         }
     }, [relationshipId, currentPartnerId, apiUrl]);
 
-    // WebSocket connection
+    // WebSocket connection with auto-reconnect and keepalive
+    const reconnectAttempts = useRef(0);
+    const maxReconnectAttempts = 5;
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
     useEffect(() => {
         if (!conversation?.id || !currentPartnerId) return;
 
         const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-        const ws = new WebSocket(
-            `${wsUrl}/api/realtime/partner-chat?conversation_id=${conversation.id}&partner_id=${currentPartnerId}`
-        );
 
-        ws.onopen = () => {
-            setIsConnected(true);
-            console.log('WebSocket connected');
-        };
+        const connectWebSocket = () => {
+            const ws = new WebSocket(
+                `${wsUrl}/api/realtime/partner-chat?conversation_id=${conversation.id}&partner_id=${currentPartnerId}`
+            );
 
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            ws.onopen = () => {
+                setIsConnected(true);
+                setIsReconnecting(false);
+                setError(null); // Clear any previous connection errors
+                reconnectAttempts.current = 0; // Reset on successful connection
+                console.log('WebSocket connected');
 
-            switch (data.type) {
-                case 'new_message':
-                    setMessages(prev => [...prev, data.message]);
-                    // Clear typing indicator when message received
-                    setPartnerTyping(false);
-                    break;
-                case 'message_sent':
-                    // Replace the optimistic message (temp-*) with the confirmed message from backend
-                    setMessages(prev => {
-                        // Find and remove any optimistic message with matching content
-                        const withoutOptimistic = prev.filter(m =>
-                            !m.id.startsWith('temp-') || m.content !== data.message.content
-                        );
-                        return [...withoutOptimistic, data.message];
-                    });
-                    break;
-                case 'typing':
-                    if (data.partner_id !== currentPartnerId) {
-                        setPartnerTyping(data.is_typing);
-                        // Auto-clear typing after 3 seconds
-                        if (data.is_typing) {
-                            if (typingTimeoutRef.current) {
-                                clearTimeout(typingTimeoutRef.current);
-                            }
-                            typingTimeoutRef.current = setTimeout(() => {
-                                setPartnerTyping(false);
-                            }, 3000);
-                        }
+                // Start client-side keepalive ping every 25 seconds
+                if (pingIntervalRef.current) {
+                    clearInterval(pingIntervalRef.current);
+                }
+                pingIntervalRef.current = setInterval(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'ping' }));
                     }
-                    break;
-                case 'delivered':
-                    setMessages(prev => prev.map(m =>
-                        m.id === data.message_id
-                            ? { ...m, status: 'delivered' }
-                            : m
-                    ));
-                    break;
-                case 'read_receipt':
-                    setMessages(prev => prev.map(m =>
-                        m.id === data.message_id
-                            ? { ...m, status: 'read' }
-                            : m
-                    ));
-                    break;
-                case 'error':
-                    console.error('WebSocket error:', data.message);
-                    break;
-                // Gesture handling
-                case 'gesture_received':
-                    handleWebSocketGesture(data.gesture);
-                    setReceivedGesture(data.gesture);
-                    break;
-                case 'gesture_acknowledged':
-                    console.log('Your gesture was acknowledged:', data.gesture_id);
-                    break;
-                case 'gesture_sent':
-                    console.log('Gesture sent:', data.gesture);
-                    break;
-            }
+                }, 25000);
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                switch (data.type) {
+                    case 'new_message':
+                        setMessages(prev => [...prev, data.message]);
+                        // Clear typing indicator when message received
+                        setPartnerTyping(false);
+                        break;
+                    case 'message_sent':
+                        // Replace the optimistic message (temp-*) with the confirmed message from backend
+                        setMessages(prev => {
+                            // Find and remove any optimistic message with matching content
+                            const withoutOptimistic = prev.filter(m =>
+                                !m.id.startsWith('temp-') || m.content !== data.message.content
+                            );
+                            return [...withoutOptimistic, data.message];
+                        });
+                        break;
+                    case 'typing':
+                        if (data.partner_id !== currentPartnerId) {
+                            setPartnerTyping(data.is_typing);
+                            // Auto-clear typing after 3 seconds
+                            if (data.is_typing) {
+                                if (typingTimeoutRef.current) {
+                                    clearTimeout(typingTimeoutRef.current);
+                                }
+                                typingTimeoutRef.current = setTimeout(() => {
+                                    setPartnerTyping(false);
+                                }, 3000);
+                            }
+                        }
+                        break;
+                    case 'delivered':
+                        setMessages(prev => prev.map(m =>
+                            m.id === data.message_id
+                                ? { ...m, status: 'delivered' }
+                                : m
+                        ));
+                        break;
+                    case 'read_receipt':
+                        setMessages(prev => prev.map(m =>
+                            m.id === data.message_id
+                                ? { ...m, status: 'read' }
+                                : m
+                        ));
+                        break;
+                    case 'ping':
+                        // Server ping - respond with pong to keep connection alive
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({ type: 'pong' }));
+                        }
+                        break;
+                    case 'pong':
+                        // Server responded to our ping - connection is alive
+                        break;
+                    case 'error':
+                        console.error('WebSocket error:', data.message);
+                        break;
+                    // Gesture handling
+                    case 'gesture_received':
+                        handleWebSocketGesture(data.gesture);
+                        setReceivedGesture(data.gesture);
+                        break;
+                    case 'gesture_acknowledged':
+                        console.log('Your gesture was acknowledged:', data.gesture_id);
+                        break;
+                    case 'gesture_sent':
+                        console.log('Gesture sent:', data.gesture);
+                        break;
+                }
+            };
+
+            ws.onclose = () => {
+                setIsConnected(false);
+                console.log('WebSocket disconnected');
+
+                // Clear ping interval
+                if (pingIntervalRef.current) {
+                    clearInterval(pingIntervalRef.current);
+                    pingIntervalRef.current = null;
+                }
+
+                // Auto-reconnect with exponential backoff
+                if (reconnectAttempts.current < maxReconnectAttempts) {
+                    setIsReconnecting(true);
+                    const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 10000);
+                    console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+                    reconnectTimeoutRef.current = setTimeout(() => {
+                        reconnectAttempts.current++;
+                        connectWebSocket();
+                    }, delay);
+                } else {
+                    setIsReconnecting(false);
+                    console.error('Max reconnect attempts reached. Please refresh the page.');
+                    setError('Connection lost. Please refresh the page.');
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            wsRef.current = ws;
         };
 
-        ws.onclose = () => {
-            setIsConnected(false);
-            console.log('WebSocket disconnected');
-        };
-
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
-
-        wsRef.current = ws;
+        connectWebSocket();
 
         return () => {
-            ws.close();
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current);
+            }
+            if (pingIntervalRef.current) {
+                clearInterval(pingIntervalRef.current);
+            }
+            if (wsRef.current) {
+                wsRef.current.close();
+            }
         };
     }, [conversation?.id, currentPartnerId, apiUrl]);
 
@@ -398,8 +460,8 @@ const PartnerChat: React.FC = () => {
 
     return (
         <div className="flex flex-col h-full w-full bg-white">
-            {/* Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white shadow-sm">
+            {/* Header - Sticky at top */}
+            <div className="sticky top-0 z-10 flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white shadow-sm">
                 <div className="flex items-center gap-4">
                     <Link to="/" className="p-2 -ml-2 hover:bg-gray-100 rounded-full transition-colors">
                         <ArrowLeft size={20} className="text-gray-600" />
@@ -408,14 +470,24 @@ const PartnerChat: React.FC = () => {
                         <h2 className="font-semibold text-gray-900 text-lg">
                             {otherPartnerName || 'Your Partner'}
                         </h2>
-                        <p className="text-sm text-gray-500">
+                        <p className="text-sm">
                             {isConnected ? (
-                                <span className="flex items-center gap-1.5">
+                                <span className="flex items-center gap-1.5 text-gray-500">
                                     <span className="w-2 h-2 bg-green-500 rounded-full"></span>
                                     Online
                                 </span>
+                            ) : isReconnecting ? (
+                                <span className="flex items-center gap-1.5 text-amber-600">
+                                    <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
+                                    Reconnecting...
+                                </span>
+                            ) : error ? (
+                                <span className="flex items-center gap-1.5 text-red-600">
+                                    <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                                    Disconnected
+                                </span>
                             ) : (
-                                <span className="flex items-center gap-1.5">
+                                <span className="flex items-center gap-1.5 text-gray-500">
                                     <span className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></span>
                                     Connecting...
                                 </span>
@@ -446,10 +518,26 @@ const PartnerChat: React.FC = () => {
                 </div>
             </div>
 
+            {/* Connection Status Banner */}
+            {!isConnected && isReconnecting && (
+                <div className="px-6 py-3 bg-amber-50 text-amber-700 text-sm border-b border-amber-100 flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                        <Loader2 size={14} className="animate-spin" />
+                        Connection lost. Attempting to reconnect...
+                    </span>
+                </div>
+            )}
+
             {/* Error Banner */}
             {error && (
-                <div className="px-6 py-3 bg-red-50 text-red-600 text-sm border-b border-red-100">
-                    {error}
+                <div className="px-6 py-3 bg-red-50 text-red-600 text-sm border-b border-red-100 flex items-center justify-between">
+                    <span>{error}</span>
+                    <button
+                        onClick={() => window.location.reload()}
+                        className="px-3 py-1 bg-red-100 hover:bg-red-200 rounded text-xs font-medium transition-colors"
+                    >
+                        Refresh Page
+                    </button>
                 </div>
             )}
 

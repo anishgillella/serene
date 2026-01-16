@@ -705,11 +705,10 @@ async def generate_all_analysis_and_repair(
         # If generate-all is called manually without store-transcript, title might be missing, but that's rare.
         # asyncio.create_task(generate_title_background(conflict_id, transcript_text))
         
-        # Generate LLM calls in parallel: 2 analyses (boyfriend POV + girlfriend POV) + 1 repair plan (boyfriend only)
+        # Generate LLM calls in parallel: 1 analysis (boyfriend POV) + 1 repair plan (boyfriend)
         timestamp_now = datetime.now()
-        
+
         # We use asyncio.gather to run tasks concurrently
-        # Note: We are NOT generating girlfriend repair plan as per requirements
         results = await asyncio.gather(
             # Analysis from Boyfriend's POV (personalized)
             analyze_conflict_transcript(
@@ -722,20 +721,6 @@ async def generate_all_analysis_and_repair(
                 duration=duration,
                 timestamp=timestamp_now,
                 partner_id="partner_a",  # Boyfriend's perspective
-                boyfriend_profile=boyfriend_profile,
-                girlfriend_profile=girlfriend_profile
-            ),
-            # Analysis from Girlfriend's POV (personalized)
-            analyze_conflict_transcript(
-                conflict_id=conflict_id,
-                transcript_text=transcript_text,
-                relationship_id=relationship_id,
-                partner_a_id=partner_a_id,
-                partner_b_id=partner_b_id,
-                speaker_labels=speaker_labels,
-                duration=duration,
-                timestamp=timestamp_now,
-                partner_id="partner_b",  # Girlfriend's perspective
                 boyfriend_profile=boyfriend_profile,
                 girlfriend_profile=girlfriend_profile
             ),
@@ -752,56 +737,41 @@ async def generate_all_analysis_and_repair(
                 girlfriend_profile=girlfriend_profile
             )
         )
-        
-        analysis_boyfriend, analysis_girlfriend, repair_plan_boyfriend = results
-        repair_plan_girlfriend = None # Explicitly set to None as we skipped it
-        
+
+        analysis_boyfriend, repair_plan_boyfriend = results
+
         # Calculate timing
-        logger.info(f"✅ All LLM calls completed in parallel: 2 analyses (boyfriend + girlfriend POV) + 1 repair plan")
+        logger.info(f"✅ All LLM calls completed in parallel: 1 analysis (boyfriend POV) + 1 repair plan")
         
         # Define background storage task
         async def store_all_background():
             try:
-                # Store both analyses in Pinecone and S3
                 import json
-                
+
                 # Store boyfriend analysis in S3
                 analysis_path_bf = f"analysis/{relationship_id}/{conflict_id}_analysis_boyfriend.json"
                 analysis_json_bf = json.dumps(analysis_boyfriend.model_dump(), default=str, indent=2)
-                
-                # Store girlfriend analysis in S3
-                analysis_path_gf = f"analysis/{relationship_id}/{conflict_id}_analysis_girlfriend.json"
-                analysis_json_gf = json.dumps(analysis_girlfriend.model_dump(), default=str, indent=2)
-                
+
                 # Store boyfriend repair plan in S3
                 plan_path_bf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_a.json"
                 plan_json_bf = json.dumps(repair_plan_boyfriend.model_dump(), default=str, indent=2)
-                
-                # Store girlfriend repair plan in S3
-                plan_path_gf = f"repair_plans/{relationship_id}/{conflict_id}_repair_partner_b.json"
-                plan_json_gf = json.dumps(repair_plan_girlfriend.model_dump(), default=str, indent=2)
-                
+
                 # Run S3 uploads and embedding generations in parallel
                 loop = asyncio.get_event_loop()
                 results = await asyncio.gather(
                     # S3 Uploads
                     loop.run_in_executor(None, lambda: s3_service.upload_file(analysis_path_bf, analysis_json_bf.encode('utf-8'), "application/json")),
-                    loop.run_in_executor(None, lambda: s3_service.upload_file(analysis_path_gf, analysis_json_gf.encode('utf-8'), "application/json")),
                     loop.run_in_executor(None, lambda: s3_service.upload_file(plan_path_bf, plan_json_bf.encode('utf-8'), "application/json")),
-                    loop.run_in_executor(None, lambda: s3_service.upload_file(plan_path_gf, plan_json_gf.encode('utf-8'), "application/json")),
                     # Embeddings
                     loop.run_in_executor(None, lambda: embeddings_service.embed_text(analysis_boyfriend.fight_summary)),
-                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(analysis_girlfriend.fight_summary)),
-                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}")),
-                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(f"{repair_plan_girlfriend.apology_script} {' '.join(repair_plan_girlfriend.steps)}"))
+                    loop.run_in_executor(None, lambda: embeddings_service.embed_text(f"{repair_plan_boyfriend.apology_script} {' '.join(repair_plan_boyfriend.steps)}"))
                 )
-                
-                s3_url_analysis_bf, s3_url_analysis_gf, s3_url_plan_bf, s3_url_plan_gf = results[:4]
-                emb_analysis_bf, emb_analysis_gf, emb_plan_bf, emb_plan_gf = results[4:]
-                
+
+                s3_url_analysis_bf, s3_url_plan_bf, emb_analysis_bf, emb_plan_bf = results
+
                 # Prepare data for Pinecone/DB
                 tasks = []
-                
+
                 # Analysis BF
                 if s3_url_analysis_bf:
                     analysis_dict_bf = analysis_boyfriend.model_dump()
@@ -810,56 +780,34 @@ async def generate_all_analysis_and_repair(
                     tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_analysis(f"{conflict_id}_boyfriend", emb_analysis_bf, analysis_dict_bf, "analysis")))
                     if db_service:
                         tasks.append(loop.run_in_executor(None, lambda: db_service.create_conflict_analysis(conflict_id, relationship_id, s3_url_analysis_bf)))
-                
-                # Analysis GF
-                if s3_url_analysis_gf:
-                    analysis_dict_gf = analysis_girlfriend.model_dump()
-                    analysis_dict_gf["analyzed_at"] = datetime.now()
-                    analysis_dict_gf["partner_pov"] = "girlfriend"
-                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_analysis(f"{conflict_id}_girlfriend", emb_analysis_gf, analysis_dict_gf, "analysis")))
-                    if db_service:
-                        tasks.append(loop.run_in_executor(None, lambda: db_service.create_conflict_analysis(conflict_id, relationship_id, s3_url_analysis_gf)))
 
                 # Repair Plan BF
                 if s3_url_plan_bf:
                     repair_plan_dict_bf = repair_plan_boyfriend.model_dump()
                     repair_plan_dict_bf["conflict_id"] = conflict_id
                     repair_plan_dict_bf["partner_requesting"] = "partner_a"
-                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_repair_plan(conflict_id, emb_plan_bf, repair_plan_dict_bf, "repair_plans"))) # Use original conflict_id
+                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_repair_plan(conflict_id, emb_plan_bf, repair_plan_dict_bf, "repair_plans")))
                     if db_service:
                         tasks.append(loop.run_in_executor(None, lambda: db_service.create_repair_plan(conflict_id, relationship_id, "partner_a", s3_url_plan_bf)))
 
-                # Repair Plan GF
-                if s3_url_plan_gf:
-                    repair_plan_dict_gf = repair_plan_girlfriend.model_dump()
-                    repair_plan_dict_gf["conflict_id"] = conflict_id
-                    repair_plan_dict_gf["partner_requesting"] = "partner_b"
-                    tasks.append(loop.run_in_executor(None, lambda: pinecone_service.upsert_repair_plan(f"{conflict_id}_girlfriend", emb_plan_gf, repair_plan_dict_gf, "repair_plans")))
-                    if db_service:
-                        tasks.append(loop.run_in_executor(None, lambda: db_service.create_repair_plan(conflict_id, relationship_id, "partner_b", s3_url_plan_gf)))
-                
-
-
-                # Execute all DB/Pinecone/Neo4j tasks
+                # Execute all DB/Pinecone tasks
                 if tasks:
                     await asyncio.gather(*tasks)
-                
-                logger.info("✅ Stored all analyses and repair plans in background")
-                
+
+                logger.info("✅ Stored analysis and repair plan in background")
+
             except Exception as e:
-                logger.error(f"❌ Error storing all data in background: {e}")
+                logger.error(f"❌ Error storing data in background: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
 
         # Schedule background task
         background_tasks.add_task(store_all_background)
-        
+
         return {
             "success": True,
             "analysis_boyfriend": analysis_boyfriend.model_dump(),
-            "analysis_girlfriend": analysis_girlfriend.model_dump(),
-            "repair_plan_boyfriend": repair_plan_boyfriend.model_dump(),
-            "repair_plan_girlfriend": repair_plan_girlfriend.model_dump()
+            "repair_plan_boyfriend": repair_plan_boyfriend.model_dump()
         }
         
     except HTTPException:
