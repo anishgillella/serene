@@ -84,10 +84,22 @@ const Analytics: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('doing');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
+  // Collect all fetched metrics into a bundle for the narrative endpoint
+  const buildMetricsPayload = () => ({
+    dashboard: dashboardData || {},
+    gottman: gottmanData || {},
+    sentiment: sentimentData || {},
+    growth: commGrowthData || {},
+    frequency: fightFreqData || {},
+    recovery: recoveryData || {},
+    attachment: attachmentData || {},
+    bid_response: bidResponseData || {},
+  });
+
+  // Initial load: fetch all metrics (narrative waits for data)
   useEffect(() => {
     refresh();
     fetchGottmanData();
-    refreshNarrative();
     refreshSentiment();
     refreshCommGrowth();
     refreshFightFreq();
@@ -96,17 +108,27 @@ const Analytics: React.FC = () => {
     refreshBidResponse();
   }, []);
 
+  // Once primary data is loaded, fire narrative with the metrics payload
+  useEffect(() => {
+    if (dashboardData && !narrativeData && !narrativeLoading) {
+      refreshNarrative(buildMetricsPayload());
+    }
+  }, [dashboardData, gottmanData, sentimentData, commGrowthData, fightFreqData, recoveryData, attachmentData, bidResponseData]);
+
   const handleRefresh = async () => {
-    await refresh();
-    await fetchGottmanData();
-    refreshNarrative();
-    refreshSentiment();
-    refreshCommGrowth();
-    refreshFightFreq();
-    refreshRecovery();
-    refreshAttachment();
-    refreshBidResponse();
+    await Promise.all([
+      refresh(),
+      fetchGottmanData(),
+      refreshSentiment(),
+      refreshCommGrowth(),
+      refreshFightFreq(),
+      refreshRecovery(),
+      refreshAttachment(),
+      refreshBidResponse(),
+    ]);
     setLastRefresh(new Date());
+    // Narrative uses fresh data — small delay to let state settle
+    setTimeout(() => refreshNarrative(buildMetricsPayload()), 100);
   };
 
   // Calculate health score and trend
