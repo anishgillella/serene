@@ -867,6 +867,8 @@ class RecoveryTimeResponse(BaseModel):
 
 class AttachmentPartnerData(BaseModel):
     """Attachment style data for a partner"""
+    model_config = {"arbitrary_types_allowed": True}
+
     partner: str
     primary_style: str
     secondary_style: Optional[str] = None
@@ -875,7 +877,7 @@ class AttachmentPartnerData(BaseModel):
     summary: str
     interaction_dynamic: Optional[str] = None
     conflicts_analyzed: Optional[int] = None
-    last_updated: Optional[str] = None
+    last_updated: Optional[Any] = None
 
 
 class AttachmentStyleResponse(BaseModel):

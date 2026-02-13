@@ -5,6 +5,7 @@ Includes Gottman metrics (Four Horsemen, repair attempts, etc.)
 """
 import asyncio
 import logging
+import time
 from datetime import date, timedelta
 from typing import Optional
 
@@ -1312,6 +1313,131 @@ async def get_bid_response_for_conflict(
 # NARRATIVE INSIGHTS ENDPOINT
 # ============================================================================
 
+# Simple in-memory cache: { (relationship_id, viewer_role): (timestamp, result) }
+_narrative_cache: dict = {}
+_NARRATIVE_TTL_SECONDS = 300  # 5 minutes
+
+
+async def _collect_narrative_metrics(relationship_id: str) -> dict:
+    """
+    Collect all metrics for narrative generation directly from services/DB.
+    Does NOT call route handlers (avoids FastAPI Query-object issues).
+    All calls run in parallel.
+    """
+    async def _dashboard():
+        try:
+            risk_report = await pattern_analysis_service.calculate_escalation_risk(relationship_id)
+            conflicts = db_service.get_previous_conflicts(relationship_id, limit=30)
+            total = len(conflicts)
+            resolved = sum(1 for c in conflicts if c.get("is_resolved"))
+            return {
+                "health_score": int((1.0 - risk_report.risk_score) * 100),
+                "escalation_risk": risk_report.model_dump(),
+                "metrics": {
+                    "total_conflicts": total,
+                    "resolved_conflicts": resolved,
+                    "resolution_rate": (resolved / total * 100) if total > 0 else 0,
+                },
+            }
+        except Exception as e:
+            logger.warning(f"Narrative: dashboard failed: {e}")
+            return {}
+
+    async def _gottman():
+        try:
+            scores = await gottman_service.get_relationship_scores(relationship_id)
+            if not scores:
+                return {"has_data": False}
+            return {
+                "has_data": True,
+                "gottman_health_score": float(scores.get("gottman_health_score", 0)),
+                "four_horsemen": {
+                    "criticism": float(scores.get("avg_criticism_score", 0)),
+                    "contempt": float(scores.get("avg_contempt_score", 0)),
+                    "defensiveness": float(scores.get("avg_defensiveness_score", 0)),
+                    "stonewalling": float(scores.get("avg_stonewalling_score", 0)),
+                },
+                "repair_metrics": {
+                    "success_rate": float(scores.get("overall_repair_success_rate", 0)),
+                    "total_attempts": scores.get("total_repair_attempts", 0),
+                },
+            }
+        except Exception as e:
+            logger.warning(f"Narrative: gottman failed: {e}")
+            return {}
+
+    async def _sentiment():
+        try:
+            result = await get_sentiment_shift(relationship_id)
+            return result if isinstance(result, dict) else (result.model_dump() if hasattr(result, "model_dump") else {})
+        except Exception as e:
+            logger.warning(f"Narrative: sentiment failed: {e}")
+            return {}
+
+    async def _growth():
+        try:
+            result = await get_communication_growth(relationship_id, months=6)
+            return result if isinstance(result, dict) else (result.model_dump() if hasattr(result, "model_dump") else {})
+        except Exception as e:
+            logger.warning(f"Narrative: growth failed: {e}")
+            return {}
+
+    async def _frequency():
+        try:
+            result = await get_fight_frequency(relationship_id, period="weekly", periods=12)
+            return result if isinstance(result, dict) else (result.model_dump() if hasattr(result, "model_dump") else {})
+        except Exception as e:
+            logger.warning(f"Narrative: frequency failed: {e}")
+            return {}
+
+    async def _recovery():
+        try:
+            result = await get_recovery_time(relationship_id)
+            return result if isinstance(result, dict) else (result.model_dump() if hasattr(result, "model_dump") else {})
+        except Exception as e:
+            logger.warning(f"Narrative: recovery failed: {e}")
+            return {}
+
+    async def _attachment():
+        try:
+            # Read directly from DB — don't trigger LLM re-analysis
+            with db_service.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute(
+                        "SELECT * FROM attachment_style_tracking WHERE relationship_id = %s ORDER BY partner;",
+                        (relationship_id,),
+                    )
+                    rows = cursor.fetchall()
+            if not rows:
+                return {"has_data": False}
+            pa = next((dict(r) for r in rows if r["partner"] == "partner_a"), None)
+            pb = next((dict(r) for r in rows if r["partner"] == "partner_b"), None)
+            return {
+                "has_data": True,
+                "partner_a": pa,
+                "partner_b": pb,
+                "interaction_dynamic": pa.get("interaction_dynamic") if pa else None,
+            }
+        except Exception as e:
+            logger.warning(f"Narrative: attachment failed: {e}")
+            return {}
+
+    async def _bid_response():
+        try:
+            result = await advanced_analytics_service.get_bid_response_ratios(relationship_id)
+            return result
+        except Exception as e:
+            logger.warning(f"Narrative: bid_response failed: {e}")
+            return {}
+
+    results = await asyncio.gather(
+        _dashboard(), _gottman(), _sentiment(), _growth(),
+        _frequency(), _recovery(), _attachment(), _bid_response(),
+    )
+    keys = ["dashboard", "gottman", "sentiment", "growth", "frequency", "recovery", "attachment", "bid_response"]
+    return dict(zip(keys, results))
+
+
 @router.get("/advanced/narrative-insights", response_model=NarrativeInsightsResponse)
 async def get_narrative_insights(
     relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
@@ -1320,50 +1446,30 @@ async def get_narrative_insights(
     """
     Generate AI narrative insights by gathering all metrics and synthesizing
     them into actionable, human-readable narratives.
+    Results are cached for 5 minutes per (relationship_id, viewer_role).
     """
     try:
         logger.info(f"Generating narrative insights for {relationship_id}")
+
+        # Validate viewer_role
+        if viewer_role and viewer_role not in ("partner_a", "partner_b"):
+            viewer_role = None
+
+        # Check cache
+        cache_key = (relationship_id, viewer_role)
+        now = time.time()
+        if cache_key in _narrative_cache:
+            cached_at, cached_result = _narrative_cache[cache_key]
+            if now - cached_at < _NARRATIVE_TTL_SECONDS:
+                logger.info(f"Returning cached narrative insights (age={int(now - cached_at)}s)")
+                return cached_result
 
         names = db_service.get_partner_names(relationship_id)
         partner_a_name = names.get("partner_a", "Partner A")
         partner_b_name = names.get("partner_b", "Partner B")
 
-        # Fetch all metrics in parallel
-        dashboard_task = get_dashboard_data(relationship_id)
-        gottman_task = get_gottman_relationship_scores(relationship_id)
-        sentiment_task = get_sentiment_shift(relationship_id)
-        growth_task = get_communication_growth(relationship_id)
-        frequency_task = get_fight_frequency(relationship_id)
-        recovery_task = get_recovery_time(relationship_id)
-        attachment_task = get_attachment_styles(relationship_id)
-        bid_response_task = get_bid_response_ratio(relationship_id)
-
-        results = await asyncio.gather(
-            dashboard_task,
-            gottman_task,
-            sentiment_task,
-            growth_task,
-            frequency_task,
-            recovery_task,
-            attachment_task,
-            bid_response_task,
-            return_exceptions=True
-        )
-
-        # Build metrics dict, handling any failures gracefully
-        keys = ["dashboard", "gottman", "sentiment", "growth", "frequency", "recovery", "attachment", "bid_response"]
-        metrics = {}
-        for key, result in zip(keys, results):
-            if isinstance(result, Exception):
-                logger.warning(f"Failed to fetch {key} for narrative: {result}")
-                metrics[key] = {}
-            else:
-                # Handle both dict and Pydantic model responses
-                metrics[key] = result if isinstance(result, dict) else (result.model_dump() if hasattr(result, 'model_dump') else result)
-
-        # Validate viewer_role
-        if viewer_role and viewer_role not in ("partner_a", "partner_b"):
-            viewer_role = None
+        # Collect metrics in parallel (directly from services, not route handlers)
+        metrics = await _collect_narrative_metrics(relationship_id)
 
         insights = await advanced_analytics_service.generate_narrative_insights(
             metrics=metrics,
@@ -1372,7 +1478,7 @@ async def get_narrative_insights(
             viewer_role=viewer_role
         )
 
-        return {
+        result = {
             "has_data": True,
             "overview_digest": insights.overview_digest,
             "fight_quality_insight": insights.fight_quality_insight,
@@ -1380,6 +1486,11 @@ async def get_narrative_insights(
             "growth_insight": insights.growth_insight,
             "cross_metric_correlations": insights.cross_metric_correlations,
         }
+
+        # Store in cache
+        _narrative_cache[cache_key] = (now, result)
+
+        return result
     except Exception as e:
         logger.error(f"Error generating narrative insights: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
