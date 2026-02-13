@@ -15,6 +15,16 @@ from app.services.pattern_analysis_service import pattern_analysis_service
 from app.services.db_service import db_service
 from app.services.gottman_analysis_service import gottman_service
 from app.services.advanced_analytics_service import advanced_analytics_service
+from app.models.schemas import (
+    SentimentShiftResponse,
+    CommunicationGrowthResponse,
+    FightFrequencyResponse,
+    RecoveryTimeResponse,
+    AttachmentStyleResponse,
+    BidResponseRatioResponse,
+    BidResponseConflictResponse,
+    NarrativeInsightsResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +56,21 @@ async def get_dashboard_data(
 
         health_score = int((1.0 - risk_report.risk_score) * 100)
 
+        # Calculate previous week's health score for delta comparison
+        health_score_previous = None
+        try:
+            prev_risk = await pattern_analysis_service.calculate_escalation_risk(
+                relationship_id, days_back=14
+            )
+            # Only use if we got a different window; fallback to same score
+            if prev_risk and hasattr(prev_risk, 'risk_score'):
+                health_score_previous = int((1.0 - prev_risk.risk_score) * 100)
+        except Exception:
+            pass  # Non-critical — skip if method doesn't support days_back
+
         return {
             "health_score": health_score,
+            "health_score_previous": health_score_previous,
             "escalation_risk": risk_report.model_dump(),
             "trigger_phrases": phrases,
             "conflict_chains": chains,
@@ -826,6 +849,736 @@ async def get_conflict_replay(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# ADVANCED METRICS - PHASE 1: COMPUTE FROM EXISTING DATA
+# ============================================================================
+
+@router.get("/advanced/sentiment-shift", response_model=SentimentShiftResponse)
+async def get_sentiment_shift(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Per-conflict sentiment shift score measuring emotional de-escalation.
+    Compares avg intensity of first 3 messages vs last 3 messages.
+    """
+    try:
+        logger.info(f"📊 Getting sentiment shift for {relationship_id}")
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Single query: compute start/end intensity per conflict
+                # Uses window functions to rank messages and aggregate top/bottom 3
+                cursor.execute("""
+                    WITH ranked AS (
+                        SELECT
+                            et.conflict_id,
+                            c.started_at,
+                            et.emotional_intensity,
+                            ROW_NUMBER() OVER (PARTITION BY et.conflict_id ORDER BY et.message_sequence ASC) as asc_rank,
+                            ROW_NUMBER() OVER (PARTITION BY et.conflict_id ORDER BY et.message_sequence DESC) as desc_rank
+                        FROM emotional_temperature et
+                        INNER JOIN conflicts c ON c.id = et.conflict_id
+                        WHERE c.relationship_id = %s
+                    )
+                    SELECT
+                        conflict_id,
+                        started_at,
+                        AVG(CASE WHEN asc_rank <= 3 THEN emotional_intensity END) as start_intensity,
+                        AVG(CASE WHEN desc_rank <= 3 THEN emotional_intensity END) as end_intensity
+                    FROM ranked
+                    GROUP BY conflict_id, started_at
+                    ORDER BY started_at DESC;
+                """, (relationship_id,))
+                rows = cursor.fetchall()
+
+        per_conflict = []
+        for row in rows:
+            start_i = float(row['start_intensity'] or 5)
+            end_i = float(row['end_intensity'] or 5)
+            shift = start_i - end_i  # positive = de-escalated
+
+            per_conflict.append({
+                "conflict_id": str(row['conflict_id']),
+                "started_at": str(row['started_at']),
+                "start_intensity": round(start_i, 2),
+                "end_intensity": round(end_i, 2),
+                "shift_score": round(shift, 2)
+            })
+
+        total_analyzed = len(per_conflict)
+        avg_shift = round(sum(c['shift_score'] for c in per_conflict) / total_analyzed, 2) if total_analyzed > 0 else 0
+        trend_direction = "improving" if avg_shift > 0.5 else "declining" if avg_shift < -0.5 else "stable"
+
+        return {
+            "has_data": total_analyzed > 0,
+            "per_conflict": per_conflict,
+            "aggregate": {
+                "avg_shift": avg_shift,
+                "trend_direction": trend_direction,
+                "total_analyzed": total_analyzed
+            }
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting sentiment shift: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/communication-growth", response_model=CommunicationGrowthResponse)
+async def get_communication_growth(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
+    months: int = Query(default=6, ge=1, le=24)
+):
+    """
+    Month-over-month growth trends for I-statement ratio, interruptions,
+    active listening, and repair success from gottman_analysis.
+    """
+    try:
+        logger.info(f"📊 Getting communication growth for {relationship_id} ({months} months)")
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT
+                        DATE_TRUNC('month', c.started_at) as month,
+                        COUNT(*) as conflicts_count,
+                        COALESCE(SUM(g.partner_a_i_statements + g.partner_b_i_statements), 0) as total_i_statements,
+                        COALESCE(SUM(g.partner_a_you_statements + g.partner_b_you_statements), 0) as total_you_statements,
+                        COALESCE(SUM(g.interruption_count), 0) as total_interruptions,
+                        COALESCE(SUM(g.active_listening_instances), 0) as total_active_listening,
+                        COALESCE(SUM(g.repair_attempts_count), 0) as total_repair_attempts,
+                        COALESCE(SUM(g.successful_repairs_count), 0) as total_successful_repairs
+                    FROM conflicts c
+                    LEFT JOIN gottman_analysis g ON g.conflict_id = c.id
+                    WHERE c.relationship_id = %s
+                      AND c.started_at >= NOW() - make_interval(months => %s)
+                    GROUP BY DATE_TRUNC('month', c.started_at)
+                    ORDER BY month ASC;
+                """, (relationship_id, months))
+                rows = cursor.fetchall()
+
+        monthly_data = []
+        for row in rows:
+            total_statements = (row['total_i_statements'] or 0) + (row['total_you_statements'] or 0)
+            i_ratio = round((row['total_i_statements'] or 0) / total_statements * 100, 1) if total_statements > 0 else 0
+            repair_success = round((row['total_successful_repairs'] or 0) / (row['total_repair_attempts'] or 1) * 100, 1) if (row['total_repair_attempts'] or 0) > 0 else 0
+
+            monthly_data.append({
+                "month": str(row['month']),
+                "conflicts_count": row['conflicts_count'],
+                "i_statement_ratio": i_ratio,
+                "interruptions_per_conflict": round((row['total_interruptions'] or 0) / max(row['conflicts_count'], 1), 1),
+                "active_listening_per_conflict": round((row['total_active_listening'] or 0) / max(row['conflicts_count'], 1), 1),
+                "repair_success_rate": repair_success
+            })
+
+        # Calculate month-over-month growth percentages
+        growth_percentages = []
+        for i in range(1, len(monthly_data)):
+            prev = monthly_data[i - 1]
+            curr = monthly_data[i]
+            growth = {}
+            for key in ['i_statement_ratio', 'interruptions_per_conflict', 'active_listening_per_conflict', 'repair_success_rate']:
+                if prev[key] > 0:
+                    growth[key] = round((curr[key] - prev[key]) / prev[key] * 100, 1)
+                else:
+                    growth[key] = 0
+            growth['month'] = curr['month']
+            growth_percentages.append(growth)
+
+        return {
+            "has_data": len(monthly_data) > 0,
+            "monthly_data": monthly_data,
+            "growth_percentages": growth_percentages
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting communication growth: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/fight-frequency", response_model=FightFrequencyResponse)
+async def get_fight_frequency(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
+    period: str = Query(default="weekly", description="'weekly' or 'monthly'"),
+    periods: int = Query(default=12, ge=1, le=52)
+):
+    """
+    Weekly/monthly fight counts with resolution rates and avg duration.
+    """
+    try:
+        logger.info(f"📊 Getting fight frequency for {relationship_id} ({period}, {periods} periods)")
+
+        # Validate period to prevent injection — only allow known values
+        if period not in ("weekly", "monthly"):
+            raise HTTPException(status_code=400, detail="period must be 'weekly' or 'monthly'")
+
+        trunc = "week" if period == "weekly" else "month"
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Use make_interval with named params for safe parameterization
+                if period == "weekly":
+                    cursor.execute("""
+                        SELECT
+                            DATE_TRUNC(%s, started_at) as period_start,
+                            COUNT(*) as fight_count,
+                            COUNT(*) FILTER (WHERE is_resolved = TRUE) as resolved_count,
+                            AVG(EXTRACT(EPOCH FROM (ended_at - started_at)) / 60)
+                                FILTER (WHERE ended_at IS NOT NULL) as avg_duration_minutes
+                        FROM conflicts
+                        WHERE relationship_id = %s
+                          AND started_at >= NOW() - make_interval(weeks => %s)
+                        GROUP BY DATE_TRUNC(%s, started_at)
+                        ORDER BY period_start ASC;
+                    """, (trunc, relationship_id, periods, trunc))
+                else:
+                    cursor.execute("""
+                        SELECT
+                            DATE_TRUNC(%s, started_at) as period_start,
+                            COUNT(*) as fight_count,
+                            COUNT(*) FILTER (WHERE is_resolved = TRUE) as resolved_count,
+                            AVG(EXTRACT(EPOCH FROM (ended_at - started_at)) / 60)
+                                FILTER (WHERE ended_at IS NOT NULL) as avg_duration_minutes
+                        FROM conflicts
+                        WHERE relationship_id = %s
+                          AND started_at >= NOW() - make_interval(months => %s)
+                        GROUP BY DATE_TRUNC(%s, started_at)
+                        ORDER BY period_start ASC;
+                    """, (trunc, relationship_id, periods, trunc))
+                rows = cursor.fetchall()
+
+                # Calculate average days between fights
+                cursor.execute("""
+                    SELECT started_at FROM conflicts
+                    WHERE relationship_id = %s
+                    ORDER BY started_at ASC;
+                """, (relationship_id,))
+                all_conflicts = cursor.fetchall()
+
+        period_data = []
+        for row in rows:
+            period_data.append({
+                "period_start": str(row['period_start']),
+                "fight_count": row['fight_count'],
+                "resolved_count": row['resolved_count'] or 0,
+                "avg_duration_minutes": round(float(row['avg_duration_minutes'] or 0), 1)
+            })
+
+        # Calculate average days between fights
+        avg_days_between = None
+        if len(all_conflicts) > 1:
+            gaps = []
+            for i in range(1, len(all_conflicts)):
+                gap = (all_conflicts[i]['started_at'] - all_conflicts[i-1]['started_at']).total_seconds() / 86400
+                gaps.append(gap)
+            avg_days_between = round(sum(gaps) / len(gaps), 1) if gaps else None
+
+        return {
+            "has_data": len(period_data) > 0,
+            "period": period,
+            "periods": period_data,
+            "average_days_between": avg_days_between
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting fight frequency: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/recovery-time", response_model=RecoveryTimeResponse)
+async def get_recovery_time(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Days between conflict end and next positive daily check-in.
+    Measures emotional recovery time.
+    """
+    try:
+        logger.info(f"📊 Getting recovery time for {relationship_id}")
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT
+                        c.id as conflict_id,
+                        c.ended_at,
+                        (
+                            SELECT MIN(dc.checkin_date)
+                            FROM daily_checkins dc
+                            WHERE dc.relationship_id = c.relationship_id
+                              AND dc.checkin_date > c.ended_at::date
+                              AND dc.day_rating = 'positive'
+                        ) as next_positive_date
+                    FROM conflicts c
+                    WHERE c.relationship_id = %s
+                      AND c.ended_at IS NOT NULL
+                    ORDER BY c.ended_at DESC;
+                """, (relationship_id,))
+                rows = cursor.fetchall()
+
+        per_conflict = []
+        recovery_days_list = []
+        for row in rows:
+            recovery_days = None
+            if row['next_positive_date'] and row['ended_at']:
+                delta = row['next_positive_date'] - row['ended_at'].date()
+                recovery_days = delta.days
+                recovery_days_list.append(recovery_days)
+
+            per_conflict.append({
+                "conflict_id": str(row['conflict_id']),
+                "ended_at": str(row['ended_at']),
+                "next_positive_date": str(row['next_positive_date']) if row['next_positive_date'] else None,
+                "recovery_days": recovery_days
+            })
+
+        avg_recovery = round(sum(recovery_days_list) / len(recovery_days_list), 1) if recovery_days_list else None
+
+        # Determine trend from last 3 vs previous 3
+        trend = "stable"
+        if len(recovery_days_list) >= 6:
+            recent = sum(recovery_days_list[:3]) / 3
+            older = sum(recovery_days_list[3:6]) / 3
+            if recent < older - 0.5:
+                trend = "improving"
+            elif recent > older + 0.5:
+                trend = "worsening"
+
+        return {
+            "has_data": len(per_conflict) > 0,
+            "per_conflict": per_conflict,
+            "average_recovery_days": avg_recovery,
+            "trend": trend
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting recovery time: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ADVANCED METRICS - PHASE 2: LLM-DEPENDENT
+# ============================================================================
+
+@router.get("/advanced/attachment-styles", response_model=AttachmentStyleResponse)
+async def get_attachment_styles(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
+    refresh: bool = Query(default=False, description="Force re-analysis")
+):
+    """
+    Get attachment style classification for each partner.
+    Analyzes behavioral patterns across conflicts to determine
+    secure/anxious/avoidant/fearful-avoidant tendencies.
+    """
+    try:
+        logger.info(f"🔍 Getting attachment styles for {relationship_id}")
+
+        if not refresh:
+            # Check for existing data
+            with db_service.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM attachment_style_tracking
+                        WHERE relationship_id = %s
+                        ORDER BY partner;
+                    """, (relationship_id,))
+                    rows = cursor.fetchall()
+
+            if rows:
+                partner_a = next((dict(r) for r in rows if r['partner'] == 'partner_a'), None)
+                partner_b = next((dict(r) for r in rows if r['partner'] == 'partner_b'), None)
+                return {
+                    "has_data": True,
+                    "partner_a": partner_a,
+                    "partner_b": partner_b,
+                    "interaction_dynamic": partner_a.get('interaction_dynamic') if partner_a else None
+                }
+
+        # Run analysis
+        names = db_service.get_partner_names(relationship_id)
+        result = await advanced_analytics_service.analyze_attachment_patterns(
+            relationship_id=relationship_id,
+            partner_a_name=names.get("partner_a", "Partner A"),
+            partner_b_name=names.get("partner_b", "Partner B")
+        )
+
+        return {
+            "has_data": True,
+            "partner_a": result.get("partner_a"),
+            "partner_b": result.get("partner_b"),
+            "interaction_dynamic": result.get("interaction_dynamic")
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting attachment styles: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/bid-response-ratio", response_model=BidResponseRatioResponse)
+async def get_bid_response_ratio(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Get aggregated bid-response ratios across all conflicts.
+    Tracks Gottman's 'bids for connection' — toward/away/against responses.
+    """
+    try:
+        logger.info(f"📊 Getting bid-response ratio for {relationship_id}")
+
+        result = await advanced_analytics_service.get_bid_response_ratios(relationship_id)
+        return result
+    except Exception as e:
+        logger.error(f"❌ Error getting bid-response ratio: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/advanced/bid-response/{conflict_id}", response_model=BidResponseConflictResponse)
+async def get_bid_response_for_conflict(
+    conflict_id: str,
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Get bid-response analysis for a specific conflict.
+    """
+    try:
+        logger.info(f"📊 Getting bid-response for conflict {conflict_id}")
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT * FROM bid_response_tracking
+                    WHERE conflict_id = %s
+                    ORDER BY message_sequence;
+                """, (conflict_id,))
+                rows = cursor.fetchall()
+
+        if rows:
+            bids = [dict(r) for r in rows]
+            toward = sum(1 for b in bids if b['response_type'] == 'toward')
+            away = sum(1 for b in bids if b['response_type'] == 'away')
+            against = sum(1 for b in bids if b['response_type'] == 'against')
+            total = len(bids)
+
+            return {
+                "conflict_id": conflict_id,
+                "has_data": True,
+                "bids": bids,
+                "summary": {
+                    "total_bids": total,
+                    "toward": toward,
+                    "away": away,
+                    "against": against,
+                    "toward_rate": round(toward / total * 100, 1) if total > 0 else 0
+                }
+            }
+
+        # Run analysis if no data
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
+        if not transcript_data or not transcript_data.get("transcript_text"):
+            raise HTTPException(status_code=404, detail="No transcript found")
+
+        names = db_service.get_partner_names(relationship_id)
+        result = await advanced_analytics_service.analyze_bid_response(
+            conflict_id=conflict_id,
+            transcript=transcript_data["transcript_text"],
+            relationship_id=relationship_id,
+            partner_a_name=names.get("partner_a", "Partner A"),
+            partner_b_name=names.get("partner_b", "Partner B")
+        )
+
+        bids = result.bids if hasattr(result, 'bids') else []
+        bid_dicts = [b.model_dump() for b in bids]
+        toward = sum(1 for b in bids if b.response_type == 'toward')
+        away = sum(1 for b in bids if b.response_type == 'away')
+        against = sum(1 for b in bids if b.response_type == 'against')
+        total = len(bids)
+
+        return {
+            "conflict_id": conflict_id,
+            "has_data": True,
+            "bids": bid_dicts,
+            "summary": {
+                "total_bids": total,
+                "toward": toward,
+                "away": away,
+                "against": against,
+                "toward_rate": round(toward / total * 100, 1) if total > 0 else 0
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting bid-response for conflict: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# NARRATIVE INSIGHTS ENDPOINT
+# ============================================================================
+
+@router.get("/advanced/narrative-insights", response_model=NarrativeInsightsResponse)
+async def get_narrative_insights(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000"),
+    viewer_role: Optional[str] = Query(default=None, description="'partner_a' or 'partner_b' — personalizes narratives for the viewer")
+):
+    """
+    Generate AI narrative insights by gathering all metrics and synthesizing
+    them into actionable, human-readable narratives.
+    """
+    try:
+        logger.info(f"Generating narrative insights for {relationship_id}")
+
+        names = db_service.get_partner_names(relationship_id)
+        partner_a_name = names.get("partner_a", "Partner A")
+        partner_b_name = names.get("partner_b", "Partner B")
+
+        # Fetch all metrics in parallel
+        dashboard_task = get_dashboard_data(relationship_id)
+        gottman_task = get_gottman_relationship_scores(relationship_id)
+        sentiment_task = get_sentiment_shift(relationship_id)
+        growth_task = get_communication_growth(relationship_id)
+        frequency_task = get_fight_frequency(relationship_id)
+        recovery_task = get_recovery_time(relationship_id)
+        attachment_task = get_attachment_styles(relationship_id)
+        bid_response_task = get_bid_response_ratio(relationship_id)
+
+        results = await asyncio.gather(
+            dashboard_task,
+            gottman_task,
+            sentiment_task,
+            growth_task,
+            frequency_task,
+            recovery_task,
+            attachment_task,
+            bid_response_task,
+            return_exceptions=True
+        )
+
+        # Build metrics dict, handling any failures gracefully
+        keys = ["dashboard", "gottman", "sentiment", "growth", "frequency", "recovery", "attachment", "bid_response"]
+        metrics = {}
+        for key, result in zip(keys, results):
+            if isinstance(result, Exception):
+                logger.warning(f"Failed to fetch {key} for narrative: {result}")
+                metrics[key] = {}
+            else:
+                # Handle both dict and Pydantic model responses
+                metrics[key] = result if isinstance(result, dict) else (result.model_dump() if hasattr(result, 'model_dump') else result)
+
+        # Validate viewer_role
+        if viewer_role and viewer_role not in ("partner_a", "partner_b"):
+            viewer_role = None
+
+        insights = await advanced_analytics_service.generate_narrative_insights(
+            metrics=metrics,
+            partner_a_name=partner_a_name,
+            partner_b_name=partner_b_name,
+            viewer_role=viewer_role
+        )
+
+        return {
+            "has_data": True,
+            "overview_digest": insights.overview_digest,
+            "fight_quality_insight": insights.fight_quality_insight,
+            "trigger_insight": insights.trigger_insight,
+            "growth_insight": insights.growth_insight,
+            "cross_metric_correlations": insights.cross_metric_correlations,
+        }
+    except Exception as e:
+        logger.error(f"Error generating narrative insights: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# ADVANCED METRICS - PHASE 3: REPAIR PLAN COMPLIANCE
+# ============================================================================
+
+@router.get("/repair-compliance/{conflict_id}")
+async def get_repair_compliance(
+    conflict_id: str,
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Get repair plan compliance checklist for a conflict.
+    Auto-populates from repair plan if no records exist.
+    """
+    try:
+        logger.info(f"📋 Getting repair compliance for {conflict_id}")
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                # Check for existing compliance records
+                cursor.execute("""
+                    SELECT * FROM repair_plan_compliance
+                    WHERE conflict_id = %s
+                    ORDER BY partner, step_index;
+                """, (conflict_id,))
+                rows = cursor.fetchall()
+
+                if rows:
+                    steps = [dict(r) for r in rows]
+                    total = len(steps)
+                    completed = sum(1 for s in steps if s['completed'])
+                    return {
+                        "conflict_id": conflict_id,
+                        "has_data": True,
+                        "steps": steps,
+                        "progress": {
+                            "total": total,
+                            "completed": completed,
+                            "percentage": round(completed / total * 100, 1) if total > 0 else 0
+                        }
+                    }
+
+                # Auto-populate from repair_plans table
+                cursor.execute("""
+                    SELECT id, steps, partner_requesting
+                    FROM repair_plans
+                    WHERE conflict_id = %s
+                    LIMIT 2;
+                """, (conflict_id,))
+                plans = cursor.fetchall()
+
+                if not plans:
+                    return {
+                        "conflict_id": conflict_id,
+                        "has_data": False,
+                        "message": "No repair plan found for this conflict."
+                    }
+
+                # Create compliance records from repair plan steps
+                all_steps = []
+                for plan in plans:
+                    plan_id = plan['id']
+                    partner = plan.get('partner_requesting', 'partner_a')
+                    steps_list = plan.get('steps', [])
+
+                    # Handle both string lists and RepairStep objects
+                    for idx, step in enumerate(steps_list):
+                        step_desc = step if isinstance(step, str) else step.get('action', str(step))
+                        cursor.execute("""
+                            INSERT INTO repair_plan_compliance (
+                                repair_plan_id, conflict_id, relationship_id,
+                                partner, step_index, step_description
+                            ) VALUES (%s, %s, %s, %s, %s, %s)
+                            ON CONFLICT (repair_plan_id, step_index, partner) DO NOTHING
+                            RETURNING *;
+                        """, (plan_id, conflict_id, relationship_id, partner, idx, step_desc))
+                        result = cursor.fetchone()
+                        if result:
+                            all_steps.append(dict(result))
+
+                    conn.commit()
+
+                return {
+                    "conflict_id": conflict_id,
+                    "has_data": len(all_steps) > 0,
+                    "steps": all_steps,
+                    "progress": {
+                        "total": len(all_steps),
+                        "completed": 0,
+                        "percentage": 0
+                    }
+                }
+    except Exception as e:
+        logger.error(f"❌ Error getting repair compliance: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/repair-compliance/{conflict_id}/update")
+async def update_repair_compliance(
+    conflict_id: str,
+    step_id: str = Query(..., description="UUID of the compliance step"),
+    completed: bool = Query(..., description="Mark step as done or undone"),
+    notes: Optional[str] = Query(default=None)
+):
+    """
+    Mark a repair plan step as completed or not completed.
+    """
+    try:
+        logger.info(f"📋 Updating compliance step {step_id} -> completed={completed}")
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    UPDATE repair_plan_compliance
+                    SET completed = %s,
+                        completed_at = CASE WHEN %s THEN NOW() ELSE NULL END,
+                        notes = COALESCE(%s, notes)
+                    WHERE id = %s AND conflict_id = %s
+                    RETURNING *;
+                """, (completed, completed, notes, step_id, conflict_id))
+                result = cursor.fetchone()
+                conn.commit()
+
+        if not result:
+            raise HTTPException(status_code=404, detail="Step not found")
+
+        return {
+            "success": True,
+            "step": dict(result)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error updating compliance: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/repair-compliance/summary")
+async def get_repair_compliance_summary(
+    relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
+):
+    """
+    Get overall repair plan compliance rate across all conflicts.
+    """
+    try:
+        logger.info(f"📊 Getting compliance summary for {relationship_id}")
+
+        with db_service.get_db_context() as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total_steps,
+                        COUNT(*) FILTER (WHERE completed = TRUE) as completed_steps,
+                        COUNT(DISTINCT conflict_id) as conflicts_with_plans
+                    FROM repair_plan_compliance
+                    WHERE relationship_id = %s;
+                """, (relationship_id,))
+                row = cursor.fetchone()
+
+                # Per-conflict breakdown
+                cursor.execute("""
+                    SELECT
+                        conflict_id,
+                        COUNT(*) as total,
+                        COUNT(*) FILTER (WHERE completed = TRUE) as completed
+                    FROM repair_plan_compliance
+                    WHERE relationship_id = %s
+                    GROUP BY conflict_id
+                    ORDER BY MIN(created_at) DESC;
+                """, (relationship_id,))
+                per_conflict = cursor.fetchall()
+
+        total = row['total_steps'] or 0
+        completed = row['completed_steps'] or 0
+        rate = round(completed / total * 100, 1) if total > 0 else 0
+
+        return {
+            "has_data": total > 0,
+            "overall": {
+                "total_steps": total,
+                "completed_steps": completed,
+                "compliance_rate": rate,
+                "conflicts_with_plans": row['conflicts_with_plans'] or 0
+            },
+            "per_conflict": [dict(r) for r in per_conflict]
+        }
+    except Exception as e:
+        logger.error(f"❌ Error getting compliance summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# COMPREHENSIVE ANALYSIS ENDPOINT
+# ============================================================================
+
 @router.post("/advanced/analyze-conflict/{conflict_id}")
 async def run_full_advanced_analysis(
     conflict_id: str,
@@ -852,7 +1605,8 @@ async def run_full_advanced_analysis(
             "analyses_completed": {
                 "surface_underlying": result.get("surface_underlying") is not None,
                 "emotional_timeline": result.get("emotional_timeline") is not None,
-                "annotations": result.get("annotations") is not None
+                "annotations": result.get("annotations") is not None,
+                "bid_response": result.get("bid_response") is not None,
             }
         }
     except Exception as e:

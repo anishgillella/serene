@@ -107,6 +107,63 @@ class ConflictAnnotationsAnalysis(BaseModel):
 
 
 # ============================================================================
+# PHASE 2: ATTACHMENT STYLE + BID-RESPONSE MODELS
+# ============================================================================
+
+class AttachmentIndicator(BaseModel):
+    """A behavioral indicator of attachment style"""
+    behavior: str = Field(description="The observed behavior pattern")
+    frequency: str = Field(description="How often: frequent, occasional, rare")
+    example: str = Field(description="Example from transcripts")
+
+
+class PartnerAttachmentProfile(BaseModel):
+    """Attachment style assessment for one partner"""
+    partner: str = Field(description="partner_a or partner_b")
+    primary_style: str = Field(description="secure, anxious, avoidant, or fearful_avoidant")
+    secondary_style: Optional[str] = Field(default=None, description="Secondary attachment tendency if present")
+    confidence: float = Field(description="0.0-1.0 confidence in classification")
+    behavioral_indicators: List[AttachmentIndicator] = Field(description="Evidence supporting this classification")
+    summary: str = Field(description="Brief summary of this partner's attachment pattern")
+
+
+class AttachmentStyleAnalysis(BaseModel):
+    """Complete attachment style analysis for both partners"""
+    partner_a: PartnerAttachmentProfile = Field(description="Partner A's attachment profile")
+    partner_b: PartnerAttachmentProfile = Field(description="Partner B's attachment profile")
+    interaction_dynamic: str = Field(description="How their attachment styles interact, e.g., anxious-avoidant trap")
+
+
+class BidInstance(BaseModel):
+    """A single bid for connection and the response"""
+    partner_making_bid: str = Field(description="partner_a or partner_b")
+    bid_type: str = Field(description="attention, affection, humor, support, understanding, engagement, play, exploration")
+    response_type: str = Field(description="toward, away, or against")
+    message_sequence: Optional[int] = Field(default=None, description="Approximate message sequence number")
+    bid_text: str = Field(description="What was said/done as a bid")
+    response_text: str = Field(description="How the partner responded")
+
+
+class BidResponseAnalysis(BaseModel):
+    """Complete bid-response analysis for a conflict"""
+    bids: List[BidInstance] = Field(description="All identified bids and responses in this conflict")
+    summary: str = Field(description="Overall summary of bid-response dynamics")
+
+
+# ============================================================================
+# NARRATIVE INSIGHTS MODEL
+# ============================================================================
+
+class NarrativeInsights(BaseModel):
+    """AI-generated narrative insights that tie metrics to actionable understanding"""
+    overview_digest: str = Field(description="2-3 sentence weekly digest of the relationship state")
+    fight_quality_insight: str = Field(description="How this couple fights — patterns, horsemen, repair dynamics")
+    trigger_insight: str = Field(description="What triggers conflicts and why")
+    growth_insight: str = Field(description="Growth trajectory — what's improving and what needs work")
+    cross_metric_correlations: List[str] = Field(description="2-4 cross-metric correlations tying different data points together")
+
+
+# ============================================================================
 # ADVANCED ANALYTICS SERVICE
 # ============================================================================
 
@@ -341,6 +398,10 @@ Repair attempts: humor, changing topic, offering solution, expressing care, admi
         try:
             with db_service.get_db_context() as conn:
                 with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Validate period_type to prevent injection
+                    if period_type not in ('daily', 'weekly', 'monthly'):
+                        period_type = 'weekly'
+
                     cursor.execute("""
                         SELECT
                             DATE_TRUNC(%s, c.started_at) as period,
@@ -354,7 +415,7 @@ Repair attempts: humor, changing topic, offering solution, expressing care, admi
                         FROM conflicts c
                         LEFT JOIN emotional_temperature et ON et.conflict_id = c.id
                         WHERE c.relationship_id = %s
-                          AND c.started_at >= NOW() - INTERVAL '%s weeks'
+                          AND c.started_at >= NOW() - make_interval(weeks => %s)
                         GROUP BY DATE_TRUNC(%s, c.started_at)
                         ORDER BY period DESC
                         LIMIT %s;
@@ -702,7 +763,432 @@ Also identify:
             return []
 
     # ========================================================================
-    # COMPREHENSIVE ANALYSIS (ALL FOUR FEATURES)
+    # 5. ATTACHMENT STYLE TRACKING
+    # ========================================================================
+
+    async def analyze_attachment_patterns(
+        self,
+        relationship_id: str,
+        partner_a_name: str = "Partner A",
+        partner_b_name: str = "Partner B"
+    ) -> Dict[str, Any]:
+        """
+        Analyze attachment style patterns from conflict transcripts.
+        Classifies each partner as secure/anxious/avoidant/fearful-avoidant.
+        """
+        try:
+            logger.info(f"🔍 Analyzing attachment patterns for {relationship_id}")
+
+            # Get recent conflicts
+            conflicts = db_service.get_previous_conflicts(relationship_id, limit=10)
+            if not conflicts:
+                return {"partner_a": None, "partner_b": None, "interaction_dynamic": None}
+
+            # Gather transcripts
+            transcripts = []
+            for conflict in conflicts:
+                transcript_data = db_service.get_conflict_transcript(conflict['id'])
+                if transcript_data and transcript_data.get('transcript_text'):
+                    transcripts.append(f"--- Conflict {conflict['id'][:8]} ---\n{transcript_data['transcript_text'][:1500]}")
+
+            combined_context = "\n\n".join(transcripts[:5])
+
+            prompt = f"""Analyze these conflict transcripts to identify each partner's attachment style.
+
+CONFLICT HISTORY:
+{combined_context}
+
+Partner names: {partner_a_name} = partner_a, {partner_b_name} = partner_b
+
+ATTACHMENT STYLES TO CLASSIFY:
+- **secure**: Comfortable with intimacy and independence. Communicates needs clearly, manages emotions well.
+- **anxious**: Fears abandonment. Seeks reassurance, escalates to get attention, hypervigilant about partner's mood.
+- **avoidant**: Uncomfortable with closeness. Withdraws under stress, minimizes emotions, values independence excessively.
+- **fearful_avoidant**: Desires closeness but fears it. Push-pull behavior, unpredictable reactions, difficulty trusting.
+
+FOR EACH PARTNER:
+1. Classify primary and secondary (if any) attachment style
+2. Confidence level (0.0-1.0)
+3. Behavioral indicators with examples from transcripts
+4. Brief summary paragraph
+
+Also describe the INTERACTION DYNAMIC between their styles (e.g., "anxious-avoidant dance where {partner_a_name}'s need for reassurance triggers {partner_b_name}'s withdrawal").
+
+Focus on concrete behavioral evidence from the transcripts."""
+
+            messages = [{"role": "user", "content": prompt}]
+
+            result = await asyncio.to_thread(
+                llm_service.structured_output,
+                messages=messages,
+                response_model=AttachmentStyleAnalysis,
+                temperature=0.5,
+                max_tokens=3000
+            )
+
+            # Save to database
+            await self._save_attachment_styles(relationship_id, result, len(conflicts))
+
+            return {
+                "partner_a": {
+                    "partner": "partner_a",
+                    "primary_style": result.partner_a.primary_style,
+                    "secondary_style": result.partner_a.secondary_style,
+                    "confidence": result.partner_a.confidence,
+                    "behavioral_indicators": [i.model_dump() for i in result.partner_a.behavioral_indicators],
+                    "summary": result.partner_a.summary,
+                },
+                "partner_b": {
+                    "partner": "partner_b",
+                    "primary_style": result.partner_b.primary_style,
+                    "secondary_style": result.partner_b.secondary_style,
+                    "confidence": result.partner_b.confidence,
+                    "behavioral_indicators": [i.model_dump() for i in result.partner_b.behavioral_indicators],
+                    "summary": result.partner_b.summary,
+                },
+                "interaction_dynamic": result.interaction_dynamic
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Error analyzing attachment patterns: {str(e)}")
+            raise
+
+    async def _save_attachment_styles(
+        self,
+        relationship_id: str,
+        analysis: AttachmentStyleAnalysis,
+        conflicts_analyzed: int
+    ) -> None:
+        """Save attachment style data to database"""
+        try:
+            with db_service.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    for profile in [analysis.partner_a, analysis.partner_b]:
+                        indicators = [i.model_dump() for i in profile.behavioral_indicators]
+                        cursor.execute("""
+                            INSERT INTO attachment_style_tracking (
+                                relationship_id, partner, primary_style, secondary_style,
+                                confidence, behavioral_indicators, summary,
+                                interaction_dynamic, conflicts_analyzed, last_updated
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                            ON CONFLICT (relationship_id, partner)
+                            DO UPDATE SET
+                                primary_style = EXCLUDED.primary_style,
+                                secondary_style = EXCLUDED.secondary_style,
+                                confidence = EXCLUDED.confidence,
+                                behavioral_indicators = EXCLUDED.behavioral_indicators,
+                                summary = EXCLUDED.summary,
+                                interaction_dynamic = EXCLUDED.interaction_dynamic,
+                                conflicts_analyzed = EXCLUDED.conflicts_analyzed,
+                                last_updated = NOW();
+                        """, (
+                            relationship_id, profile.partner,
+                            profile.primary_style, profile.secondary_style,
+                            profile.confidence, json.dumps(indicators),
+                            profile.summary, analysis.interaction_dynamic,
+                            conflicts_analyzed
+                        ))
+                    conn.commit()
+            logger.info(f"Saved attachment style data for {relationship_id}")
+        except Exception as e:
+            logger.error(f"Error saving attachment styles: {str(e)}")
+
+    # ========================================================================
+    # 6. BID-RESPONSE TRACKING
+    # ========================================================================
+
+    async def analyze_bid_response(
+        self,
+        conflict_id: str,
+        transcript: str,
+        relationship_id: str,
+        partner_a_name: str = "Partner A",
+        partner_b_name: str = "Partner B"
+    ) -> BidResponseAnalysis:
+        """
+        Analyze bids for connection and responses in a conflict transcript.
+        """
+        try:
+            logger.info(f"🤝 Analyzing bid-response for conflict {conflict_id}")
+
+            prompt = f"""Analyze this conflict transcript for Gottman's "bids for connection."
+
+A BID is any attempt by one partner to connect — seeking attention, affection, humor, support, understanding, engagement, play, or exploration.
+
+RESPONSES to bids:
+- **toward**: Engaging positively with the bid (acknowledging, reciprocating, showing interest)
+- **away**: Ignoring or not noticing the bid (changing subject, distracted, no response)
+- **against**: Rejecting the bid with hostility (dismissing, criticizing, attacking)
+
+TRANSCRIPT:
+{transcript}
+
+Partner names: {partner_a_name} = partner_a, {partner_b_name} = partner_b
+
+Identify ALL bids for connection in this conflict. For each:
+1. Who made the bid (partner_a or partner_b)
+2. Type of bid (attention, affection, humor, support, understanding, engagement, play, exploration)
+3. How the partner responded (toward, away, against)
+4. Approximate message sequence number
+5. What was said as the bid
+6. What the response was
+
+NOTE: Even in conflicts, there are bids — "Can you just listen to me?" is a bid for understanding.
+"I'm trying to tell you how I feel" is a bid for attention/understanding.
+
+The Gottman benchmark: Stable relationships turn toward bids 86% of the time.
+Provide a summary of the overall bid-response dynamic."""
+
+            messages = [{"role": "user", "content": prompt}]
+
+            result = await asyncio.to_thread(
+                llm_service.structured_output,
+                messages=messages,
+                response_model=BidResponseAnalysis,
+                temperature=0.5,
+                max_tokens=3000
+            )
+
+            # Save to database
+            await self._save_bid_response(conflict_id, relationship_id, result)
+
+            logger.info(f"✅ Bid-response analysis complete: {len(result.bids)} bids found")
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ Error in bid-response analysis: {str(e)}")
+            raise
+
+    async def _save_bid_response(
+        self,
+        conflict_id: str,
+        relationship_id: str,
+        analysis: BidResponseAnalysis
+    ) -> None:
+        """Save bid-response data to database"""
+        try:
+            with db_service.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    for bid in analysis.bids:
+                        cursor.execute("""
+                            INSERT INTO bid_response_tracking (
+                                relationship_id, conflict_id,
+                                partner_making_bid, bid_type, response_type,
+                                message_sequence, bid_text, response_text
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+                        """, (
+                            relationship_id, conflict_id,
+                            bid.partner_making_bid, bid.bid_type, bid.response_type,
+                            bid.message_sequence, bid.bid_text, bid.response_text
+                        ))
+                    conn.commit()
+            logger.info(f"Saved {len(analysis.bids)} bid-response records")
+        except Exception as e:
+            logger.error(f"Error saving bid-response data: {str(e)}")
+
+    async def get_bid_response_ratios(
+        self,
+        relationship_id: str
+    ) -> Dict[str, Any]:
+        """Get aggregated bid-response ratios across all conflicts"""
+        try:
+            with db_service.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Overall ratios
+                    cursor.execute("""
+                        SELECT
+                            COUNT(*) as total_bids,
+                            COUNT(*) FILTER (WHERE response_type = 'toward') as toward,
+                            COUNT(*) FILTER (WHERE response_type = 'away') as away,
+                            COUNT(*) FILTER (WHERE response_type = 'against') as against
+                        FROM bid_response_tracking
+                        WHERE relationship_id = %s;
+                    """, (relationship_id,))
+                    overall = cursor.fetchone()
+
+                    # Per-partner ratios
+                    cursor.execute("""
+                        SELECT
+                            partner_making_bid,
+                            COUNT(*) as total_bids,
+                            COUNT(*) FILTER (WHERE response_type = 'toward') as toward,
+                            COUNT(*) FILTER (WHERE response_type = 'away') as away,
+                            COUNT(*) FILTER (WHERE response_type = 'against') as against
+                        FROM bid_response_tracking
+                        WHERE relationship_id = %s
+                        GROUP BY partner_making_bid;
+                    """, (relationship_id,))
+                    per_partner = cursor.fetchall()
+
+            total = overall['total_bids'] or 0
+            toward = overall['toward'] or 0
+
+            partner_data = {}
+            for row in per_partner:
+                p_total = row['total_bids'] or 0
+                partner_data[row['partner_making_bid']] = {
+                    "total_bids": p_total,
+                    "toward": row['toward'] or 0,
+                    "away": row['away'] or 0,
+                    "against": row['against'] or 0,
+                    "toward_rate": round((row['toward'] or 0) / p_total * 100, 1) if p_total > 0 else 0
+                }
+
+            return {
+                "has_data": total > 0,
+                "overall": {
+                    "total_bids": total,
+                    "toward": toward,
+                    "away": overall['away'] or 0,
+                    "against": overall['against'] or 0,
+                    "toward_rate": round(toward / total * 100, 1) if total > 0 else 0,
+                    "gottman_benchmark": 86.0
+                },
+                "per_partner": partner_data
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting bid-response ratios: {str(e)}")
+            return {"has_data": False, "overall": {"total_bids": 0}, "per_partner": {}}
+
+    # ========================================================================
+    # NARRATIVE INSIGHTS (AI-GENERATED DIGEST)
+    # ========================================================================
+
+    async def generate_narrative_insights(
+        self,
+        metrics: Dict[str, Any],
+        partner_a_name: str = "Partner A",
+        partner_b_name: str = "Partner B",
+        viewer_role: Optional[str] = None
+    ) -> NarrativeInsights:
+        """
+        Generate AI narrative insights from all metric data.
+        Ties numbers to actionable understanding.
+        """
+        try:
+            logger.info("Generating narrative insights")
+
+            # Build context from all available metrics
+            context_parts = []
+
+            dashboard = metrics.get("dashboard", {})
+            if dashboard:
+                context_parts.append(f"Health score: {dashboard.get('health_score', 'N/A')}/100")
+                m = dashboard.get("metrics", {})
+                context_parts.append(f"Total conflicts: {m.get('total_conflicts', 0)}, resolved: {m.get('resolved_conflicts', 0)}, resolution rate: {m.get('resolution_rate', 0):.0f}%")
+                risk = dashboard.get("escalation_risk", {})
+                context_parts.append(f"Escalation risk: {risk.get('interpretation', 'unknown')} ({risk.get('risk_score', 0):.2f})")
+
+            gottman = metrics.get("gottman", {})
+            if gottman and gottman.get("has_data"):
+                fh = gottman.get("four_horsemen", {})
+                context_parts.append(f"Gottman score: {gottman.get('gottman_health_score', 0)}/100")
+                context_parts.append(f"Four Horsemen — criticism: {fh.get('criticism', 0)}, contempt: {fh.get('contempt', 0)}, defensiveness: {fh.get('defensiveness', 0)}, stonewalling: {fh.get('stonewalling', 0)}")
+                rm = gottman.get("repair_metrics", {})
+                context_parts.append(f"Repair success rate: {rm.get('success_rate', 0)}%, attempts: {rm.get('total_attempts', 0)}")
+
+            sentiment = metrics.get("sentiment", {})
+            if sentiment and sentiment.get("has_data"):
+                agg = sentiment.get("aggregate", {})
+                context_parts.append(f"Avg sentiment shift: {agg.get('avg_shift', 0)} (trend: {agg.get('trend_direction', 'stable')})")
+
+            growth = metrics.get("growth", {})
+            if growth and growth.get("has_data"):
+                gp = growth.get("growth_percentages", [])
+                if gp:
+                    latest = gp[-1]
+                    context_parts.append(f"Latest growth — I-statement ratio: {latest.get('i_statement_ratio', 0)}%, repair success: {latest.get('repair_success_rate', 0)}%")
+
+            frequency = metrics.get("frequency", {})
+            if frequency and frequency.get("has_data"):
+                context_parts.append(f"Avg days between fights: {frequency.get('average_days_between', 'N/A')}")
+
+            recovery = metrics.get("recovery", {})
+            if recovery and recovery.get("has_data"):
+                context_parts.append(f"Avg recovery time: {recovery.get('average_recovery_days', 'N/A')} days (trend: {recovery.get('trend', 'stable')})")
+
+            attachment = metrics.get("attachment", {})
+            if attachment and attachment.get("has_data"):
+                pa = attachment.get("partner_a", {})
+                pb = attachment.get("partner_b", {})
+                if pa and pb:
+                    context_parts.append(f"Attachment styles — {partner_a_name}: {pa.get('primary_style', '?')}, {partner_b_name}: {pb.get('primary_style', '?')}")
+                    context_parts.append(f"Interaction dynamic: {attachment.get('interaction_dynamic', 'N/A')}")
+
+            bid_response = metrics.get("bid_response", {})
+            if bid_response and bid_response.get("has_data"):
+                overall = bid_response.get("overall", {})
+                context_parts.append(f"Bid-response toward rate: {overall.get('toward_rate', 0)}% (benchmark: 86%)")
+
+            metrics_context = "\n".join(f"- {p}" for p in context_parts)
+
+            # Determine viewer personalization
+            if viewer_role == "partner_a":
+                viewer_name = partner_a_name
+                their_partner_name = partner_b_name
+            elif viewer_role == "partner_b":
+                viewer_name = partner_b_name
+                their_partner_name = partner_a_name
+            else:
+                viewer_name = None
+                their_partner_name = None
+
+            viewer_instruction = ""
+            if viewer_name:
+                viewer_instruction = f"""
+PERSONALIZATION:
+The person reading this is {viewer_name}. Address them directly as "you" and refer to {their_partner_name} by name.
+For example: "You've been initiating repairs more often, {viewer_name}" or "When {their_partner_name} brings up..."
+Frame advice and observations from {viewer_name}'s perspective — what THEY can do, what THEIR patterns are, what to watch for in THEIR behavior.
+Still mention {their_partner_name}'s patterns where relevant, but the primary audience is {viewer_name}.
+"""
+
+            prompt = f"""You are a relationship therapist writing brief, warm, actionable insights for a couple.
+
+RELATIONSHIP METRICS:
+{metrics_context}
+
+Partner names: {partner_a_name} and {partner_b_name}
+{viewer_instruction}
+Generate narrative insights:
+
+1. **overview_digest**: A 2-3 sentence weekly digest. Be specific about numbers but warm in tone. Mention what's going well AND one area to watch.
+
+2. **fight_quality_insight**: How does this couple fight? Reference Four Horsemen levels, repair success rate, sentiment shifts. Be specific. One paragraph.
+
+3. **trigger_insight**: What triggers their conflicts? Reference any trigger patterns, attachment dynamics, chronic needs. One paragraph.
+
+4. **growth_insight**: Are they growing? Reference communication growth trends, recovery time trends, fight frequency changes. One paragraph.
+
+5. **cross_metric_correlations**: 2-4 specific correlations that connect different metrics, e.g., "Your high repair rate (X%) likely contributes to your improving recovery time." Each should be one sentence connecting two specific data points.
+
+RULES:
+- Use partner names, never "Partner A/B"
+- Reference specific numbers from the data
+- Be warm but honest — don't sugarcoat concerning patterns
+- Keep each insight concise (2-4 sentences max)
+- If data is missing for a section, say what would help (e.g., "Log more conflicts to see trends")"""
+
+            messages = [{"role": "user", "content": prompt}]
+
+            result = await asyncio.to_thread(
+                llm_service.structured_output,
+                messages=messages,
+                response_model=NarrativeInsights,
+                temperature=0.7,
+                max_tokens=1500
+            )
+
+            logger.info("Narrative insights generated successfully")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error generating narrative insights: {str(e)}")
+            raise
+
+    # ========================================================================
+    # COMPREHENSIVE ANALYSIS (ALL FEATURES)
     # ========================================================================
 
     async def run_full_analysis(
@@ -727,7 +1213,7 @@ Also identify:
             transcript = transcript_data.get('transcript_text', '')
             messages = transcript_data.get('messages', [])
 
-            # Run all analyses in parallel
+            # Run all analyses in parallel (including bid-response)
             results = await asyncio.gather(
                 self.analyze_surface_underlying(
                     conflict_id, transcript, relationship_id,
@@ -741,21 +1227,38 @@ Also identify:
                     conflict_id, transcript, relationship_id, messages,
                     partner_a_name, partner_b_name
                 ),
+                self.analyze_bid_response(
+                    conflict_id, transcript, relationship_id,
+                    partner_a_name, partner_b_name
+                ),
                 return_exceptions=True
             )
 
-            surface_underlying, emotional_timeline, annotations = results
+            surface_underlying, emotional_timeline, annotations, bid_response = results
 
             # Handle any errors
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     logger.error(f"Analysis {i} failed: {str(result)}")
 
+            # Re-analyze attachment styles every 3rd conflict
+            attachment_result = None
+            try:
+                conflicts = db_service.get_previous_conflicts(relationship_id, limit=100)
+                if len(conflicts) % 3 == 0 or len(conflicts) <= 3:
+                    attachment_result = await self.analyze_attachment_patterns(
+                        relationship_id, partner_a_name, partner_b_name
+                    )
+            except Exception as e:
+                logger.error(f"Attachment analysis failed: {str(e)}")
+
             return {
                 'conflict_id': conflict_id,
                 'surface_underlying': surface_underlying if not isinstance(surface_underlying, Exception) else None,
                 'emotional_timeline': emotional_timeline if not isinstance(emotional_timeline, Exception) else None,
                 'annotations': annotations if not isinstance(annotations, Exception) else None,
+                'bid_response': bid_response if not isinstance(bid_response, Exception) else None,
+                'attachment_styles': attachment_result,
             }
 
         except Exception as e:

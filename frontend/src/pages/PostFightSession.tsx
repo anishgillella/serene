@@ -17,6 +17,8 @@ import {
   SurfaceUnderlyingCard,
   EmotionalTimelineChart,
   ConflictReplayViewer,
+  SentimentShiftCard,
+  BidResponseCard,
 } from '../components/premium';
 
 interface LocationState {
@@ -179,9 +181,11 @@ const PostFightSession = () => {
     replayData: any;
     surfaceData: any;
     timelineData: any;
+    bidResponseData: any;
+    sentimentData: any;
   } | null>(null);
   const [loadingDeepInsights, setLoadingDeepInsights] = useState(false);
-  const [deepInsightsSubTab, setDeepInsightsSubTab] = useState<'replay' | 'meanings' | 'timeline'>('replay');
+  const [deepInsightsSubTab, setDeepInsightsSubTab] = useState<'replay' | 'meanings' | 'timeline' | 'bids' | 'sentiment'>('replay');
   const [isVoiceCallOpen, setIsVoiceCallOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['summary', 'root_causes', 'escalation']));
   const [copiedText, setCopiedText] = useState<string | null>(null);
@@ -442,7 +446,7 @@ const PostFightSession = () => {
         // Also fetch deep insights data for the analysis view
         const relationshipId = "00000000-0000-0000-0000-000000000000";
         try {
-          const [replayRes, surfaceRes, timelineRes] = await Promise.all([
+          const [replayRes, surfaceRes, timelineRes, bidRes, sentimentRes] = await Promise.all([
             fetch(`${apiUrl}/api/analytics/advanced/conflict-replay/${conflictId}?relationship_id=${relationshipId}`, {
               headers: { 'ngrok-skip-browser-warning': 'true' }
             }),
@@ -451,14 +455,22 @@ const PostFightSession = () => {
             }),
             fetch(`${apiUrl}/api/analytics/advanced/emotional-timeline/${conflictId}?relationship_id=${relationshipId}`, {
               headers: { 'ngrok-skip-browser-warning': 'true' }
+            }),
+            fetch(`${apiUrl}/api/analytics/advanced/bid-response/${conflictId}?relationship_id=${relationshipId}`, {
+              headers: { 'ngrok-skip-browser-warning': 'true' }
+            }),
+            fetch(`${apiUrl}/api/analytics/advanced/sentiment-shift?relationship_id=${relationshipId}`, {
+              headers: { 'ngrok-skip-browser-warning': 'true' }
             })
           ]);
 
           const replayData = replayRes.ok ? await replayRes.json() : null;
           const surfaceData = surfaceRes.ok ? await surfaceRes.json() : null;
           const timelineData = timelineRes.ok ? await timelineRes.json() : null;
+          const bidResponseData = bidRes.ok ? await bidRes.json() : null;
+          const sentimentData = sentimentRes.ok ? await sentimentRes.json() : null;
 
-          setDeepInsightsData({ replayData, surfaceData, timelineData });
+          setDeepInsightsData({ replayData, surfaceData, timelineData, bidResponseData, sentimentData });
         } catch (insightsError) {
           console.warn('⚠️ Could not fetch deep insights:', insightsError);
         }
@@ -1093,6 +1105,28 @@ const PostFightSession = () => {
                           <ActivityIcon size={14} />
                           Emotional Arc
                         </button>
+                        <button
+                          onClick={() => setDeepInsightsSubTab('bids')}
+                          className={`flex-1 py-2 px-3 rounded-lg text-tiny font-medium transition-all flex items-center justify-center gap-1.5 ${
+                            deepInsightsSubTab === 'bids'
+                              ? 'bg-white text-text-primary shadow-sm'
+                              : 'text-text-secondary hover:text-text-primary'
+                          }`}
+                        >
+                          <HeartIcon size={14} />
+                          Bids
+                        </button>
+                        <button
+                          onClick={() => setDeepInsightsSubTab('sentiment')}
+                          className={`flex-1 py-2 px-3 rounded-lg text-tiny font-medium transition-all flex items-center justify-center gap-1.5 ${
+                            deepInsightsSubTab === 'sentiment'
+                              ? 'bg-white text-text-primary shadow-sm'
+                              : 'text-text-secondary hover:text-text-primary'
+                          }`}
+                        >
+                          <BarChart4Icon size={14} />
+                          Shift
+                        </button>
                       </div>
 
                       {/* Deep Insights Content */}
@@ -1117,6 +1151,22 @@ const PostFightSession = () => {
                             moments={deepInsightsData.timelineData?.moments || []}
                             summary={deepInsightsData.timelineData?.summary}
                           />
+                        )}
+                        {deepInsightsSubTab === 'bids' && deepInsightsData.bidResponseData && (
+                          <BidResponseCard
+                            data={deepInsightsData.bidResponseData}
+                            partnerAName="Adrian"
+                            partnerBName="Elara"
+                          />
+                        )}
+                        {deepInsightsSubTab === 'bids' && !deepInsightsData.bidResponseData && (
+                          <p className="text-sm text-gray-400 text-center py-8">No bid-response data for this conflict yet.</p>
+                        )}
+                        {deepInsightsSubTab === 'sentiment' && deepInsightsData.sentimentData && (
+                          <SentimentShiftCard data={deepInsightsData.sentimentData} />
+                        )}
+                        {deepInsightsSubTab === 'sentiment' && !deepInsightsData.sentimentData && (
+                          <p className="text-sm text-gray-400 text-center py-8">No sentiment data available yet.</p>
                         )}
                       </div>
                     </div>

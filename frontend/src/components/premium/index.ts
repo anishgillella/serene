@@ -23,3 +23,14 @@ export { ConflictReplayViewer } from './ConflictReplayViewer';
 
 // Phase 4: Messaging Analytics
 export { MessagingInsights } from './MessagingInsights';
+
+// Advanced Metrics Components
+export { SentimentShiftCard } from './SentimentShiftCard';
+export { CommunicationGrowthCard } from './CommunicationGrowthCard';
+export { FightFrequencyChart } from './FightFrequencyChart';
+export { RecoveryTimeCard } from './RecoveryTimeCard';
+export { AttachmentStyleCard } from './AttachmentStyleCard';
+export { BidResponseCard } from './BidResponseCard';
+export { RepairComplianceChecklist } from './RepairComplianceChecklist';
+export { NarrativeInsightCard } from './NarrativeInsightCard';
+export { SkeletonCard } from './SkeletonCard';

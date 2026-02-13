@@ -741,4 +741,192 @@ class GenerateGestureMessageResponse(BaseModel):
     context_used: List[str]  # What context sources were used
 
 
+# ============================================================================
+# REPAIR PLAN COMPLIANCE MODELS
+# ============================================================================
+
+class RepairComplianceStep(BaseModel):
+    """A single step in a repair plan compliance checklist"""
+    id: str
+    repair_plan_id: str
+    conflict_id: str
+    relationship_id: str
+    partner: str  # 'partner_a' or 'partner_b'
+    step_index: int
+    step_description: str
+    completed: bool = False
+    completed_at: Optional[datetime] = None
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class RepairComplianceStatus(BaseModel):
+    """Status of repair plan compliance for a conflict"""
+    conflict_id: str
+    has_data: bool
+    steps: List[RepairComplianceStep] = Field(default_factory=list)
+    progress: dict = Field(default_factory=lambda: {"total": 0, "completed": 0, "percentage": 0})
+
+
+class RepairComplianceSummary(BaseModel):
+    """Overall compliance rate across all conflicts"""
+    has_data: bool
+    overall: dict = Field(default_factory=lambda: {
+        "total_steps": 0, "completed_steps": 0,
+        "compliance_rate": 0, "conflicts_with_plans": 0
+    })
+    per_conflict: List[dict] = Field(default_factory=list)
+
+
+# ============================================================================
+# ADVANCED METRICS RESPONSE MODELS
+# ============================================================================
+
+class SentimentShiftConflict(BaseModel):
+    """Sentiment shift data for a single conflict"""
+    conflict_id: str
+    started_at: str
+    start_intensity: float
+    end_intensity: float
+    shift_score: float
+
+
+class SentimentShiftAggregate(BaseModel):
+    """Aggregate sentiment shift statistics"""
+    avg_shift: float
+    trend_direction: str  # 'improving', 'declining', 'stable'
+    total_analyzed: int
+
+
+class SentimentShiftResponse(BaseModel):
+    """Response for sentiment shift endpoint"""
+    has_data: bool
+    per_conflict: List[SentimentShiftConflict] = Field(default_factory=list)
+    aggregate: SentimentShiftAggregate = Field(
+        default_factory=lambda: SentimentShiftAggregate(avg_shift=0, trend_direction='stable', total_analyzed=0)
+    )
+
+
+class MonthlyCommData(BaseModel):
+    """Communication metrics for a single month"""
+    month: str
+    conflicts_count: int
+    i_statement_ratio: float
+    interruptions_per_conflict: float
+    active_listening_per_conflict: float
+    repair_success_rate: float
+
+
+class MonthlyGrowth(BaseModel):
+    """Month-over-month growth percentages"""
+    month: str
+    i_statement_ratio: float = 0
+    interruptions_per_conflict: float = 0
+    active_listening_per_conflict: float = 0
+    repair_success_rate: float = 0
+
+
+class CommunicationGrowthResponse(BaseModel):
+    """Response for communication growth endpoint"""
+    has_data: bool
+    monthly_data: List[MonthlyCommData] = Field(default_factory=list)
+    growth_percentages: List[MonthlyGrowth] = Field(default_factory=list)
+
+
+class FightPeriodData(BaseModel):
+    """Fight data for a single period"""
+    period_start: str
+    fight_count: int
+    resolved_count: int
+    avg_duration_minutes: float
+
+
+class FightFrequencyResponse(BaseModel):
+    """Response for fight frequency endpoint"""
+    has_data: bool
+    period: str
+    periods: List[FightPeriodData] = Field(default_factory=list)
+    average_days_between: Optional[float] = None
+
+
+class RecoveryConflict(BaseModel):
+    """Recovery data for a single conflict"""
+    conflict_id: str
+    ended_at: str
+    next_positive_date: Optional[str] = None
+    recovery_days: Optional[int] = None
+
+
+class RecoveryTimeResponse(BaseModel):
+    """Response for recovery time endpoint"""
+    has_data: bool
+    per_conflict: List[RecoveryConflict] = Field(default_factory=list)
+    average_recovery_days: Optional[float] = None
+    trend: str = 'stable'
+
+
+class AttachmentPartnerData(BaseModel):
+    """Attachment style data for a partner"""
+    partner: str
+    primary_style: str
+    secondary_style: Optional[str] = None
+    confidence: float
+    behavioral_indicators: Any = Field(default_factory=list)
+    summary: str
+    interaction_dynamic: Optional[str] = None
+    conflicts_analyzed: Optional[int] = None
+    last_updated: Optional[str] = None
+
+
+class AttachmentStyleResponse(BaseModel):
+    """Response for attachment styles endpoint"""
+    has_data: bool
+    partner_a: Optional[AttachmentPartnerData] = None
+    partner_b: Optional[AttachmentPartnerData] = None
+    interaction_dynamic: Optional[str] = None
+
+
+class BidResponseOverall(BaseModel):
+    """Overall bid-response statistics"""
+    total_bids: int
+    toward: int = 0
+    away: int = 0
+    against: int = 0
+    toward_rate: float = 0
+    gottman_benchmark: float = 86.0
+
+
+class BidResponsePartner(BaseModel):
+    """Per-partner bid-response data"""
+    total_bids: int
+    toward: int = 0
+    away: int = 0
+    against: int = 0
+    toward_rate: float = 0
+
+
+class BidResponseRatioResponse(BaseModel):
+    """Response for bid-response ratio endpoint"""
+    has_data: bool
+    overall: BidResponseOverall = Field(default_factory=lambda: BidResponseOverall(total_bids=0))
+    per_partner: dict = Field(default_factory=dict)
+
+
+class BidResponseConflictResponse(BaseModel):
+    """Response for per-conflict bid-response endpoint"""
+    conflict_id: str
+    has_data: bool
+    bids: List[dict] = Field(default_factory=list)
+    summary: dict = Field(default_factory=dict)
+
+
+class NarrativeInsightsResponse(BaseModel):
+    """Response for narrative insights endpoint"""
+    has_data: bool
+    overview_digest: Optional[str] = None
+    fight_quality_insight: Optional[str] = None
+    trigger_insight: Optional[str] = None
+    growth_insight: Optional[str] = None
+    cross_metric_correlations: List[str] = Field(default_factory=list)
+
 

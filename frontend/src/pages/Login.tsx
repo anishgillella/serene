@@ -18,13 +18,16 @@ const Login = () => {
     setLoading(true);
 
     try {
+      console.log('[Login] Sending request to', `${API_BASE}/api/auth/login`);
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
 
+      console.log('[Login] Response status:', res.status);
       const data = await res.json();
+      console.log('[Login] Response data:', data);
 
       if (!res.ok) {
         throw new Error(data.detail || 'Invalid email or password');
@@ -34,7 +37,9 @@ const Login = () => {
       if (data.relationship_id) {
         localStorage.setItem('serene_relationship_id', data.relationship_id);
       }
-      navigate('/');
+      console.log('[Login] Token stored, redirecting...');
+      // Full reload so Layout picks up the new token cleanly
+      window.location.href = '/';
     } catch (err: any) {
       setError(err.message || 'Invalid email or password');
     } finally {
