@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Activity,
@@ -84,7 +84,12 @@ const Analytics: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabId>('doing');
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  // Collect all fetched metrics into a bundle for the narrative endpoint
+  // Ref guards to prevent StrictMode double-fetch
+  const initialFetchDone = useRef(false);
+  const tabFetched = useRef<Record<string, boolean>>({});
+  const narrativeFired = useRef(false);
+
+  // Collect available metrics for narrative endpoint
   const buildMetricsPayload = () => ({
     dashboard: dashboardData || {},
     gottman: gottmanData || {},
@@ -96,39 +101,71 @@ const Analytics: React.FC = () => {
     bid_response: bidResponseData || {},
   });
 
-  // Initial load: fetch all metrics (narrative waits for data)
+  // Initial load: only fetch dashboard (default "doing" tab)
   useEffect(() => {
+    if (initialFetchDone.current) return;
+    initialFetchDone.current = true;
     refresh();
-    fetchGottmanData();
-    refreshSentiment();
-    refreshCommGrowth();
-    refreshFightFreq();
-    refreshRecovery();
-    refreshAttachment();
-    refreshBidResponse();
   }, []);
 
-  // Once primary data is loaded, fire narrative with the metrics payload
+  // Lazy-load per tab: fetch only what the active tab needs
   useEffect(() => {
-    if (dashboardData && !narrativeData && !narrativeLoading) {
+    if (tabFetched.current[activeTab]) return;
+    tabFetched.current[activeTab] = true;
+
+    switch (activeTab) {
+      case 'doing':
+        // Dashboard already loaded above
+        break;
+      case 'fight':
+        fetchGottmanData();
+        refreshSentiment();
+        refreshBidResponse();
+        break;
+      case 'triggers':
+        refreshAttachment();
+        break;
+      case 'growing':
+        refreshCommGrowth();
+        refreshFightFreq();
+        refreshRecovery();
+        break;
+    }
+  }, [activeTab]);
+
+  // Fire narrative once dashboard loads (don't wait for all 8 metrics)
+  useEffect(() => {
+    if (dashboardData && !narrativeFired.current) {
+      narrativeFired.current = true;
       refreshNarrative(buildMetricsPayload());
     }
-  }, [dashboardData, gottmanData, sentimentData, commGrowthData, fightFreqData, recoveryData, attachmentData, bidResponseData]);
+  }, [dashboardData]);
 
   const handleRefresh = async () => {
-    await Promise.all([
-      refresh(),
-      fetchGottmanData(),
-      refreshSentiment(),
-      refreshCommGrowth(),
-      refreshFightFreq(),
-      refreshRecovery(),
-      refreshAttachment(),
-      refreshBidResponse(),
-    ]);
+    // Only refresh what's been loaded + current tab
+    const promises: Promise<any>[] = [refresh()];
+
+    // Re-fetch current tab's data
+    switch (activeTab) {
+      case 'fight':
+        promises.push(fetchGottmanData(), refreshSentiment(), refreshBidResponse());
+        break;
+      case 'triggers':
+        promises.push(refreshAttachment());
+        break;
+      case 'growing':
+        promises.push(refreshCommGrowth(), refreshFightFreq(), refreshRecovery());
+        break;
+    }
+
+    await Promise.all(promises);
     setLastRefresh(new Date());
-    // Narrative uses fresh data — small delay to let state settle
-    setTimeout(() => refreshNarrative(buildMetricsPayload()), 100);
+    // Refresh narrative with updated data
+    narrativeFired.current = false;
+    setTimeout(() => {
+      narrativeFired.current = true;
+      refreshNarrative(buildMetricsPayload());
+    }, 100);
   };
 
   // Calculate health score and trend
