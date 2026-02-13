@@ -24,6 +24,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       return;
     }
 
+    // If we already verified this token, skip re-fetch
+    if (authState === 'authenticated' && userName) {
+      return;
+    }
+
     // Verify token with backend
     const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
     fetch(`${API_BASE}/api/auth/me`, {
@@ -50,7 +55,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         localStorage.removeItem(TOKEN_KEY);
         setAuthState('unauthenticated');
       });
-  }, []);
+  }, [location.pathname]);
 
   // Show loading spinner while verifying token
   if (authState === 'loading') {

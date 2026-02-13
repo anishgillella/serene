@@ -97,8 +97,8 @@ export const GottmanRadar: React.FC<GottmanRadarProps> = ({
       </div>
 
       {/* Radar Chart */}
-      <div className="flex justify-center">
-        <svg width={size} height={size} className="overflow-visible">
+      <div className="flex justify-center w-full max-w-[400px] mx-auto">
+        <svg viewBox={`0 0 ${size} ${size}`} className="w-full overflow-visible">
           {/* Background circles */}
           {Array.from({ length: levels }).map((_, i) => {
             const radius = ((i + 1) / levels) * maxRadius;

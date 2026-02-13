@@ -79,7 +79,7 @@ export const PremiumTabsFullWidth: React.FC<PremiumTabsProps> = ({
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.2 }}
-      className="relative bg-white/60 backdrop-blur-lg rounded-2xl p-1.5 border border-white/50 shadow-subtle flex w-full"
+      className="relative bg-white/60 backdrop-blur-lg rounded-2xl p-1.5 border border-white/50 shadow-subtle flex w-full overflow-x-auto whitespace-nowrap"
     >
       {tabs.map((tab) => {
         const isActive = activeTab === tab.id;

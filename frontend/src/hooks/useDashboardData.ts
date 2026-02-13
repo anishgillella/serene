@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 
 interface DashboardData {
   health_score: number;
+  health_score_previous?: number | null;
   escalation_risk: {
     risk_score: number;
     interpretation: string;

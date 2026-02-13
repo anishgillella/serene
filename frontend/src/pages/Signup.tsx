@@ -35,7 +35,8 @@ const Signup = () => {
       if (data.relationship_id) {
         localStorage.setItem('serene_relationship_id', data.relationship_id);
       }
-      navigate('/');
+      // Full reload so Layout picks up the new token cleanly
+      window.location.href = '/';
     } catch (err: any) {
       setError(err.message || 'Something went wrong');
     } finally {
