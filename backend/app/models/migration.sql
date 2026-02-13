@@ -7,12 +7,12 @@ CREATE TABLE IF NOT EXISTS relationships (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     partner_a_name TEXT,
     partner_b_name TEXT,
-    partner_a_id UUID REFERENCES users(id),
-    partner_b_id UUID REFERENCES users(id)
+    partner_a_id UUID REFERENCES serene_users(id),
+    partner_b_id UUID REFERENCES serene_users(id)
 );
 
--- Create users table
-CREATE TABLE IF NOT EXISTS users (
+-- Create serene_users table
+CREATE TABLE IF NOT EXISTS serene_users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     auth0_id TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE NOT NULL,
@@ -235,3 +235,9 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_conflict ON chat_messages(conflict_
 -- Create RLS policies
 ALTER TABLE chat_messages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow public access to chat_messages" ON chat_messages FOR ALL USING (true);
+
+-- Add password_hash column for local auth
+ALTER TABLE serene_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+
+-- Make auth0_id nullable (no longer required for local auth)
+ALTER TABLE serene_users ALTER COLUMN auth0_id DROP NOT NULL;

@@ -1046,7 +1046,7 @@ class DatabaseService:
             with self.get_db_context() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("""
-                        INSERT INTO users (auth0_id, email, name, picture, last_login)
+                        INSERT INTO serene_users (auth0_id, email, name, picture, last_login)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (auth0_id) DO UPDATE SET
                             email = EXCLUDED.email,
@@ -1061,6 +1061,54 @@ class DatabaseService:
                     return str(user_id)
         except Exception as e:
             raise e
+
+    def get_partner_role(self, auth0_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Resolve partner role from auth0_id.
+        Queries users + relationships tables to determine if user is partner_a or partner_b.
+        Returns { partner_role, partner_name, other_partner_name, relationship_id }
+        """
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    # Find user by auth0_id
+                    cursor.execute("SELECT id, name FROM serene_users WHERE auth0_id = %s", (auth0_id,))
+                    user = cursor.fetchone()
+                    if not user:
+                        return None
+
+                    user_id = str(user["id"])
+                    user_name = user["name"] or ""
+
+                    # Check relationships for this user
+                    cursor.execute("""
+                        SELECT id, partner_a_id, partner_b_id, partner_a_name, partner_b_name
+                        FROM relationships
+                        WHERE partner_a_id = %s OR partner_b_id = %s
+                        LIMIT 1
+                    """, (user_id, user_id))
+                    rel = cursor.fetchone()
+
+                    if not rel:
+                        return None
+
+                    if str(rel["partner_a_id"]) == user_id:
+                        return {
+                            "partner_role": "partner_a",
+                            "partner_name": rel["partner_a_name"] or user_name,
+                            "other_partner_name": rel["partner_b_name"] or "Partner",
+                            "relationship_id": str(rel["id"]),
+                        }
+                    else:
+                        return {
+                            "partner_role": "partner_b",
+                            "partner_name": rel["partner_b_name"] or user_name,
+                            "other_partner_name": rel["partner_a_name"] or "Partner",
+                            "relationship_id": str(rel["id"]),
+                        }
+        except Exception as e:
+            print(f"Error getting partner role: {e}")
+            return None
 
     def store_chat_message(self, conflict_id: str, role: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> str:
         """Store a chat message"""

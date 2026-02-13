@@ -4,8 +4,8 @@ Pydantic models for HeartSync data structures
 Note: This module uses gender-neutral terminology (partner_a, partner_b)
 to support all relationship types (same-sex, non-binary, etc.)
 """
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Any
 from datetime import datetime
 
 
@@ -40,6 +40,26 @@ class EscalationPoint(BaseModel):
     timestamp: Optional[float] = None
     reason: str
     description: Optional[str] = None
+
+    @field_validator("timestamp", mode="before")
+    @classmethod
+    def coerce_timestamp(cls, v: Any) -> Optional[float]:
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            # Handle "MM:SS" or "HH:MM:SS" strings from LLM
+            try:
+                parts = v.split(":")
+                if len(parts) == 2:
+                    return float(parts[0]) * 60 + float(parts[1])
+                if len(parts) == 3:
+                    return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                return float(v)
+            except (ValueError, IndexError):
+                return None
+        return None
 
 
 class ConflictAnalysis(BaseModel):
@@ -80,8 +100,8 @@ class ConflictAnalysis(BaseModel):
 
 class RepairPlan(BaseModel):
     """Model for repair plan and coaching"""
-    conflict_id: str
-    partner_requesting: str  # "partner_a" or "partner_b" (or partner's actual name)
+    conflict_id: Optional[str] = Field(default=None, description="Set programmatically, not by LLM")
+    partner_requesting: Optional[str] = Field(default=None, description="Set programmatically, not by LLM")
     steps: List[str] = Field(description="Actionable steps for repair")
     apology_script: str = Field(description="Personalized apology script")
     timing_suggestion: str = Field(description="When and how to approach the repair")

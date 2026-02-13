@@ -4,7 +4,7 @@ AWS S3 service for storing files
 import logging
 import boto3
 from botocore.exceptions import ClientError
-from typing import Optional, BinaryIO
+from typing import Optional
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -55,9 +55,7 @@ class S3Service:
             logger.error(f"❌ Error uploading file to S3: {e}")
             return None
         except Exception as e:
-            logger.error(f"❌ Unexpected error uploading to S3: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"❌ Unexpected error uploading to S3: {e}", exc_info=True)
             return None
     
     def download_file(self, file_path: str) -> Optional[bytes]:
@@ -85,9 +83,7 @@ class S3Service:
                 logger.error(f"❌ Error downloading file from S3: {e}")
             return None
         except Exception as e:
-            logger.error(f"❌ Unexpected error downloading from S3: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
+            logger.error(f"❌ Unexpected error downloading from S3: {e}", exc_info=True)
             return None
     
     def file_exists(self, file_path: str) -> bool:
@@ -153,6 +149,7 @@ class S3Service:
 
 # Singleton instance
 s3_service = S3Service()
+
 
 
 

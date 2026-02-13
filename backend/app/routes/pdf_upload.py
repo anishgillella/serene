@@ -163,40 +163,36 @@ async def process_pdf_task(
                 separators=["\n\n", "\n", ". ", " ", ""]
             )
             
-            # Chunk with chapter metadata
+            # Helper to filter junk chunks
+            junk_keywords = [
+                "copyright", "all rights reserved", "isbn", "library of congress",
+                "printed in", "publication data", "cover design", "simon & schuster",
+                "acknowledgments", "dedication", "table of contents", "index",
+                "thisiscrave.com", "atria books"
+            ]
+            def is_junk(text):
+                text_lower = text.lower()
+                junk_score = sum(1 for kw in junk_keywords if kw in text_lower)
+                if junk_score >= 2 or (len(text) < 500 and junk_score >= 1):
+                    return True
+                if "thank you" in text_lower and len(text_lower.split('\n')) > 10:
+                    return True
+                return False
+
+            # Collect all chunk texts + metadata first, then batch-embed
+            pending_chunks = []  # list of (chunk_text, metadata_dict, vector_id)
             chunk_global_index = 0
+
             if chapters:
-                # Chunk per chapter
                 for chapter in chapters:
                     chapter_text = extracted_text[chapter['start_pos']:chapter['end_pos']]
                     chapter_chunks = splitter.split_text(chapter_text)
-                    
+
                     for local_idx, chunk_text in enumerate(chapter_chunks):
-                        # Filter out junk chunks
-                        text_lower = chunk_text.lower()
-                        junk_keywords = [
-                            "copyright", "all rights reserved", "isbn", "library of congress", 
-                            "printed in", "publication data", "cover design", "simon & schuster",
-                            "acknowledgments", "dedication", "table of contents", "index",
-                            "thisiscrave.com", "atria books"
-                        ]
-                        
-                        junk_score = 0
-                        for keyword in junk_keywords:
-                            if keyword in text_lower:
-                                junk_score += 1
-                        
-                        # Skip if junk
-                        if junk_score >= 2 or (len(chunk_text) < 500 and junk_score >= 1):
+                        if is_junk(chunk_text):
                             log(f"   🗑️ Skipping junk chunk: {chunk_text[:50]}...")
                             continue
-                            
-                        if "thank you" in text_lower and len(text_lower.split('\n')) > 10:
-                             log(f"   🗑️ Skipping likely acknowledgment chunk: {chunk_text[:50]}...")
-                             continue
-
-                        chunk_embedding = embeddings_service.embed_text(chunk_text)
-                        chunk_metadata = {
+                        pending_chunks.append((chunk_text, {
                             'pdf_id': pdf_id,
                             'relationship_id': relationship_id,
                             'pdf_type': pdf_type,
@@ -209,44 +205,17 @@ async def process_pdf_task(
                             'total_chapter_chunks': len(chapter_chunks),
                             'text': chunk_text,
                             'text_length': len(chunk_text),
-                        }
-                        chunk_vectors.append({
-                            'id': f"book_{pdf_id}_chunk_{chunk_global_index}",
-                            'values': chunk_embedding,
-                            'metadata': chunk_metadata
-                        })
+                        }, f"book_{pdf_id}_chunk_{chunk_global_index}"))
                         chunk_global_index += 1
-                log(f"   ✅ Created {len(chunk_vectors)} chapter-aware chunks")
+                log(f"   📖 Collected {len(pending_chunks)} chapter-aware chunks for batch embedding")
             else:
-                # No chapters detected - chunk entire book
                 log("   ⚠️ No chapters detected, using standard chunking")
                 all_chunks = splitter.split_text(extracted_text)
                 for idx, chunk_text in enumerate(all_chunks):
-                    # Filter out junk chunks
-                    text_lower = chunk_text.lower()
-                    junk_keywords = [
-                        "copyright", "all rights reserved", "isbn", "library of congress", 
-                        "printed in", "publication data", "cover design", "simon & schuster",
-                        "acknowledgments", "dedication", "table of contents", "index",
-                        "thisiscrave.com", "atria books"
-                    ]
-                    
-                    junk_score = 0
-                    for keyword in junk_keywords:
-                        if keyword in text_lower:
-                            junk_score += 1
-                    
-                    # Skip if junk
-                    if junk_score >= 2 or (len(chunk_text) < 500 and junk_score >= 1):
+                    if is_junk(chunk_text):
                         log(f"   🗑️ Skipping junk chunk: {chunk_text[:50]}...")
                         continue
-                        
-                    if "thank you" in text_lower and len(text_lower.split('\n')) > 10:
-                            log(f"   🗑️ Skipping likely acknowledgment chunk: {chunk_text[:50]}...")
-                            continue
-
-                    chunk_embedding = embeddings_service.embed_text(chunk_text)
-                    chunk_metadata = {
+                    pending_chunks.append((chunk_text, {
                         'pdf_id': pdf_id,
                         'relationship_id': relationship_id,
                         'pdf_type': pdf_type,
@@ -257,13 +226,27 @@ async def process_pdf_task(
                         'chunk_index': idx,
                         'text': chunk_text,
                         'text_length': len(chunk_text),
-                    }
+                    }, f"book_{pdf_id}_chunk_{idx}"))
+                log(f"   📖 Collected {len(pending_chunks)} standard chunks for batch embedding")
+
+            # Batch-embed all chunks (Voyage supports batches natively)
+            if pending_chunks:
+                EMBED_BATCH_SIZE = 128  # Voyage batch limit
+                all_texts = [c[0] for c in pending_chunks]
+                all_embeddings = []
+                for i in range(0, len(all_texts), EMBED_BATCH_SIZE):
+                    batch_texts = all_texts[i:i + EMBED_BATCH_SIZE]
+                    log(f"   🧠 Embedding batch {i // EMBED_BATCH_SIZE + 1}/{(len(all_texts) + EMBED_BATCH_SIZE - 1) // EMBED_BATCH_SIZE} ({len(batch_texts)} chunks)...")
+                    batch_embeddings = embeddings_service.embed_batch(batch_texts)
+                    all_embeddings.extend(batch_embeddings)
+
+                for idx, (chunk_text, metadata, vector_id) in enumerate(pending_chunks):
                     chunk_vectors.append({
-                        'id': f"book_{pdf_id}_chunk_{idx}",
-                        'values': chunk_embedding,
-                        'metadata': chunk_metadata
+                        'id': vector_id,
+                        'values': all_embeddings[idx],
+                        'metadata': metadata
                     })
-                log(f"   ✅ Created {len(chunk_vectors)} standard chunks")
+                log(f"   ✅ Created {len(chunk_vectors)} chunks with batch embeddings")
             
             # Upload chunks in batches
             batch_size = 100
@@ -289,8 +272,8 @@ async def process_pdf_task(
             if len(extracted_text) > 40000:
                 chunk_size = 10000
                 chunks = [extracted_text[i:i+chunk_size] for i in range(0, len(extracted_text), chunk_size)]
-                for i, chunk in enumerate(chunks):
-                    chunk_embedding = embeddings_service.embed_text(chunk)
+                chunk_embeddings = embeddings_service.embed_batch(chunks)
+                for i, (chunk, chunk_embedding) in enumerate(zip(chunks, chunk_embeddings)):
                     chunk_metadata = metadata.copy()
                     chunk_metadata["chunk_index"] = i
                     chunk_metadata["total_chunks"] = len(chunks)
@@ -302,7 +285,7 @@ async def process_pdf_task(
                     })
                 if chunk_vectors:
                     pinecone_service.index.upsert(vectors=chunk_vectors, namespace=namespace)
-                    log(f"   ✅ Created and uploaded {len(chunk_vectors)} chunks")
+                    log(f"   ✅ Created and uploaded {len(chunk_vectors)} chunks (batch embedded)")
         
         log(f"✅ Stored PDF in Pinecone: {pdf_id}, namespace: {namespace}")
         

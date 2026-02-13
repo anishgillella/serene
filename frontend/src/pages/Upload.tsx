@@ -56,8 +56,22 @@ const Upload = () => {
     }
   };
 
+  const pollIntervalsRef = useRef<NodeJS.Timeout[]>([]);
+
+  // Cleanup all poll intervals on unmount
+  useEffect(() => {
+    return () => {
+      pollIntervalsRef.current.forEach(id => clearInterval(id));
+      pollIntervalsRef.current = [];
+    };
+  }, []);
+
   const pollLogs = async (fileId: string, pdfId: string) => {
+    let attempts = 0;
+    const MAX_ATTEMPTS = 120; // Stop after 2 minutes (120 * 1s)
+
     const interval = setInterval(async () => {
+      attempts++;
       try {
         const res = await fetch(`${apiUrl}/api/pdfs/logs/${pdfId}`, {
           headers: {
@@ -69,7 +83,6 @@ const Upload = () => {
           if (data.logs && data.logs.length > 0) {
             setFiles(prev => prev.map(f => {
               if (f.id === fileId) {
-                // Determine progress based on logs
                 let progress = f.progress || 10;
                 const lastLog = data.logs[data.logs.length - 1];
 
@@ -78,10 +91,9 @@ const Upload = () => {
                 if (lastLog.includes("S3")) progress = 70;
                 if (lastLog.includes("Pinecone")) progress = 90;
 
-                // Check for completion or error
                 if (lastLog.includes("Processing complete!") || lastLog.includes("Updated database record")) {
                   clearInterval(interval);
-                  fetchExistingFiles(); // Refresh list
+                  fetchExistingFiles();
                   return { ...f, logs: data.logs, status: 'success', progress: 100, message: 'Processing complete!' };
                 }
                 if (lastLog.includes("Error") || lastLog.includes("Failed")) {
@@ -98,12 +110,12 @@ const Upload = () => {
       } catch (e) {
         console.error("Error polling logs:", e);
       }
+      if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(interval);
+      }
     }, 1000);
 
-    // Store interval ID to clear it later if needed (e.g. on unmount)
-    // For now, we rely on the closure or component unmount clearing it (but setInterval persists)
-    // Ideally we should track intervals in a ref, but for this simple case:
-    return () => clearInterval(interval);
+    pollIntervalsRef.current.push(interval);
   };
 
   const handleDragEnter = (e: React.DragEvent) => {

@@ -6,9 +6,8 @@ import logging
 import time
 import json
 from datetime import datetime, date, timedelta
-from typing import List, Dict, Any, Optional, Tuple
-from decimal import Decimal
-from statistics import mean, stdev
+from typing import List, Dict, Any, Optional
+from statistics import mean
 from app.services.db_service import db_service, DEFAULT_RELATIONSHIP_ID
 from app.services.llm_service import llm_service
 
@@ -464,8 +463,7 @@ class CalendarService:
                     """, (relationship_id,))
                     
                     events = []
-                    current_year = date.today().year
-                    
+
                     for row in cursor.fetchall():
                         event_id, event_type, title, description, event_date, is_recurring, \
                             reminder_days, color_tag, partner_id = row
@@ -1440,14 +1438,11 @@ class CalendarService:
                 metadata = c.get("metadata", {})
                 ai_topics = metadata.get("topics")
                 
-                if ai_topics and isinstance(ai_topics, list) and len(ai_topics) > 0:
+                if ai_topics and isinstance(ai_topics, list):
                     for topic in ai_topics:
                         topic = topic.strip()
                         if topic:
                             topic_counts[topic] = topic_counts.get(topic, 0) + 1
-                # else:
-                #     # Fallback removed as per user request - only use AI topics
-                #     pass
             
             # Sort by count and take top 5
             top_topics = sorted(topic_counts.items(), key=lambda x: x[1], reverse=True)[:5]
@@ -1496,6 +1491,7 @@ try:
 except Exception as e:
     logger.error(f"❌ Failed to initialize CalendarService: {e}")
     calendar_service = None
+
 
 
 

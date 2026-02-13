@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { SendIcon, BotIcon, UserIcon, LoaderIcon, AlertCircleIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { Button } from "@/components/ui/button";
+import { usePartnerContext } from '../contexts/PartnerContext';
 
 interface Message {
     id: string;
@@ -15,6 +16,7 @@ interface LunaChatPanelProps {
 }
 
 const LunaChatPanel: React.FC<LunaChatPanelProps> = ({ conflictId }) => {
+    const { partnerRole, partnerName } = usePartnerContext();
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -33,13 +35,13 @@ const LunaChatPanel: React.FC<LunaChatPanelProps> = ({ conflictId }) => {
                 {
                     id: 'welcome',
                     role: 'assistant',
-                    content: "Hi! I'm Luna. I've analyzed your conversation. Feel free to ask me anything about the conflict, the analysis, or how to move forward."
+                    content: `Hey${partnerName ? ` ${partnerName.split(' ')[0]}` : ''}! I'm Luna. I've looked at your conversation. Ask me anything about the conflict, the analysis, or how to move forward.`
                 }
             ]);
         }
     }, []);
 
-    const handleSend = async () => {
+    const handleSend = useCallback(async () => {
         if (!input.trim() || isLoading) return;
 
         const userMessage: Message = {
@@ -53,16 +55,19 @@ const LunaChatPanel: React.FC<LunaChatPanelProps> = ({ conflictId }) => {
         setIsLoading(true);
         setError(null);
 
+        // Create placeholder for streaming response
+        const assistantId = (Date.now() + 1).toString();
+        setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '' }]);
+
         try {
             const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-            const response = await fetch(`${apiUrl}/api/mediator/chat`, {
+            const response = await fetch(`${apiUrl}/api/mediator/chat/stream`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     conflict_id: conflictId,
-                    message: userMessage.content
+                    message: userMessage.content,
+                    partner_role: partnerRole,
                 }),
             });
 
@@ -70,22 +75,55 @@ const LunaChatPanel: React.FC<LunaChatPanelProps> = ({ conflictId }) => {
                 throw new Error('Failed to get response from Luna');
             }
 
-            const data = await response.json();
+            const reader = response.body?.getReader();
+            if (!reader) throw new Error('No response stream');
 
-            const lunaMessage: Message = {
-                id: data.message_id || Date.now().toString(),
-                role: 'assistant',
-                content: data.response
-            };
+            const decoder = new TextDecoder();
+            let buffer = '';
 
-            setMessages(prev => [...prev, lunaMessage]);
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        if (data.token) {
+                            setMessages(prev => prev.map(msg =>
+                                msg.id === assistantId
+                                    ? { ...msg, content: msg.content + data.token }
+                                    : msg
+                            ));
+                        }
+                        if (data.done && data.message_id) {
+                            setMessages(prev => prev.map(msg =>
+                                msg.id === assistantId
+                                    ? { ...msg, id: data.message_id }
+                                    : msg
+                            ));
+                        }
+                        if (data.error) {
+                            throw new Error(data.error);
+                        }
+                    } catch (parseErr) {
+                        // Skip malformed SSE lines
+                    }
+                }
+            }
         } catch (err) {
             console.error('Error sending message:', err);
             setError('Failed to send message. Please try again.');
+            // Remove empty assistant placeholder on error
+            setMessages(prev => prev.filter(msg => msg.id !== assistantId || msg.content));
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [input, isLoading, conflictId]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -140,7 +178,7 @@ const LunaChatPanel: React.FC<LunaChatPanelProps> = ({ conflictId }) => {
                     </div>
                 ))}
 
-                {isLoading && (
+                {isLoading && messages[messages.length - 1]?.content === '' && (
                     <div className="flex gap-3">
                         <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent">
                             <BotIcon size={16} />
