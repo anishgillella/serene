@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Room, RoomEvent, RemoteParticipant, LocalParticipant } from 'livekit-client';
 import { XIcon, MicIcon, MicOffIcon, Moon } from 'lucide-react';
+import { usePartnerContext } from '../contexts/PartnerContext';
 
 interface MediatorModalProps {
   isOpen: boolean;
@@ -21,6 +22,7 @@ interface TranscriptEntry {
 }
 
 const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflictId, context }) => {
+  const { partnerRole, partnerName } = usePartnerContext();
   const [isConnected, setIsConnected] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -39,7 +41,8 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
     try {
       const requestBody = {
         conflict_id: conflictId,
-        participant_name: 'user'
+        participant_name: partnerName || 'user',
+        partner_role: partnerRole,
       };
       console.log('📤 Sending token request:', requestBody);
 

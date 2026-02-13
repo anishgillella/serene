@@ -65,6 +65,7 @@ cd backend
 source venv/bin/activate
 python start_agent.py start
 ```
+*(Note: The agent uses the AgentServer pattern and will auto-connect to rooms matching `mediator-*`)*
 
 **Access:**
 - Frontend: http://localhost:5173
@@ -502,15 +503,59 @@ npm run preview                       # Preview build
 
 ##  Deployment
 
-The application is designed for:
-- **Frontend**: Vercel / Netlify
-- **Backend**: AWS EC2 / Railway / Render
-- **Agent**: Same server as backend (separate process)
-- **Database**: Supabase (managed PostgreSQL)
-- **Storage**: AWS S3
-- **Vector DB**: Pinecone (serverless)
+The application is deployed on **Fly.io** for both backend and agent processes.
 
-*(See deployment docs for production setup)*
+### Architecture on Fly.io
+- **App Name**: `serene-backend`
+- **Region**: `dfw` (Dallas)
+- **Processes**:
+    - `web`: FastAPI server (port 8080)
+    - `worker`: LiveKit Agent (outbound WebSocket connection)
+- **Database**: Supabase (Transaction Pooler - port 6543)
+
+### Deployment Steps
+
+1. **Prerequisites**
+   - Install `flyctl`
+   - Login: `fly auth login`
+
+2. **Secrets Configuration**
+   Set the following secrets using `fly secrets set`:
+   ```bash
+   # Critical: Use Transaction Pooler (Port 6543)
+   DATABASE_URL=postgres://user:pass@host:6543/postgres?pgbouncer=true
+   
+   # LiveKit
+   LIVEKIT_URL=...
+   LIVEKIT_API_KEY=...
+   LIVEKIT_API_SECRET=...
+   
+   # AI Services
+   OPENROUTER_API_KEY=...
+   PINECONE_API_KEY=...
+   VOYAGE_API_KEY=...
+   AWS_ACCESS_KEY_ID=...
+   AWS_SECRET_ACCESS_KEY=...
+   S3_BUCKET_NAME=...
+   ```
+
+3. **Deploy**
+   Use the helper script:
+   ```bash
+   cd backend
+   ./deploy_fly.sh
+   ```
+   Or manually:
+   ```bash
+   fly deploy
+   ```
+
+### Frontend Deployment (Vercel)
+- **Build Command**: `npm run build`
+- **Output Directory**: `dist`
+- **Environment Variables**:
+    - `VITE_API_URL`: `https://serene-backend.fly.dev`
+    - `VITE_LIVEKIT_URL`: (Your LiveKit Cloud URL)
 
 ---
 

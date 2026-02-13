@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_KEY: str
 
+    # Local Auth
+    SECRET_KEY: str = "serene-dev-secret-change-in-production"
+
     # AWS S3 Configuration
     AWS_ACCESS_KEY_ID: str
     AWS_SECRET_ACCESS_KEY: str

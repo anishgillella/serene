@@ -11,6 +11,8 @@ primary_region = 'dfw'
 
 [processes]
   web = 'uvicorn app.main:app --host 0.0.0.0 --port 8080'
+  # Worker runs the LiveKit agent which connects via WebSocket (outbound)
+  # It doesn't need an inbound port exposed via http_service
   worker = 'python start_agent.py start'
 
 [http_service]

@@ -1151,3 +1151,55 @@ pkill -9 -f "python start_agent.py"
 **Estimated Debugging Hours:** 140+  
 
 *"Every bug is a lesson, every crash is an opportunity to build more resilient systems."*
+
+---
+
+### 35. **Fly.io Deployment Crash (OpenTelemetry Mismatch)**
+
+**Problem:**  
+Deployment to Fly.io failed with `ImportError: cannot import name 'LogData' from 'opentelemetry.sdk._logs'`.
+
+**Root Cause:**  
+Dependency version mismatch. `livekit-agents` required a specific version of OpenTelemetry, but `pip install` pulled a newer, incompatible version because `requirements.txt` didn't pin versions.
+
+**Solution:**  
+Pinned exact versions in `requirements.txt` matching the working local environment:
+```text
+opentelemetry-api==1.38.0
+opentelemetry-sdk==1.38.0
+opentelemetry-exporter-otlp==1.38.0
+opentelemetry-instrumentation==0.59b0
+```
+
+---
+
+### 36. **Multiple Agents Joining Same Room**
+
+**Problem:**  
+Three agent instances would join a single room, causing chaos.
+
+**Root Cause:**  
+1. **Double Dispatch:** Code had a duplicate `create_dispatch` call (copy-paste error).
+2. **Frontend + Backend Race:** Frontend called `dispatch-agent` endpoint while backend *also* had auto-join logic.
+
+**Solution:**  
+1. Removed duplicate line in `main.py`.
+2. Added check for existing dispatches before creating new one:
+```python
+existing = await lkapi.agent_dispatch.list_dispatch(room_name=room_name)
+if existing:
+    return existing[0]
+```
+
+---
+
+### 37. **Database Connection Exhaustion (Fly.io)**
+
+**Problem:**  
+Potential for "too many clients" errors on Fly.io.
+
+**Root Cause:**  
+Application opens a new DB connection for every request. Direct Postgres connection (port 5432) has a limit of ~100 connections.
+
+**Solution:**  
+Switched to **Supabase Transaction Pooler** (port 6543). This allows thousands of short-lived connections to share a small pool of real connections, perfectly matching the app's connection pattern.
