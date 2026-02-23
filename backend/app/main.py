@@ -31,15 +31,17 @@ if ENABLE_SECURITY_MIDDLEWARE:
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RateLimitMiddleware)
 
+# Build CORS origins from config + known Vercel deployments
+_allowed_origins = [
+    o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()
+] + [
+    "https://serene-rho-two.vercel.app",
+    "https://serene-5iy23skex-anishgillella-gmailcoms-projects.vercel.app",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://serene-rho-two.vercel.app",
-        "https://serene-5iy23skex-anishgillella-gmailcoms-projects.vercel.app",
-        "*" # Keep wildcard as fallback for now
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,6 +77,10 @@ from .routes import gestures_routes
 app.include_router(gestures_routes.router)
 from .routes import vapi_webhook
 app.include_router(vapi_webhook.router)
+from .routes import digest_routes
+app.include_router(digest_routes.router)
+from .routes import alert_routes
+app.include_router(alert_routes.router)
 
 # Initialize Supabase client
 supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)

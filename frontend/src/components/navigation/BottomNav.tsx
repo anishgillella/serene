@@ -2,11 +2,10 @@ import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
     LayoutDashboard,
-    Calendar,
     Mic,
-    History,
     BarChart2,
-    MessageCircle
+    MessageCircle,
+    Bell
 } from 'lucide-react';
 
 const BottomNav = () => {
@@ -16,8 +15,8 @@ const BottomNav = () => {
         { icon: LayoutDashboard, label: 'Home', path: '/' },
         { icon: MessageCircle, label: 'Chat', path: '/chat' },
         { icon: Mic, label: 'Capture', path: '/fight-capture' },
-        { icon: Calendar, label: 'Calendar', path: '/calendar' },
         { icon: BarChart2, label: 'Stats', path: '/analytics' },
+        { icon: Bell, label: 'Alerts', path: '/notifications' },
     ];
 
     return (

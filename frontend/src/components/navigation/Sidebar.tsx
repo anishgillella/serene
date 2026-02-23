@@ -11,7 +11,9 @@ import {
     Moon,
     Heart,
     User,
-    MessageCircle
+    MessageCircle,
+    BookOpen,
+    Bell
 } from 'lucide-react';
 import { useRelationship } from '../../contexts/RelationshipContext';
 
@@ -40,6 +42,8 @@ const Sidebar = () => {
         { icon: Calendar, label: 'Calendar', path: '/calendar' },
         { icon: History, label: 'History', path: '/history' },
         { icon: BarChart2, label: 'Analytics', path: '/analytics' },
+        { icon: BookOpen, label: 'Digests', path: '/digests' },
+        { icon: Bell, label: 'Alerts', path: '/notifications' },
         { icon: Upload, label: 'Upload', path: '/upload' },
         { icon: Heart, label: 'Onboarding', path: '/onboarding' },
         { icon: User, label: 'Profile', path: '/profile' },

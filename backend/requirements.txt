@@ -48,6 +48,10 @@ langfuse
 python-multipart
 python-jose[cryptography]
 
+# Redis & Background Jobs
+redis
+celery[redis]
+
 # Testing
 pytest
 pytest-asyncio

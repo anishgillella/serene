@@ -30,6 +30,17 @@ class Settings(BaseSettings):
     AUTH0_ALGORITHMS: list = ["RS256"]
     AUTH_OPTIONAL: bool = True  # Set to False in production
 
+    # Redis Configuration
+    REDIS_URL: str = "redis://localhost:6379/0"
+    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+
+    # CORS
+    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:5175,http://localhost:3000"
+
+    # S3 Signed URLs
+    S3_SIGNED_URL_EXPIRY: int = 3600  # 1 hour
+
 
     class Config:
         env_file = "../.env"  # Load from root directory
