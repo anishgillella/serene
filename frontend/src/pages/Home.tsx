@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Moon, ArrowRight, Sparkles, MessageSquare, Clock } from 'lucide-react';
+import { Moon, ArrowRight, Sparkles, MessageSquare, Clock, BookOpen, Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useRelationship } from '../contexts/RelationshipContext';
+import { useLatestDigest } from '../hooks/useDigests';
+import { useUnreadAlertCount } from '../hooks/useAlerts';
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -225,8 +227,62 @@ const Home = () => {
         </div>
       </div>
 
+      {/* Digest & Alert Badges */}
+      <DigestAlertBanner />
+
       {/* Recent Conflicts Section */}
       <RecentConflicts />
+    </div>
+  );
+};
+
+const DigestAlertBanner = () => {
+  const navigate = useNavigate();
+  const { relationshipId } = useRelationship();
+  const rid = relationshipId || '00000000-0000-0000-0000-000000000000';
+  const { digest, loading: digestLoading } = useLatestDigest(rid);
+  const { count: alertCount, loading: alertLoading } = useUnreadAlertCount(rid);
+
+  if (digestLoading && alertLoading) return null;
+  if (!digest && alertCount === 0) return null;
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
+      {digest && (
+        <div
+          onClick={() => navigate('/digests')}
+          className="bg-surface-elevated rounded-2xl p-5 border border-accent/20 hover:border-accent/40 cursor-pointer transition-all flex items-center gap-4"
+        >
+          <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center flex-shrink-0">
+            <BookOpen size={20} className="text-accent" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4 className="text-small font-medium text-text-primary">New Weekly Digest</h4>
+            <p className="text-tiny text-text-secondary truncate">
+              {digest.narrative ? digest.narrative.slice(0, 80) + '...' : 'Your weekly summary is ready'}
+            </p>
+          </div>
+          <ArrowRight size={16} className="text-text-tertiary flex-shrink-0" />
+        </div>
+      )}
+      {alertCount > 0 && (
+        <div
+          onClick={() => navigate('/notifications')}
+          className="bg-surface-elevated rounded-2xl p-5 border border-amber-500/20 hover:border-amber-500/40 cursor-pointer transition-all flex items-center gap-4"
+        >
+          <div className="w-10 h-10 rounded-full bg-amber-500/10 flex items-center justify-center flex-shrink-0 relative">
+            <Bell size={20} className="text-amber-500" />
+            <span className="absolute -top-1 -right-1 w-5 h-5 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              {alertCount}
+            </span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4 className="text-small font-medium text-text-primary">{alertCount} Active Alert{alertCount !== 1 ? 's' : ''}</h4>
+            <p className="text-tiny text-text-secondary">Tap to view and manage</p>
+          </div>
+          <ArrowRight size={16} className="text-text-tertiary flex-shrink-0" />
+        </div>
+      )}
     </div>
   );
 };

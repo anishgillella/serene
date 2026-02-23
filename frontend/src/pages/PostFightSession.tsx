@@ -176,6 +176,8 @@ const PostFightSession = () => {
   const [loadingRepairPlan, setLoadingRepairPlan] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [repairPlanError, setRepairPlanError] = useState<string | null>(null);
+  const [asyncTaskId, setAsyncTaskId] = useState<string | null>(null);
+  const [asyncTaskStatus, setAsyncTaskStatus] = useState<string | null>(null);
   const [activeView, setActiveView] = useState<'analysis' | 'repair' | 'chat' | null>(null);
   const [deepInsightsData, setDeepInsightsData] = useState<{
     replayData: any;
@@ -611,6 +613,55 @@ const PostFightSession = () => {
       setLoadingRepairPlan(false);
     }
   }, [conflictId, apiUrl, addMessage, loadingAnalysis, loadingRepairPlan]);
+
+  // Poll async task status when a Celery task is in progress
+  useEffect(() => {
+    if (!asyncTaskId || asyncTaskStatus === 'completed' || asyncTaskStatus === 'failed') return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${apiUrl}/api/post-fight/task/${asyncTaskId}/status`, {
+          headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setAsyncTaskStatus(data.status);
+
+        if (data.status === 'completed') {
+          clearInterval(interval);
+          // Fetch the generated analysis/repair plan via the existing generate-analysis endpoint
+          // which returns cached S3 data
+          try {
+            const analysisRes = await fetch(`${apiUrl}/api/post-fight/conflicts/${conflictId}/generate-analysis`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+              body: JSON.stringify({})
+            });
+            if (analysisRes.ok) {
+              const analysisData = await analysisRes.json();
+              if (analysisData.analysis_boyfriend) {
+                setAnalysisBoyfriend(analysisData.analysis_boyfriend);
+              }
+            }
+          } catch (e) {
+            console.error('Error fetching completed analysis:', e);
+          }
+          setLoadingAnalysis(false);
+          setLoadingRepairPlan(false);
+          setActiveView('analysis');
+        } else if (data.status === 'failed') {
+          clearInterval(interval);
+          setAnalysisError(data.error_message || 'Analysis failed');
+          setLoadingAnalysis(false);
+          setLoadingRepairPlan(false);
+        }
+      } catch (e) {
+        console.error('Error polling task status:', e);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [asyncTaskId, asyncTaskStatus, apiUrl, conflictId]);
 
   // Debug logging for render state
   useEffect(() => {

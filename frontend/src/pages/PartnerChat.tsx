@@ -63,6 +63,7 @@ const PartnerChat: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [lunaAlert, setLunaAlert] = useState<{ title: string; message: string; id: string } | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const [isConnected, setIsConnected] = useState(false);
     const [isReconnecting, setIsReconnecting] = useState(false);
@@ -325,6 +326,18 @@ const PartnerChat: React.FC = () => {
                         console.error('WebSocket error:', data.message);
                         break;
                     // Gesture handling
+                    case 'luna_alert':
+                        // Show Luna prevention alert inline
+                        if (data.alert) {
+                            setLunaAlert({
+                                id: data.alert.id || '',
+                                title: data.alert.title || 'Luna Alert',
+                                message: data.alert.message || '',
+                            });
+                            // Auto-dismiss after 15 seconds
+                            setTimeout(() => setLunaAlert(null), 15000);
+                        }
+                        break;
                     case 'gesture_received':
                         handleWebSocketGesture(data.gesture);
                         setReceivedGesture(data.gesture);
@@ -538,6 +551,18 @@ const PartnerChat: React.FC = () => {
                     >
                         Refresh Page
                     </button>
+                </div>
+            )}
+
+            {/* Luna Alert Banner */}
+            {lunaAlert && (
+                <div className="mx-4 mb-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3 animate-fade-in">
+                    <span className="text-amber-500 text-lg flex-shrink-0">&#x1F31F;</span>
+                    <div className="flex-1 min-w-0">
+                        <p className="text-small font-medium text-text-primary">{lunaAlert.title}</p>
+                        <p className="text-tiny text-text-secondary">{lunaAlert.message}</p>
+                    </div>
+                    <button onClick={() => setLunaAlert(null)} className="text-text-tertiary hover:text-text-primary text-lg flex-shrink-0">&times;</button>
                 </div>
             )}
 

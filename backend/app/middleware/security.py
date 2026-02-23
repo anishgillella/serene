@@ -30,10 +30,10 @@ logger = logging.getLogger("security-middleware")
 # ============================================
 
 class RateLimiter:
-    """In-memory rate limiter with sliding window."""
+    """Rate limiter backed by Redis (survives restarts), with in-memory fallback."""
 
     def __init__(self):
-        self.requests: Dict[str, list] = defaultdict(list)
+        self._cache = None
         self.config = {
             # Default limits: requests per minute
             "default": {"limit": 60, "window": 60},
@@ -45,31 +45,31 @@ class RateLimiter:
             "/api/pdfs/upload": {"limit": 10, "window": 300},
         }
 
+    @property
+    def cache(self):
+        if self._cache is None:
+            try:
+                from app.services.cache_service import cache_service
+                self._cache = cache_service
+            except Exception:
+                self._cache = None
+        return self._cache
+
     def _get_identifier(self, request: Request) -> str:
-        """Get unique identifier for rate limiting (IP + relationship_id if available)."""
-        # Get client IP
+        """Get unique identifier for rate limiting (IP + endpoint)."""
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
             ip = forwarded.split(",")[0].strip()
         else:
             ip = request.client.host if request.client else "unknown"
 
-        # Try to get relationship_id for more granular limiting
-        relationship_id = (
-            request.headers.get("X-Relationship-ID") or
-            request.query_params.get("relationship_id") or
-            ""
-        )
-
-        return f"{ip}:{relationship_id}"
+        return ip
 
     def _get_config(self, path: str) -> Dict[str, int]:
         """Get rate limit config for endpoint."""
-        # Check for exact match
         if path in self.config:
             return self.config[path]
 
-        # Check for prefix match
         for endpoint, config in self.config.items():
             if path.startswith(endpoint):
                 return config
@@ -77,25 +77,24 @@ class RateLimiter:
         return self.config["default"]
 
     def is_allowed(self, request: Request) -> tuple[bool, Dict[str, Any]]:
-        """Check if request is allowed under rate limits."""
+        """Check if request is allowed under rate limits using Redis INCR."""
         identifier = self._get_identifier(request)
         path = request.url.path
         config = self._get_config(path)
 
         limit = config["limit"]
         window = config["window"]
-        now = time.time()
 
-        # Clean old requests
-        self.requests[identifier] = [
-            t for t in self.requests[identifier]
-            if now - t < window
-        ]
+        # Use Redis counter
+        rate_key = f"serene:ratelimit:{identifier}:{path}"
 
-        # Check limit
-        request_count = len(self.requests[identifier])
-        remaining = max(0, limit - request_count - 1)
-        reset_time = int(now + window)
+        if self.cache:
+            count = self.cache.incr(rate_key, ttl=window)
+        else:
+            count = 1  # Allow if cache unavailable
+
+        remaining = max(0, limit - count)
+        reset_time = int(time.time() + window)
 
         headers = {
             "X-RateLimit-Limit": str(limit),
@@ -103,12 +102,10 @@ class RateLimiter:
             "X-RateLimit-Reset": str(reset_time),
         }
 
-        if request_count >= limit:
+        if count > limit:
             headers["Retry-After"] = str(window)
             return False, headers
 
-        # Record request
-        self.requests[identifier].append(now)
         return True, headers
 
 

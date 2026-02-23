@@ -48,38 +48,41 @@ def _get_gottman_service():
 
 
 # ============================================
-# SIMPLE IN-MEMORY CACHE WITH TTL
+# REDIS-BACKED CACHING VIA cache_service
 # ============================================
+from app.services.cache_service import cache_service as _redis_cache
 
-class SimpleCache:
-    """Simple in-memory cache with TTL for profiles."""
+# TTLs for different cache domains (seconds)
+_PROFILE_TTL = 300       # 5 min
+_TRIGGER_TTL = 600       # 10 min
+_PATTERN_TTL = 600       # 10 min
+_GOTTMAN_TTL = 600       # 10 min
+_MESSAGING_TTL = 300     # 5 min
 
-    def __init__(self, ttl_seconds: int = 300):  # 5 minute default
-        self.cache: Dict[str, tuple] = {}  # key -> (value, expiry_time)
-        self.ttl = ttl_seconds
+
+class _CacheWrapper:
+    """Thin adapter that maps old SimpleCache .get/.set calls to cache_service."""
+
+    def __init__(self, prefix: str, ttl: int):
+        self._prefix = prefix
+        self._ttl = ttl
 
     def get(self, key: str) -> Optional[Any]:
-        if key in self.cache:
-            value, expiry = self.cache[key]
-            if time.time() < expiry:
-                return value
-            else:
-                del self.cache[key]
-        return None
+        return _redis_cache.get(f"serene:{self._prefix}:{key}")
 
     def set(self, key: str, value: Any):
-        self.cache[key] = (value, time.time() + self.ttl)
+        _redis_cache.set(f"serene:{self._prefix}:{key}", value, ttl=self._ttl)
 
     def clear(self):
-        self.cache.clear()
+        _redis_cache.invalidate_pattern(f"serene:{self._prefix}:*")
 
 
-# Global caches
-_profile_cache = SimpleCache(ttl_seconds=300)  # 5 min cache for profiles
-_trigger_cache = SimpleCache(ttl_seconds=600)  # 10 min cache for triggers
-_pattern_cache = SimpleCache(ttl_seconds=600)  # 10 min cache for patterns (chronic needs, escalation risk)
-_gottman_cache = SimpleCache(ttl_seconds=600)  # 10 min cache for Gottman relationship scores
-_messaging_analytics_cache = SimpleCache(ttl_seconds=300)  # 5 min cache for messaging analytics
+# Drop-in replacements for the old SimpleCache instances
+_profile_cache = _CacheWrapper("profiles", _PROFILE_TTL)
+_trigger_cache = _CacheWrapper("triggers", _TRIGGER_TTL)
+_pattern_cache = _CacheWrapper("patterns", _PATTERN_TTL)
+_gottman_cache = _CacheWrapper("gottman_msg", _GOTTMAN_TTL)
+_messaging_analytics_cache = _CacheWrapper("msg_analytics", _MESSAGING_TTL)
 
 
 # ============================================

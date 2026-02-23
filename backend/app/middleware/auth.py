@@ -241,6 +241,20 @@ async def get_current_user_optional(
         raise
 
 
+def verify_relationship_access(user_context: UserContext, relationship_id: str):
+    """
+    Ensure the authenticated user is a member of the given relationship.
+    Raises 403 if the user's relationship_id doesn't match.
+    """
+    if not user_context or not user_context.relationship_id:
+        return  # Skip check if no relationship context (backward compat)
+    if str(user_context.relationship_id) != str(relationship_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have access to this relationship's data"
+        )
+
+
 async def get_current_user_with_relationship(
     current_user: UserContext = Depends(get_current_user)
 ) -> UserContext:

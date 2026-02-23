@@ -147,6 +147,26 @@ class S3Service:
             logger.error(f"❌ Unexpected error generating presigned URL: {e}")
             return None
 
+    def generate_signed_url(self, s3_path: str, expiry: int = None) -> Optional[str]:
+        """
+        Generate a signed URL from an S3 path (s3://bucket/key or just key).
+        Uses S3_SIGNED_URL_EXPIRY from config if expiry not specified.
+        """
+        if not s3_path:
+            return None
+
+        # Extract key from s3:// URL
+        key = s3_path
+        if key.startswith("s3://"):
+            parts = key.replace("s3://", "").split("/", 1)
+            key = parts[1] if len(parts) > 1 else key
+
+        if expiry is None:
+            expiry = settings.S3_SIGNED_URL_EXPIRY
+
+        return self.get_file_url(key, expires_in=expiry)
+
+
 # Singleton instance
 s3_service = S3Service()
 

@@ -214,6 +214,34 @@ async def websocket_partner_chat(
                             "message_id": message["id"]
                         })
 
+                    # Check for tension alerts in background (non-blocking)
+                    async def _check_message_alerts():
+                        try:
+                            from app.services.alert_service import alert_service
+                            alerts = await alert_service.check_for_alerts(
+                                relationship_id,
+                                trigger_context={
+                                    "type": "message_analysis",
+                                    "sentiment_score": message.get("sentiment_score"),
+                                    "content_preview": content[:50],
+                                }
+                            )
+                            # Deliver Luna alert inline if any
+                            for alert in alerts:
+                                await manager.send_to_partner(
+                                    conversation_id, partner_id,
+                                    {"type": "luna_alert", "alert": alert}
+                                )
+                                other = manager.get_other_partner(partner_id)
+                                await manager.send_to_partner(
+                                    conversation_id, other,
+                                    {"type": "luna_alert", "alert": alert}
+                                )
+                        except Exception as e:
+                            logger.warning(f"Alert check after message failed: {e}")
+
+                    asyncio.create_task(_check_message_alerts())
+
                     # Check if demo mode is enabled (partner_a is chatting)
                     # If so, generate an LLM response as partner_b
                     if partner_id == "partner_a" and demo_partner_service:

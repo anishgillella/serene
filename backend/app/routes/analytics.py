@@ -16,6 +16,7 @@ from app.services.pattern_analysis_service import pattern_analysis_service
 from app.services.db_service import db_service
 from app.services.gottman_analysis_service import gottman_service
 from app.services.advanced_analytics_service import advanced_analytics_service
+from app.services.cache_service import cache_service
 from app.models.schemas import (
     SentimentShiftResponse,
     CommunicationGrowthResponse,
@@ -38,6 +39,13 @@ async def get_dashboard_data(
 ):
     """Get comprehensive dashboard data"""
     try:
+        # Check cache first
+        cache_key = f"serene:analytics:dashboard:{relationship_id}"
+        cached = cache_service.get(cache_key)
+        if cached:
+            logger.info(f"Cache HIT for dashboard {relationship_id}")
+            return cached
+
         logger.info(f"📊 Getting dashboard data for {relationship_id}")
         risk_report = await pattern_analysis_service.calculate_escalation_risk(
             relationship_id
@@ -69,7 +77,7 @@ async def get_dashboard_data(
         except Exception:
             pass  # Non-critical — skip if method doesn't support days_back
 
-        return {
+        result = {
             "health_score": health_score,
             "health_score_previous": health_score_previous,
             "escalation_risk": risk_report.model_dump(),
@@ -91,6 +99,10 @@ async def get_dashboard_data(
                 f"Chronic unmet needs: {len(needs)}",
             ],
         }
+
+        # Cache for 5 minutes
+        cache_service.set(cache_key, result, ttl=300)
+        return result
     except Exception as e:
         logger.error(f"❌ Error getting dashboard data: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -109,6 +121,13 @@ async def get_gottman_relationship_scores(
     Includes Four Horsemen averages, repair success rate, and Gottman health score.
     """
     try:
+        # Check cache first
+        cache_key = f"serene:analytics:gottman:{relationship_id}"
+        cached = cache_service.get(cache_key)
+        if cached:
+            logger.info(f"Cache HIT for Gottman {relationship_id}")
+            return cached
+
         logger.info(f"🔬 Getting Gottman scores for {relationship_id}")
         scores = await gottman_service.get_relationship_scores(relationship_id)
 
@@ -137,7 +156,7 @@ async def get_gottman_relationship_scores(
                 "conflicts_analyzed": 0
             }
 
-        return {
+        result = {
             "has_data": True,
             "gottman_health_score": float(scores.get("gottman_health_score", 0)),
             "four_horsemen": {
@@ -163,6 +182,10 @@ async def get_gottman_relationship_scores(
             "conflicts_analyzed": scores.get("conflicts_analyzed", 0),
             "last_calculated_at": scores.get("last_calculated_at")
         }
+
+        # Cache for 10 minutes
+        cache_service.set(cache_key, result, ttl=600)
+        return result
     except Exception as e:
         logger.error(f"❌ Error getting Gottman scores: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1313,11 +1336,6 @@ async def get_bid_response_for_conflict(
 # NARRATIVE INSIGHTS ENDPOINT
 # ============================================================================
 
-# Simple in-memory cache: { (relationship_id, viewer_role): (timestamp, result) }
-_narrative_cache: dict = {}
-_NARRATIVE_TTL_SECONDS = 300  # 5 minutes
-
-
 from pydantic import BaseModel as PydanticBaseModel
 
 
@@ -1344,14 +1362,12 @@ async def post_narrative_insights(body: NarrativeInsightsRequest):
         if viewer_role and viewer_role not in ("partner_a", "partner_b"):
             viewer_role = None
 
-        # Check cache
-        cache_key = (relationship_id, viewer_role)
-        now = time.time()
-        if cache_key in _narrative_cache:
-            cached_at, cached_result = _narrative_cache[cache_key]
-            if now - cached_at < _NARRATIVE_TTL_SECONDS:
-                logger.info(f"Returning cached narrative insights (age={int(now - cached_at)}s)")
-                return cached_result
+        # Check Redis cache
+        cache_key = f"serene:analytics:narrative:{relationship_id}:{viewer_role or 'none'}"
+        cached = cache_service.get(cache_key)
+        if cached:
+            logger.info(f"Cache HIT for narrative insights {relationship_id}")
+            return cached
 
         names = db_service.get_partner_names(relationship_id)
         partner_a_name = names.get("partner_a", "Partner A")
@@ -1373,8 +1389,8 @@ async def post_narrative_insights(body: NarrativeInsightsRequest):
             "cross_metric_correlations": insights.cross_metric_correlations,
         }
 
-        # Store in cache
-        _narrative_cache[cache_key] = (now, result)
+        # Store in cache (5 min TTL)
+        cache_service.set(cache_key, result, ttl=300)
 
         return result
     except Exception as e:

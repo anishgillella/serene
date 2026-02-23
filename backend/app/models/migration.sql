@@ -241,3 +241,60 @@ ALTER TABLE serene_users ADD COLUMN IF NOT EXISTS password_hash TEXT;
 
 -- Make auth0_id nullable (no longer required for local auth)
 ALTER TABLE serene_users ALTER COLUMN auth0_id DROP NOT NULL;
+
+-- ============================================================================
+-- Task Status (Celery background job tracking)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS task_status (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_type VARCHAR(50) NOT NULL,
+    reference_id UUID,
+    relationship_id UUID NOT NULL,
+    celery_task_id VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'pending',
+    result JSONB,
+    error_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_task_status_reference ON task_status(reference_id, task_type);
+CREATE INDEX IF NOT EXISTS idx_task_status_relationship ON task_status(relationship_id);
+
+-- ============================================================================
+-- Weekly Relationship Digests
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS relationship_digests (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    relationship_id UUID NOT NULL REFERENCES relationships(id),
+    week_start DATE NOT NULL,
+    week_end DATE NOT NULL,
+    metrics JSONB NOT NULL,
+    narrative TEXT,
+    highlights JSONB,
+    recommendations JSONB,
+    is_read_partner_a BOOLEAN DEFAULT FALSE,
+    is_read_partner_b BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(relationship_id, week_start)
+);
+CREATE INDEX IF NOT EXISTS idx_digests_relationship ON relationship_digests(relationship_id, week_start DESC);
+
+-- ============================================================================
+-- Conflict Prevention Alerts
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS prevention_alerts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    relationship_id UUID NOT NULL REFERENCES relationships(id),
+    alert_type VARCHAR(50) NOT NULL,
+    severity VARCHAR(20) DEFAULT 'low',
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    context JSONB,
+    is_dismissed BOOLEAN DEFAULT FALSE,
+    dismissed_by VARCHAR(50),
+    snoozed_until TIMESTAMPTZ,
+    delivered_in_chat BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_alerts_relationship ON prevention_alerts(relationship_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alerts_active ON prevention_alerts(relationship_id, is_dismissed, snoozed_until);

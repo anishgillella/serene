@@ -2969,6 +2969,271 @@ class DatabaseService:
             return []
 
 
+    # ================================================================
+    # Task Status CRUD (Celery background jobs)
+    # ================================================================
+
+    def create_task_status(self, task_type: str, reference_id: str, relationship_id: str,
+                           celery_task_id: str = None, status: str = "pending") -> Optional[str]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO task_status (task_type, reference_id, relationship_id, celery_task_id, status)
+                        VALUES (%s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (task_type, reference_id, relationship_id, celery_task_id, status))
+                    task_id = str(cursor.fetchone()[0])
+                    conn.commit()
+                    return task_id
+        except Exception as e:
+            print(f"Error creating task_status: {e}")
+            return None
+
+    def update_task_status(self, celery_task_id: str, status: str,
+                           result: dict = None, error_message: str = None):
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE task_status
+                        SET status = %s, result = %s, error_message = %s, updated_at = NOW()
+                        WHERE celery_task_id = %s;
+                    """, (status, json.dumps(result) if result else None, error_message, celery_task_id))
+                    conn.commit()
+        except Exception as e:
+            print(f"Error updating task_status: {e}")
+
+    def get_task_status(self, celery_task_id: str) -> Optional[Dict]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM task_status WHERE celery_task_id = %s;
+                    """, (celery_task_id,))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            print(f"Error getting task_status: {e}")
+            return None
+
+    def get_task_status_by_reference(self, reference_id: str, task_type: str) -> Optional[Dict]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM task_status
+                        WHERE reference_id = %s AND task_type = %s
+                        ORDER BY created_at DESC LIMIT 1;
+                    """, (reference_id, task_type))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            print(f"Error getting task_status by reference: {e}")
+            return None
+
+    # ================================================================
+    # Digest CRUD
+    # ================================================================
+
+    def create_digest(self, relationship_id: str, week_start, week_end,
+                      metrics: dict, narrative: str = None,
+                      highlights: list = None, recommendations: list = None) -> Optional[str]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO relationship_digests
+                            (relationship_id, week_start, week_end, metrics, narrative, highlights, recommendations)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (relationship_id, week_start) DO UPDATE SET
+                            metrics = EXCLUDED.metrics,
+                            narrative = EXCLUDED.narrative,
+                            highlights = EXCLUDED.highlights,
+                            recommendations = EXCLUDED.recommendations
+                        RETURNING id;
+                    """, (relationship_id, week_start, week_end,
+                          json.dumps(metrics, default=str),
+                          narrative,
+                          json.dumps(highlights) if highlights else None,
+                          json.dumps(recommendations) if recommendations else None))
+                    digest_id = str(cursor.fetchone()[0])
+                    conn.commit()
+                    return digest_id
+        except Exception as e:
+            print(f"Error creating digest: {e}")
+            return None
+
+    def get_digests(self, relationship_id: str, limit: int = 10, offset: int = 0) -> List[Dict]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM relationship_digests
+                        WHERE relationship_id = %s
+                        ORDER BY week_start DESC
+                        LIMIT %s OFFSET %s;
+                    """, (relationship_id, limit, offset))
+                    return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error getting digests: {e}")
+            return []
+
+    def get_digest_by_id(self, digest_id: str) -> Optional[Dict]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("SELECT * FROM relationship_digests WHERE id = %s;", (digest_id,))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            print(f"Error getting digest: {e}")
+            return None
+
+    def get_latest_digest(self, relationship_id: str) -> Optional[Dict]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM relationship_digests
+                        WHERE relationship_id = %s
+                        ORDER BY week_start DESC LIMIT 1;
+                    """, (relationship_id,))
+                    row = cursor.fetchone()
+                    return dict(row) if row else None
+        except Exception as e:
+            print(f"Error getting latest digest: {e}")
+            return None
+
+    def mark_digest_read(self, digest_id: str, partner: str) -> bool:
+        try:
+            col = "is_read_partner_a" if partner == "partner_a" else "is_read_partner_b"
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(f"""
+                        UPDATE relationship_digests SET {col} = TRUE WHERE id = %s;
+                    """, (digest_id,))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error marking digest read: {e}")
+            return False
+
+    # ================================================================
+    # Prevention Alert CRUD
+    # ================================================================
+
+    def create_alert(self, relationship_id: str, alert_type: str, severity: str,
+                     title: str, message: str, context: dict = None) -> Optional[str]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO prevention_alerts
+                            (relationship_id, alert_type, severity, title, message, context)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING id;
+                    """, (relationship_id, alert_type, severity, title, message,
+                          json.dumps(context) if context else None))
+                    alert_id = str(cursor.fetchone()[0])
+                    conn.commit()
+                    return alert_id
+        except Exception as e:
+            print(f"Error creating alert: {e}")
+            return None
+
+    def get_active_alerts(self, relationship_id: str) -> List[Dict]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM prevention_alerts
+                        WHERE relationship_id = %s
+                          AND is_dismissed = FALSE
+                          AND (snoozed_until IS NULL OR snoozed_until < NOW())
+                        ORDER BY created_at DESC;
+                    """, (relationship_id,))
+                    return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error getting active alerts: {e}")
+            return []
+
+    def get_alert_history(self, relationship_id: str, limit: int = 50) -> List[Dict]:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT * FROM prevention_alerts
+                        WHERE relationship_id = %s
+                        ORDER BY created_at DESC LIMIT %s;
+                    """, (relationship_id, limit))
+                    return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error getting alert history: {e}")
+            return []
+
+    def dismiss_alert(self, alert_id: str, dismissed_by: str = None) -> bool:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE prevention_alerts
+                        SET is_dismissed = TRUE, dismissed_by = %s
+                        WHERE id = %s;
+                    """, (dismissed_by, alert_id))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error dismissing alert: {e}")
+            return False
+
+    def snooze_alert(self, alert_id: str, hours: int = 4) -> bool:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE prevention_alerts
+                        SET snoozed_until = NOW() + make_interval(hours => %s)
+                        WHERE id = %s;
+                    """, (hours, alert_id))
+                    conn.commit()
+                    return True
+        except Exception as e:
+            print(f"Error snoozing alert: {e}")
+            return False
+
+    def get_unread_alert_count(self, relationship_id: str) -> int:
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM prevention_alerts
+                        WHERE relationship_id = %s
+                          AND is_dismissed = FALSE
+                          AND (snoozed_until IS NULL OR snoozed_until < NOW());
+                    """, (relationship_id,))
+                    return cursor.fetchone()[0]
+        except Exception as e:
+            print(f"Error getting unread alert count: {e}")
+            return 0
+
+    def get_all_active_relationships(self) -> List[Dict]:
+        """Get all relationships that have had activity (for batch jobs)."""
+        try:
+            with self.get_db_context() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cursor:
+                    cursor.execute("""
+                        SELECT DISTINCT r.id as relationship_id, r.partner_a_name, r.partner_b_name
+                        FROM relationships r
+                        INNER JOIN conflicts c ON c.relationship_id = r.id
+                        WHERE c.started_at >= NOW() - INTERVAL '90 days';
+                    """)
+                    return [dict(r) for r in cursor.fetchall()]
+        except Exception as e:
+            print(f"Error getting active relationships: {e}")
+            return []
+
+
 # Global singleton instance
 try:
     db_service = DatabaseService()

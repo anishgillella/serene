@@ -545,8 +545,28 @@ Phrases to avoid: {', '.join(fight_debrief.phrases_to_avoid[:3]) if fight_debrie
             logger.error(traceback.format_exc())
             # Continue even if S3 fails
         
+        # Invalidate analytics caches after new analysis
+        try:
+            from app.services.cache_service import cache_service
+            cache_service.invalidate_pattern(f"serene:analytics:*:{relationship_id}*")
+            logger.info(f"Cache invalidated for relationship {relationship_id}")
+        except Exception as cache_e:
+            logger.warning(f"Cache invalidation failed (non-blocking): {cache_e}")
+
+        # Check for recurring trigger alerts
+        try:
+            from app.services.alert_service import alert_service
+            alerts = await alert_service.check_for_alerts(
+                relationship_id,
+                trigger_context={"type": "post_fight_analysis", "conflict_id": conflict_id}
+            )
+            if alerts:
+                logger.info(f"Created {len(alerts)} prevention alert(s) after analysis")
+        except Exception as alert_e:
+            logger.warning(f"Alert check failed (non-blocking): {alert_e}")
+
         logger.info(f"✅ Background generation complete for conflict {conflict_id}")
-        
+
     except Exception as e:
         logger.error(f"❌ Error in background generation: {e}")
         import traceback
@@ -2269,3 +2289,92 @@ async def get_repair_plan(
         logger.error(f"❌ Error generating repair plan: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ============================================================================
+# CELERY TASK DISPATCH & STATUS POLLING
+# ============================================================================
+
+@router.post("/conflicts/{conflict_id}/generate-all-async")
+async def generate_all_async(
+    conflict_id: str,
+    request: dict = Body(...)
+):
+    """
+    Dispatch post-fight analysis as a Celery background task.
+    Returns a task_id for polling via GET /task/{task_id}/status.
+    """
+    try:
+        relationship_id = request.get("relationship_id", "00000000-0000-0000-0000-000000000000")
+        partner_a_id = request.get("partner_a_id", "partner_a")
+        partner_b_id = request.get("partner_b_id", "partner_b")
+
+        # Get transcript
+        transcript_data = db_service.get_conflict_transcript(conflict_id)
+        if not transcript_data:
+            raise HTTPException(status_code=404, detail="Transcript not found for this conflict")
+
+        transcript_text = transcript_data.get("transcript_text", "")
+        duration = transcript_data.get("duration", 0.0)
+        speaker_labels = transcript_data.get("speaker_labels", {})
+
+        # Dispatch Celery task
+        from app.tasks.analysis_tasks import run_post_fight_analysis
+        task = run_post_fight_analysis.delay(
+            conflict_id=conflict_id,
+            transcript_text=transcript_text,
+            relationship_id=relationship_id,
+            partner_a_id=partner_a_id,
+            partner_b_id=partner_b_id,
+            speaker_labels=speaker_labels,
+            duration=duration,
+        )
+
+        logger.info(f"Dispatched Celery task {task.id} for conflict {conflict_id}")
+
+        return {
+            "task_id": task.id,
+            "conflict_id": conflict_id,
+            "status": "pending",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error dispatching async analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/task/{task_id}/status")
+async def get_task_status(task_id: str):
+    """Poll the status of a background analysis task."""
+    try:
+        # Check DB first (has richer status info)
+        db_status = db_service.get_task_status(task_id)
+        if db_status:
+            return {
+                "task_id": task_id,
+                "status": db_status["status"],
+                "result": db_status.get("result"),
+                "error_message": db_status.get("error_message"),
+                "created_at": str(db_status.get("created_at")),
+                "updated_at": str(db_status.get("updated_at")),
+            }
+
+        # Fallback: check Celery directly
+        from app.celery_app import celery_app
+        result = celery_app.AsyncResult(task_id)
+        status_map = {
+            "PENDING": "pending",
+            "STARTED": "processing",
+            "SUCCESS": "completed",
+            "FAILURE": "failed",
+            "RETRY": "processing",
+        }
+        return {
+            "task_id": task_id,
+            "status": status_map.get(result.status, result.status),
+            "result": result.result if result.ready() and result.successful() else None,
+            "error_message": str(result.result) if result.failed() else None,
+        }
+    except Exception as e:
+        logger.error(f"Error getting task status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

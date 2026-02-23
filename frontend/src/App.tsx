@@ -10,6 +10,7 @@ import Calendar from './pages/Calendar';
 import Onboarding from './pages/Onboarding';
 import Profile from './pages/Profile';
 import PartnerChat from './pages/PartnerChat';
+import Digest from './pages/Digest';
 import Layout from './components/Layout';
 import { RelationshipProvider } from './contexts/RelationshipContext';
 
@@ -56,6 +57,8 @@ export function App() {
                   <Route path="/onboarding" element={<Onboarding />} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="/chat" element={<PartnerChat />} />
+                  <Route path="/digests" element={<Digest />} />
+                  <Route path="/notifications" element={<React.Suspense fallback={<PageLoader />}>{React.createElement(React.lazy(() => import('./pages/Notifications')))}</React.Suspense>} />
                 </Routes>
               </Layout>
             } />
