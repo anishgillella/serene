@@ -6,14 +6,14 @@ Usage:
     cd backend
     python backfill.py
 
-Requires the backend server to be running at API_BASE (default http://localhost:8000).
+Requires the backend server to be running at API_BASE (default http://localhost:8100).
 """
 import requests
 import uuid
 import time
 import sys
 
-API_BASE = "http://localhost:8000"
+API_BASE = "http://localhost:8100"
 RELATIONSHIP_ID = "00000000-0000-0000-0000-000000000000"
 
 # ── Login as Adrian to get a token (for any auth-protected endpoints) ──────

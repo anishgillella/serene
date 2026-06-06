@@ -7,12 +7,12 @@ This file contains all the commands to run the backend, frontend, and agent. Ope
 ```bash
 cd backend
 source venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload
 ```
 
 **Access:**
-- API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- API: http://localhost:8100
+- API Docs: http://localhost:8100/docs
 
 ## Terminal 2: Voice Agent (Luna)
 
@@ -28,11 +28,11 @@ This starts the LiveKit voice agent for real-time mediation.
 
 ```bash
 cd frontend
-npm run dev -- --port 3000
+npm run dev
 ```
 
 **Access:**
-- Frontend: http://localhost:3000
+- Frontend: http://localhost:8101
 
 ## Additional Frontend Commands
 
@@ -69,9 +69,12 @@ npm install
 
 ## Quick Reference
 
-| Service | URL |
-|---------|-----|
-| Backend API | http://localhost:8000 |
-| API Docs | http://localhost:8000/docs |
-| Frontend | http://localhost:3000 |
-| Voice Agent | Background service (accessed via Frontend) |
+| Service | Port | URL |
+|---------|------|-----|
+| Backend API | 8100 | http://localhost:8100 |
+| API Docs | 8100 | http://localhost:8100/docs |
+| Frontend | 8101 | http://localhost:8101 |
+| Redis | 6380 | redis://localhost:6380 |
+| Voice Agent | — | Background (no inbound port) |
+
+See [`PORTS.md`](PORTS.md) for the full port registry.

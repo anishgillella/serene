@@ -1,0 +1,14 @@
+# Railway config for the Luna LiveKit agent (worker service)
+# Create a SECOND Railway service from the same repo:
+#   - Root Directory: backend
+#   - Config file: railway.agent.toml (set in service settings)
+#   - Disable Public Networking (agent connects outbound to LiveKit)
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "sh start.sh agent"
+restartPolicyType = "ON_FAILURE"
+numReplicas = 1

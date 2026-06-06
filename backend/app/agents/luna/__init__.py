@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 import asyncio
@@ -10,7 +11,9 @@ from livekit.plugins import noise_cancellation
 from .config import settings
 from .agent import SimpleMediator, RAGMediator
 from .tools import get_tools
+from .moss_tools import get_moss_tools
 from app.services.db_service import db_service
+from app.services.moss_service import moss_service
 from app.services.calendar_service import calendar_service
 
 try:
@@ -33,20 +36,34 @@ def prewarm(proc: JobProcess):
     except Exception as e:
         logger.error(f"❌ Failed to pre-warm VAD model: {e}")
 
+def _parse_dispatch_metadata(ctx: JobContext) -> dict:
+    if not ctx.job.metadata:
+        return {}
+    try:
+        return json.loads(ctx.job.metadata)
+    except json.JSONDecodeError:
+        logger.warning("ctx.job.metadata was not valid JSON")
+        return {}
+
+
 async def mediator_entrypoint(ctx: JobContext):
     """Main mediator agent entry point"""
     
     logger.info(f"📍 Starting mediator session for room: {ctx.room.name}")
     
+    dispatch_meta = _parse_dispatch_metadata(ctx)
+
     # Filter: Only process mediator-* rooms
     room_name = ctx.room.name
     if not room_name.startswith("mediator-"):
         logger.warning(f"⚠️  Room '{room_name}' doesn't match mediator-* pattern, skipping")
         return
     
-    # Extract conflict_id
-    conflict_id = room_name.replace("mediator-", "").split("?")[0]
-    logger.info(f"   ✅ Extracted Conflict ID: {conflict_id}")
+    # Extract conflict_id — prefer dispatch metadata, fall back to room name
+    conflict_id = dispatch_meta.get("conflict_id") or room_name.replace("mediator-", "").split("?")[0]
+    relationship_id_from_meta = dispatch_meta.get("relationship_id")
+    user_id = dispatch_meta.get("user_id", "anonymous")
+    logger.info(f"   ✅ Conflict ID: {conflict_id}, user: {user_id}")
     
     # Parallel Initialization Tasks
     async def init_db_session():
@@ -125,6 +142,13 @@ async def mediator_entrypoint(ctx: JobContext):
     session_id = await session_task
     rag_system, relationship_id = await rag_task
 
+    if relationship_id_from_meta:
+        relationship_id = relationship_id_from_meta
+
+    # Preload Moss indexes for sub-10ms retrieval during voice session
+    if moss_service.enabled:
+        await moss_service.preload_session_indexes()
+
     # Fetch partner names for dynamic greeting and instructions
     partner_a_name = "Partner A"
     partner_b_name = "Partner B"
@@ -156,6 +180,11 @@ async def mediator_entrypoint(ctx: JobContext):
         )
         
         tools = get_tools(conflict_id, relationship_id, partner_b_name=partner_b_name)
+        tools += get_moss_tools(
+            relationship_id=relationship_id,
+            conflict_id=conflict_id,
+            room=ctx.room,
+        )
         
         # Create Agent with dynamic partner names
         if rag_system:

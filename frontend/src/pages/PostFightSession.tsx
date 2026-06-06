@@ -9,7 +9,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { Button } from "@/components/ui/button";
 import VoiceButton from '../components/VoiceButton';
-import VoiceCallModal from '../components/voice/VoiceCallModal';
+import MediatorModal from '../components/MediatorModal';
 import TranscriptBubble from '../components/TranscriptBubble';
 import { RelatedConflicts } from '@/components/RelatedConflicts';
 import LunaChatPanel from '../components/LunaChatPanel';
@@ -98,7 +98,7 @@ const PostFightSession = () => {
       if (!conflictId) {
         console.log('🆔 No conflict ID found, generating new one...');
         try {
-          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+          const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
           const response = await fetch(`${apiUrl}/api/conflicts/create`, {
             method: 'POST',
             headers: {
@@ -196,7 +196,7 @@ const PostFightSession = () => {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState('');
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
   // Helper function to parse transcript lines
   const parseTranscriptLines = (lines: string[]): Message[] => {
@@ -1115,7 +1115,7 @@ const PostFightSession = () => {
                   {/* Related Conflicts Graph */}
                   <RelatedConflicts
                     conflictId={conflictId || ''}
-                    apiBase={import.meta.env.VITE_API_URL || 'http://localhost:8000'}
+                    apiBase={import.meta.env.VITE_API_URL || 'http://localhost:8100'}
                   />
 
                   {/* Deep Insights Section */}
@@ -1382,15 +1382,12 @@ const PostFightSession = () => {
         </div>
       </div>
 
-      {/* Voice Call Modal */}
+      {/* LiveKit Voice Modal (Moss-powered retrieval) */}
       {conflictId && (
-        <VoiceCallModal
+        <MediatorModal
           isOpen={isVoiceCallOpen}
           onClose={() => setIsVoiceCallOpen(false)}
-          conflictId={conflictId || ''}
-          relationshipId={conflictId || ''} // Use conflict_id as relationship context
-          partnerAName="Adrian"
-          partnerBName="Elara"
+          conflictId={conflictId}
         />
       )}
     </div>

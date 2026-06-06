@@ -19,6 +19,9 @@ opentelemetry-sdk==1.38.0
 opentelemetry-exporter-otlp==1.38.0
 opentelemetry-instrumentation==0.59b0
 
+# Moss (sub-10ms semantic search for voice agent)
+moss>=1.4
+
 # AI & LLM
 openai
 deepgram-sdk
@@ -38,7 +41,6 @@ PyJWT
 sqlalchemy
 psycopg2-binary
 pydantic-settings
-supabase
 pinecone
 httpx
 pydub

@@ -12,8 +12,12 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5175,
-    host: '0.0.0.0', // Allow external connections
-    strictPort: true, // Exit if port is already in use
+    port: Number(process.env.SERENE_FRONTEND_PORT) || 8101,
+    host: '0.0.0.0',
+    strictPort: true,
+  },
+  preview: {
+    port: 8102,
+    strictPort: true,
   },
 })

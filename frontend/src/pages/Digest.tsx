@@ -4,7 +4,7 @@ import { useRelationship } from '../contexts/RelationshipContext';
 import { useDigests } from '../hooks/useDigests';
 import DigestCard from '../components/digest/DigestCard';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
 const Digest: React.FC = () => {
   const { relationshipId } = useRelationship();

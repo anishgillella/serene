@@ -60,7 +60,7 @@ const LunaChatPanel: React.FC<LunaChatPanelProps> = ({ conflictId }) => {
         setMessages(prev => [...prev, { id: assistantId, role: 'assistant', content: '' }]);
 
         try {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
             const response = await fetch(`${apiUrl}/api/mediator/chat/stream`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

@@ -49,8 +49,6 @@ if not env_loaded:
         'PINECONE_API_KEY': 'test_key',
         'MISTRAL_API_KEY': 'test_key',
         'DATABASE_URL': 'postgresql://test:test@localhost:5432/test_db',
-        'SUPABASE_URL': 'https://test.supabase.co',
-        'SUPABASE_KEY': 'test_key',
         'AWS_ACCESS_KEY_ID': 'test_key',
         'AWS_SECRET_ACCESS_KEY': 'test_secret',
         'AWS_REGION': 'us-east-1',

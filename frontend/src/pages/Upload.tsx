@@ -32,7 +32,7 @@ const Upload = () => {
   const [relationshipId, setRelationshipId] = useState<string>('00000000-0000-0000-0000-000000000000');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
   useEffect(() => {
     fetchExistingFiles();

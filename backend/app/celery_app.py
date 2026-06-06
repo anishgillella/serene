@@ -1,8 +1,8 @@
 """
 Celery application configuration.
 
-Broker: redis://localhost:6379/1  (separate DB from cache)
-Result backend: redis://localhost:6379/2
+Broker: redis://localhost:6380/1  (separate DB from cache)
+Result backend: redis://localhost:6380/2
 
 Usage:
     celery -A app.celery_app worker --loglevel=info --beat

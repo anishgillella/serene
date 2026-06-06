@@ -22,7 +22,7 @@ import websockets
 from datetime import datetime
 
 # Configuration
-API_URL = os.getenv("API_URL", "http://localhost:8000")
+API_URL = os.getenv("API_URL", "http://localhost:8100")
 TEST_RELATIONSHIP_ID = "00000000-0000-0000-0000-000000000000"
 
 # Colors for output

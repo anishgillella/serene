@@ -4,7 +4,7 @@ import { useRelationship } from '../contexts/RelationshipContext';
 import { useAlerts } from '../hooks/useAlerts';
 import AlertCard from '../components/alerts/AlertCard';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
 const Notifications: React.FC = () => {
   const { relationshipId } = useRelationship();

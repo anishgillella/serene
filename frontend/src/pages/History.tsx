@@ -24,7 +24,7 @@ const History = () => {
   useEffect(() => {
     const fetchConflicts = async () => {
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
         const response = await fetch(`${apiUrl}/api/conflicts`, {
           headers: {
             'ngrok-skip-browser-warning': 'true'
@@ -80,7 +80,7 @@ const History = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
       const response = await fetch(`${apiUrl}/api/conflicts/${id}`, {
         method: 'DELETE',
         headers: {
@@ -106,7 +106,7 @@ const History = () => {
     }
 
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
       const response = await fetch(`${apiUrl}/api/conflicts/cleanup?title=Conflict Session`, {
         method: 'DELETE',
         headers: {
@@ -161,7 +161,7 @@ const History = () => {
 
     setIsDeleting(true);
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
       const response = await fetch(`${apiUrl}/api/conflicts/bulk-delete`, {
         method: 'POST',
         headers: {

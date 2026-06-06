@@ -1,0 +1,13 @@
+# Railway config for the Serene API (web service)
+# In Railway dashboard: set Root Directory = backend, link this service to serene-api
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "sh start.sh web"
+healthcheckPath = "/api/health/db"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+numReplicas = 1

@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from livekit import api
+from livekit.protocol.room import RoomConfiguration
 from .config import settings
-from supabase import create_client
 from .routes import transcription
 import json
 import logging
@@ -13,6 +13,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="HeartSync API")
 
@@ -82,9 +83,6 @@ app.include_router(digest_routes.router)
 from .routes import alert_routes
 app.include_router(alert_routes.router)
 
-# Initialize Supabase client
-supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-
 @app.get("/")
 async def root():
     return {"message": "HeartSync API is running"}
@@ -95,7 +93,7 @@ async def db_health_check():
     try:
         from app.services.db_service import db_service
         # Try a simple query
-        result = db_service.get_all_conflicts(limit=1)
+        db_service.get_all_conflicts()
         return {
             "status": "healthy",
             "database": "connected",
@@ -140,6 +138,8 @@ async def get_mediator_token(request: dict = Body(...)):
     """
     conflict_id = request.get("conflict_id")
     participant_name = request.get("participant_name", "user")
+    relationship_id = request.get("relationship_id")
+    user_id = request.get("user_id", participant_name)
     
     if not conflict_id:
         raise HTTPException(status_code=400, detail="conflict_id is required")
@@ -152,9 +152,30 @@ async def get_mediator_token(request: dict = Body(...)):
         )
     
     room_name = f"mediator-{conflict_id}"
+
+    # Resolve relationship_id from conflict if not provided
+    if not relationship_id:
+        try:
+            from app.services.db_service import db_service
+            conflict_data = db_service.get_conflict_by_id(conflict_id=conflict_id)
+            if conflict_data:
+                relationship_id = str(conflict_data.get("relationship_id"))
+        except Exception:
+            pass
+
+    dispatch_metadata = json.dumps({
+        "conflict_id": conflict_id,
+        "relationship_id": relationship_id or "",
+        "user_id": user_id,
+    })
+
+    agent_name = settings.LIVEKIT_AGENT_NAME or "luna-mediator"
+    room_config = RoomConfiguration()
+    agent_dispatch = room_config.agents.add()
+    agent_dispatch.agent_name = agent_name
+    agent_dispatch.metadata = dispatch_metadata
     
-    # Generate token with embedded dispatch
-    # Token-based dispatch should work for cloud-deployed agents
+    # Generate token with embedded agent dispatch + session metadata
     token = api.AccessToken(
         settings.LIVEKIT_API_KEY,
         settings.LIVEKIT_API_SECRET
@@ -166,14 +187,15 @@ async def get_mediator_token(request: dict = Body(...)):
         room=room_name,
         can_publish=True,
         can_subscribe=True,
-        can_publish_data=True,  # Required for agent communication
+        can_publish_data=True,
     ))
-    
+    token.with_room_config(room_config)
 
     return {
         "token": token.to_jwt(),
         "room": room_name,
-        "url": settings.LIVEKIT_URL
+        "url": settings.LIVEKIT_URL,
+        "agent_name": agent_name,
     }
 
 @app.post("/api/dispatch-agent")
@@ -314,33 +336,13 @@ async def list_conflicts(relationship_id: str = None):
     async def fetch_conflicts():
         """Fetch conflicts with timeout protection"""
         try:
-            # Try using db_service first (direct PostgreSQL connection, bypasses RLS)
-            try:
-                from app.services.db_service import db_service
-                # Run database query in thread pool to avoid blocking
-                loop = asyncio.get_event_loop()
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    conflicts_data = await loop.run_in_executor(
-                        executor,
-                        lambda: db_service.get_all_conflicts(relationship_id=relationship_id)
-                    )
-                return {
-                    "total": len(conflicts_data),
-                    "conflicts": conflicts_data
-                }
-            except ImportError:
-                # Fallback to Supabase if db_service not available
-                pass
-            
-            # Fallback to Supabase
-            if relationship_id:
-                response = supabase.table("conflicts").select("*").eq("relationship_id", relationship_id).execute()
-            else:
-                response = supabase.table("conflicts").select("*").execute()
-            
-            # Ensure data is always a list, even if empty or None
-            conflicts_data = response.data if response.data is not None else []
-            
+            from app.services.db_service import db_service
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                conflicts_data = await loop.run_in_executor(
+                    executor,
+                    lambda: db_service.get_all_conflicts(relationship_id=relationship_id)
+                )
             return {
                 "total": len(conflicts_data),
                 "conflicts": conflicts_data

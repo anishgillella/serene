@@ -50,7 +50,7 @@ To run the application locally, you need **3 separate terminal windows**:
 ```bash
 cd backend
 source venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload
 ```
 
 ### Terminal 2: Frontend
@@ -68,8 +68,8 @@ python start_agent.py start
 *(Note: The agent uses the AgentServer pattern and will auto-connect to rooms matching `mediator-*`)*
 
 **Access:**
-- Frontend: http://localhost:5173
-- API Docs: http://localhost:8000/docs
+- Frontend: http://localhost:8101
+- API Docs: http://localhost:8100/docs
 
 ---
 
@@ -329,8 +329,6 @@ MISTRAL_API_KEY=xxx
 
 # Databases
 DATABASE_URL=postgresql://user:pass@host:5432/dbname
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_KEY=xxx
 PINECONE_API_KEY=xxx
 
 # AWS S3
@@ -340,7 +338,7 @@ AWS_REGION=us-east-1
 S3_BUCKET_NAME=serene-relationship-mediator
 
 # Frontend (VITE_ prefix required for Vite)
-VITE_API_URL=http://localhost:8000
+VITE_API_URL=http://localhost:8100
 VITE_LIVEKIT_URL=wss://your-livekit-url.livekit.cloud
 ```
 
@@ -358,7 +356,7 @@ Terminal 1 - API:
 ```bash
 cd backend
 source venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload
 ```
 
 Terminal 2 - Agent:
@@ -381,8 +379,8 @@ npm run dev
 ```
 
 **Access:**
-- Frontend: http://localhost:5173
-- API Docs: http://localhost:8000/docs
+- Frontend: http://localhost:8101
+- API Docs: http://localhost:8100/docs
 
 ---
 
@@ -503,58 +501,29 @@ npm run preview                       # Preview build
 
 ##  Deployment
 
-The application is deployed on **Fly.io** for both backend and agent processes.
+The backend runs on **Railway** (API + LiveKit agent worker). The frontend runs on **Vercel**.
 
-### Architecture on Fly.io
-- **App Name**: `serene-backend`
-- **Region**: `dfw` (Dallas)
-- **Processes**:
-    - `web`: FastAPI server (port 8080)
-    - `worker`: LiveKit Agent (outbound WebSocket connection)
-- **Database**: Supabase (Transaction Pooler - port 6543)
+### Architecture on Railway
+- **`serene-api`**: FastAPI server (public, `$PORT` from Railway)
+- **`serene-agent`**: LiveKit Luna worker (private networking, outbound WebSocket only)
+- **Database**: Supabase (Transaction Pooler — port 6543)
 
-### Deployment Steps
+Full guide: [`docs/deployment/RAILWAY.md`](docs/deployment/RAILWAY.md)
 
-1. **Prerequisites**
-   - Install `flyctl`
-   - Login: `fly auth login`
+### Quick deploy
 
-2. **Secrets Configuration**
-   Set the following secrets using `fly secrets set`:
-   ```bash
-   # Critical: Use Transaction Pooler (Port 6543)
-   DATABASE_URL=postgres://user:pass@host:6543/postgres?pgbouncer=true
-   
-   # LiveKit
-   LIVEKIT_URL=...
-   LIVEKIT_API_KEY=...
-   LIVEKIT_API_SECRET=...
-   
-   # AI Services
-   OPENROUTER_API_KEY=...
-   PINECONE_API_KEY=...
-   VOYAGE_API_KEY=...
-   AWS_ACCESS_KEY_ID=...
-   AWS_SECRET_ACCESS_KEY=...
-   S3_BUCKET_NAME=...
-   ```
-
-3. **Deploy**
-   Use the helper script:
-   ```bash
-   cd backend
-   ./deploy_fly.sh
-   ```
-   Or manually:
-   ```bash
-   fly deploy
-   ```
+1. Connect the GitHub repo to [Railway](https://railway.app)
+2. Create two services from `backend/`:
+   - API → `railway.toml` → `sh start.sh web`
+   - Agent → `railway.agent.toml` → `sh start.sh agent` (disable public networking)
+3. Set env vars from `.env.example` (use shared variables for both services)
+4. Generate a public domain for `serene-api`
 
 ### Frontend Deployment (Vercel)
 - **Build Command**: `npm run build`
 - **Output Directory**: `dist`
 - **Environment Variables**:
-    - `VITE_API_URL`: `https://serene-backend.fly.dev`
+    - `VITE_API_URL`: `https://<your-railway-api-domain>`
     - `VITE_LIVEKIT_URL`: (Your LiveKit Cloud URL)
 
 ---

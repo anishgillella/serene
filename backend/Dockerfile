@@ -18,6 +18,9 @@ COPY . .
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
 
-# Default command (can be overridden in fly.toml)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+RUN chmod +x start.sh
+
+# Default: API server (Railway overrides via railway.toml startCommand)
+CMD ["sh", "start.sh", "web"]

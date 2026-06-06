@@ -33,6 +33,42 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
+def _build_dashboard_insights(
+    disagreement_episodes: int,
+    pattern_threads: int,
+    open_threads: int,
+    resolution_rate: float,
+    days_since_last: int,
+    chronic_needs_count: int,
+    risk_interpretation: str,
+) -> list[str]:
+    insights = []
+    if disagreement_episodes == 0:
+        insights.append("No disagreement episodes recorded yet — your story starts with your first session.")
+    else:
+        thread_note = (
+            f", including {pattern_threads} recurring thread{'s' if pattern_threads != 1 else ''}"
+            if pattern_threads > 0
+            else ""
+        )
+        insights.append(
+            f"{disagreement_episodes} disagreement episode{'s' if disagreement_episodes != 1 else ''} tracked{thread_note}"
+        )
+    if days_since_last > 0:
+        insights.append(f"{days_since_last} day{'s' if days_since_last != 1 else ''} since your last tense moment")
+    insights.append(f"Repair success rate: {resolution_rate:.0f}%")
+    if open_threads > 0:
+        insights.append(f"{open_threads} open thread{'s' if open_threads != 1 else ''} still need attention")
+    elif disagreement_episodes > 0:
+        insights.append("No open threads right now — recent disagreements look resolved")
+    if chronic_needs_count > 0:
+        insights.append(
+            f"{chronic_needs_count} recurring unmet need{'s' if chronic_needs_count != 1 else ''} showing up in your patterns"
+        )
+    insights.append(f"Current tension level: {risk_interpretation}")
+    return insights
+
+
 @router.get("/dashboard")
 async def get_dashboard_data(
     relationship_id: str = Query(default="00000000-0000-0000-0000-000000000000")
@@ -63,6 +99,12 @@ async def get_dashboard_data(
             (resolved_count / total_conflicts * 100) if total_conflicts > 0 else 0
         )
 
+        # Episode-based counts: group linked disagreements so one escalation isn't N separate "fights"
+        linked_moments = sum(c.get("conflicts_in_chain", 0) for c in chains)
+        solo_episodes = max(0, total_conflicts - linked_moments)
+        disagreement_episodes = len(chains) + solo_episodes
+        open_threads = risk_report.unresolved_issues
+
         health_score = int((1.0 - risk_report.risk_score) * 100)
 
         # Calculate previous week's health score for delta comparison
@@ -88,16 +130,22 @@ async def get_dashboard_data(
                 "total_conflicts": total_conflicts,
                 "resolved_conflicts": resolved_count,
                 "unresolved_conflicts": total_conflicts - resolved_count,
+                "disagreement_episodes": disagreement_episodes,
+                "pattern_threads": len(chains),
+                "open_threads": open_threads,
                 "resolution_rate": resolution_rate,
                 "avg_resentment": risk_report.factors.get("avg_resentment", 5),
                 "days_since_last_conflict": risk_report.factors.get("days_since_last", 0),
             },
-            "insights": [
-                f"Total conflicts: {total_conflicts}",
-                f"Resolution rate: {resolution_rate:.0f}%",
-                f"Unresolved issues: {risk_report.unresolved_issues}",
-                f"Chronic unmet needs: {len(needs)}",
-            ],
+            "insights": _build_dashboard_insights(
+                disagreement_episodes=disagreement_episodes,
+                pattern_threads=len(chains),
+                open_threads=open_threads,
+                resolution_rate=resolution_rate,
+                days_since_last=risk_report.factors.get("days_since_last", 0),
+                chronic_needs_count=len(needs),
+                risk_interpretation=risk_report.interpretation,
+            ),
         }
 
         # Cache for 5 minutes

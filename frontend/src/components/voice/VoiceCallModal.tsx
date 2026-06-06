@@ -146,7 +146,7 @@ const VoiceCallModal: React.FC<VoiceCallModalProps> = ({
 
     try {
       // Fetch context from backend before starting call
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
       console.log('📋 Fetching voice context for conflict:', conflictId);
 
       let systemPrompt = '';

@@ -35,6 +35,9 @@ interface DashboardData {
     total_conflicts: number;
     resolved_conflicts: number;
     unresolved_conflicts: number;
+    disagreement_episodes?: number;
+    pattern_threads?: number;
+    open_threads?: number;
     resolution_rate: number;
     avg_resentment: number;
     days_since_last_conflict: number;
@@ -42,7 +45,7 @@ interface DashboardData {
   insights: string[];
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
 export const useDashboardData = (relationshipId: string) => {
   const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);

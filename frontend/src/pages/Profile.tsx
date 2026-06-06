@@ -67,7 +67,7 @@ const Profile = () => {
         setLoading(true);
         setError(null);
         try {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
             const response = await fetch(`${apiUrl}/api/onboarding/profile?partner_id=${partnerId}`);
             const data = await response.json();
 
@@ -92,7 +92,7 @@ const Profile = () => {
     // Fetch both partner names on mount for the tabs
     useEffect(() => {
         const fetchPartnerNames = async () => {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
             for (const partnerId of ['partner_a', 'partner_b']) {
                 try {
                     const response = await fetch(`${apiUrl}/api/onboarding/profile?partner_id=${partnerId}`);
@@ -126,7 +126,7 @@ const Profile = () => {
         setSaving(true);
 
         try {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
             // Construct update payload
             const updatePayload: any = {};

@@ -63,8 +63,6 @@ class TestDynamicInstructions:
             os.environ['VOYAGE_API_KEY'] = 'test_key'
             os.environ['PINECONE_API_KEY'] = 'test_key'
             os.environ['MISTRAL_API_KEY'] = 'test_key'
-            os.environ['SUPABASE_URL'] = 'https://test.supabase.co'
-            os.environ['SUPABASE_KEY'] = 'test_key'
             os.environ['AWS_ACCESS_KEY_ID'] = 'test_key'
             os.environ['AWS_SECRET_ACCESS_KEY'] = 'test_secret'
             os.environ['AWS_REGION'] = 'us-east-1'

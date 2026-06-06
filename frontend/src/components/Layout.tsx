@@ -30,7 +30,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     }
 
     // Verify token with backend
-    const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8100';
     fetch(`${API_BASE}/api/auth/me`, {
       headers: {
         Authorization: `Bearer ${token}`,

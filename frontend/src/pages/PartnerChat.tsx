@@ -94,7 +94,7 @@ const PartnerChat: React.FC = () => {
         window.location.href = `/chat?as=${newPartner}`;
     }, [currentPartnerId, setSearchParams]);
 
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
     // Initialize gesture hook
     const {

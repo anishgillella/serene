@@ -298,7 +298,7 @@ const Onboarding = () => {
         partner_b: { completed: false, name: null, updated_at: null }
     });
     const [isLoadingStatus, setIsLoadingStatus] = useState(true);
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
     // Fetch partner status on mount
     useEffect(() => {

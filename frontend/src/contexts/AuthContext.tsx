@@ -45,7 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const token = await getAccessTokenSilently();
-      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
       const response = await fetch(`${apiUrl}/api/users/me`, {
         headers: {

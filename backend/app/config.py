@@ -5,6 +5,14 @@ class Settings(BaseSettings):
     LIVEKIT_URL: str
     LIVEKIT_API_KEY: str
     LIVEKIT_API_SECRET: str
+    LIVEKIT_AGENT_NAME: str = "luna-mediator"
+
+    # Moss (optional — enables sub-10ms voice retrieval)
+    MOSS_PROJECT_ID: str = ""
+    MOSS_PROJECT_KEY: str = ""
+    MOSS_TRANSCRIPTS_INDEX: str = "serene-transcripts"
+    MOSS_MEMORY_INDEX: str = "serene-memory"
+    MOSS_KNOWLEDGE_INDEX: str = "serene-knowledge"
     OPENROUTER_API_KEY: str
     DEEPGRAM_API_KEY: str
     ELEVENLABS_API_KEY: str
@@ -12,8 +20,6 @@ class Settings(BaseSettings):
     PINECONE_API_KEY: str
     MISTRAL_API_KEY: str
     DATABASE_URL: str
-    SUPABASE_URL: str
-    SUPABASE_KEY: str
 
     # Local Auth
     SECRET_KEY: str = "serene-dev-secret-change-in-production"
@@ -30,13 +36,18 @@ class Settings(BaseSettings):
     AUTH0_ALGORITHMS: list = ["RS256"]
     AUTH_OPTIONAL: bool = True  # Set to False in production
 
+    # Local dev ports (see docs/project/PORTS.md)
+    SERENE_API_PORT: int = 8100
+    SERENE_FRONTEND_PORT: int = 8101
+    SERENE_REDIS_PORT: int = 6380
+
     # Redis Configuration
-    REDIS_URL: str = "redis://localhost:6379/0"
-    CELERY_BROKER_URL: str = "redis://localhost:6379/1"
-    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/2"
+    REDIS_URL: str = "redis://localhost:6380/0"
+    CELERY_BROKER_URL: str = "redis://localhost:6380/1"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6380/2"
 
     # CORS
-    ALLOWED_ORIGINS: str = "http://localhost:5173,http://localhost:5175,http://localhost:3000"
+    ALLOWED_ORIGINS: str = "http://localhost:8101"
 
     # S3 Signed URLs
     S3_SIGNED_URL_EXPIRY: int = 3600  # 1 hour

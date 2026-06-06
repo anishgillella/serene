@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class RedisCache:
     """Redis-backed cache with in-memory fallback."""
 
-    def __init__(self, redis_url: str = "redis://localhost:6379/0"):
+    def __init__(self, redis_url: str = "redis://localhost:6380/0"):
         self._redis = None
         self._redis_url = redis_url
         self._fallback: Dict[str, tuple] = {}  # key -> (value_json, expire_at)

@@ -24,7 +24,6 @@ from app.tools.conflict_analysis import analyze_conflict_transcript
 from app.tools.repair_coaching import generate_repair_plan
 from app.models.schemas import ConflictAnalysis, RepairPlan, ConflictTranscript, SpeakerSegment, FightDebrief, PersonalizedRepairPlan
 from app.config import settings
-from supabase import create_client, Client
 from app.services.db_service import db_service
 
 logger = logging.getLogger(__name__)
@@ -1607,37 +1606,23 @@ async def store_transcript(
             if s3_url:
                 logger.info(f"✅ Stored transcript for conflict {conflict_id} in S3: {file_path} (URL: {s3_url})")
                 
-                # Update conflict record with S3 path/URL using db_service (bypasses RLS)
                 try:
-                    if db_service:
-                        # First, ensure conflict exists (create if it doesn't)
-                        try:
-                            db_service.create_conflict(
-                                conflict_id=conflict_id,
-                                relationship_id=relationship_id,
-                                status="completed"
-                            )
-                        except Exception:
-                            pass  # Conflict might already exist, that's fine
-                        
-                        # Update conflict with transcript path and metadata
-                        db_service.update_conflict(
+                    try:
+                        db_service.create_conflict(
                             conflict_id=conflict_id,
-                            status="completed",
-                            transcript_path=s3_url or file_path,
-                            metadata={"utterance_count": len(transcript_lines)}
+                            relationship_id=relationship_id,
+                            status="completed"
                         )
-                        logger.info(f"✅ Updated conflict record with transcript_path using db_service")
-                    else:
-                        # Fallback to Supabase
-                        from supabase import create_client, Client
-                        supabase: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-                        supabase.table("conflicts").update({
-                            "transcript_path": s3_url or file_path,
-                            "metadata": {"utterance_count": len(transcript_lines)},
-                            "status": "completed"
-                        }).eq("id", conflict_id).execute()
-                        logger.info(f"✅ Updated conflict record with transcript_path using Supabase")
+                    except Exception:
+                        pass
+
+                    db_service.update_conflict(
+                        conflict_id=conflict_id,
+                        status="completed",
+                        transcript_path=s3_url or file_path,
+                        metadata={"utterance_count": len(transcript_lines)}
+                    )
+                    logger.info(f"✅ Updated conflict record with transcript_path")
                 except Exception as db_error:
                     logger.warning(f"⚠️ Could not update conflict record: {db_error}")
                     import traceback
@@ -1699,15 +1684,9 @@ async def generate_analysis_and_repair_plans(
     }
     """
     try:
-        # Initialize Supabase client
-        supabase_client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
-        
-        # Get conflict and transcript
-        conflict_response = supabase_client.table("conflicts").select("*").eq("id", conflict_id).execute()
-        if not conflict_response.data:
+        conflict = db_service.get_conflict_by_id(conflict_id)
+        if not conflict:
             raise HTTPException(status_code=404, detail=f"Conflict {conflict_id} not found")
-        
-        conflict = conflict_response.data[0]
         relationship_id = conflict.get("relationship_id", "00000000-0000-0000-0000-000000000000")
         
         # Get transcript from Pinecone or S3

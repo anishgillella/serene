@@ -263,7 +263,11 @@ class TestDashboardEndpoint:
         assert len(data["conflict_chains"]) == 1
         assert len(data["chronic_needs"]) == 2
         assert data["metrics"]["avg_resentment"] == 7.0
-        assert len(data["insights"]) == 4
+        assert data["metrics"]["disagreement_episodes"] == 3
+        assert data["metrics"]["pattern_threads"] == 1
+        assert data["metrics"]["open_threads"] == 3
+        assert len(data["insights"]) >= 4
+        assert "disagreement episode" in data["insights"][0]
 
     @patch('app.routes.analytics.pattern_analysis_service')
     @patch('app.routes.analytics.db_service')

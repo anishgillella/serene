@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Room, RoomEvent, RemoteParticipant, LocalParticipant } from 'livekit-client';
 import { XIcon, MicIcon, MicOffIcon, Moon } from 'lucide-react';
 import { usePartnerContext } from '../contexts/PartnerContext';
+import { useRelationship } from '../contexts/RelationshipContext';
+import { useMossContextEvents } from '../hooks/useMossContextEvents';
+import MossResultsPanel from './voice/MossResultsPanel';
 
 interface MediatorModalProps {
   isOpen: boolean;
@@ -23,16 +26,20 @@ interface TranscriptEntry {
 
 const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflictId, context }) => {
   const { partnerRole, partnerName } = usePartnerContext();
+  const { relationshipId } = useRelationship();
   const [isConnected, setIsConnected] = useState(false);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isAgentJoining, setIsAgentJoining] = useState(false);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const roomRef = useRef<Room | null>(null);
   const localTracksRef = useRef<any[]>([]);
   const agentJoinedRef = useRef<boolean>(false);
 
-  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+  const { events: mossEvents, latest: mossLatest, clear: clearMossEvents } = useMossContextEvents(activeRoom);
+
+  const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
   const generateToken = async (conflictId: string) => {
     console.log('🔑 generateToken called with conflictId:', conflictId);
@@ -43,6 +50,8 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         conflict_id: conflictId,
         participant_name: partnerName || 'user',
         partner_role: partnerRole,
+        relationship_id: relationshipId || undefined,
+        user_id: partnerName || 'user',
       };
       console.log('📤 Sending token request:', requestBody);
 
@@ -103,6 +112,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
       console.log('🏠 Creating new Room instance');
       const room = new Room();
       roomRef.current = room;
+      setActiveRoom(room);
 
       room.on(RoomEvent.Connected, () => {
         console.log('Connected to mediator room');
@@ -348,6 +358,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
     }
     localTracksRef.current = [];
     roomRef.current = null;
+    setActiveRoom(null);
   };
 
   const addTranscriptEntry = (speaker: 'agent' | 'user' | 'system', text: string) => {
@@ -363,6 +374,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
         endCall();
       }
       setTranscript([]);
+      clearMossEvents();
       setIsConnected(false);
       setIsAgentJoining(false);
       setIsAgentSpeaking(false);
@@ -386,7 +398,7 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md px-4">
-      <div className="bg-surface-elevated rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden border border-border-subtle">
+      <div className="bg-surface-elevated rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-border-subtle">
         {/* Header with gradient */}
         <div className="relative p-8 pb-6 bg-gradient-to-br from-accent/5 via-surface-elevated to-surface-elevated border-b border-border-subtle">
           <button
@@ -442,51 +454,57 @@ const MediatorModal: React.FC<MediatorModalProps> = ({ isOpen, onClose, conflict
           </div>
         </div>
 
-        {/* Transcript area */}
-        <div className="flex-1 overflow-y-auto p-6 bg-gradient-to-b from-bg-primary to-surface-elevated">
-          {transcript.length === 0 ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className={`w-24 h-24 mx-auto mb-6 rounded-3xl bg-accent/5 flex items-center justify-center ${isConnecting ? 'animate-pulse' : ''
-                  }`}>
-                  <MicIcon size={48} className="text-accent/40" />
+        {/* Transcript + Moss retrieval panel */}
+        <div className="flex-1 flex overflow-hidden min-h-0">
+          <div className="flex-1 overflow-y-auto p-6 bg-gradient-to-b from-bg-primary to-surface-elevated">
+            {transcript.length === 0 ? (
+              <div className="flex items-center justify-center h-full">
+                <div className="text-center">
+                  <div className={`w-24 h-24 mx-auto mb-6 rounded-3xl bg-accent/5 flex items-center justify-center ${isConnecting ? 'animate-pulse' : ''
+                    }`}>
+                    <MicIcon size={48} className="text-accent/40" />
+                  </div>
+                  <p className="text-body text-text-secondary">
+                    {isConnecting
+                      ? 'Connecting to Luna...'
+                      : 'Click "Start Call" to begin talking with Luna'}
+                  </p>
                 </div>
-                <p className="text-body text-text-secondary">
-                  {isConnecting
-                    ? 'Connecting to Luna...'
-                    : 'Click "Start Call" to begin talking with Luna'}
-                </p>
               </div>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {transcript.map((entry, index) => (
-                <div
-                  key={index}
-                  className={`p-4 rounded-2xl transition-all ${entry.speaker === 'agent'
-                    ? 'bg-accent/5 border border-accent/10 ml-0 mr-8'
-                    : entry.speaker === 'user'
-                      ? 'bg-surface-hover border border-border-subtle ml-8 mr-0'
-                      : 'bg-white/40 border border-border-subtle mx-8'
-                    }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-tiny font-semibold text-text-secondary">
-                          {entry.speaker === 'agent' ? '🌙 Luna' : entry.speaker === 'user' ? '👤 You' : '💬 System'}
-                        </span>
-                        <span className="text-tiny text-text-tertiary">
-                          {entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </span>
+            ) : (
+              <div className="space-y-3">
+                {transcript.map((entry, index) => (
+                  <div
+                    key={index}
+                    className={`p-4 rounded-2xl transition-all ${entry.speaker === 'agent'
+                      ? 'bg-accent/5 border border-accent/10 ml-0 mr-8'
+                      : entry.speaker === 'user'
+                        ? 'bg-surface-hover border border-border-subtle ml-8 mr-0'
+                        : 'bg-white/40 border border-border-subtle mx-8'
+                      }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-tiny font-semibold text-text-secondary">
+                            {entry.speaker === 'agent' ? '🌙 Luna' : entry.speaker === 'user' ? '👤 You' : '💬 System'}
+                          </span>
+                          <span className="text-tiny text-text-tertiary">
+                            {entry.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                        <p className="text-body text-text-primary leading-relaxed">{entry.text}</p>
                       </div>
-                      <p className="text-body text-text-primary leading-relaxed">{entry.text}</p>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="w-64 border-l border-border-subtle bg-surface-elevated/50 hidden md:flex flex-col">
+            <MossResultsPanel latest={mossLatest} events={mossEvents} />
+          </div>
         </div>
 
         {/* Controls */}

@@ -71,7 +71,7 @@ export const MessagingInsights: React.FC<MessagingInsightsProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState(30);
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
   useEffect(() => {
     const loadAnalytics = async () => {
